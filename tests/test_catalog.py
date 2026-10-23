@@ -74,6 +74,9 @@ def test_search_filters_pagination_cache_and_controller_credentials(catalog):
     assert model["author"] == "acme"
     assert model["gated"] is True
     assert model["downloads"] == 1200
+    assert model["thumbnail_url"] == (
+        "https://cdn-thumbnails.huggingface.co/social-thumbnails/models/acme/spark-model.png"
+    )
     assert result.json()["cursor"] == "page-two"
     assert "server-only-secret" not in result.text
     params = requests[0].url.params
@@ -97,6 +100,7 @@ def test_detail_sizes_files_and_revision(catalog):
     assert model["architecture"] == "LlamaForCausalLM"
     assert model["license"] == "apache-2.0"
     assert model["commit"] == "commit123"
+    assert model["thumbnail_url"].endswith("/acme/spark-model.png")
     assert len(model["files"]) == 2
     assert requests[-1].url.params["blobs"] == "true"
     assert "release%2Fv2" in str(requests[-1].url)

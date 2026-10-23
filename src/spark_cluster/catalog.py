@@ -24,6 +24,7 @@ class CatalogModel(BaseModel):
     gated: bool = False
     updated: str | None = None
     parameters: int | None = None
+    thumbnail_url: str
 
 
 class CatalogPage(BaseModel):
@@ -50,7 +51,7 @@ def summary(data: dict) -> CatalogModel:
     repo_id = data.get("id") or data["modelId"]
     return CatalogModel(
         id=repo_id,
-        author=repo_id.split("/")[0] if "/" in repo_id else "Hugging Face",
+        author=data.get("author") or (repo_id.split("/")[0] if "/" in repo_id else "Hugging Face"),
         downloads=data.get("downloads") or 0,
         likes=data.get("likes") or 0,
         task=data.get("pipeline_tag"),
@@ -59,6 +60,10 @@ def summary(data: dict) -> CatalogModel:
         gated=bool(data.get("gated")),
         updated=data.get("lastModified"),
         parameters=(data.get("safetensors") or {}).get("total"),
+        thumbnail_url=(
+            "https://cdn-thumbnails.huggingface.co/social-thumbnails/models/"
+            f"{quote(repo_id, safe='/')}.png"
+        ),
     )
 
 
