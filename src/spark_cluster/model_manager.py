@@ -341,7 +341,10 @@ def _node_requirement(
 
 
 def _minimum_nodes(
-    capacities: list[float], resident_weights: float, resident_kv: float, kv_heads: int = 0,
+    capacities: list[float],
+    resident_weights: float,
+    resident_kv: float,
+    kv_heads: int = 0,
     minimum_overhead: float = 8.0,
 ) -> tuple[int, float, float, float]:
     for nodes in range(1, len(capacities) + 1):
