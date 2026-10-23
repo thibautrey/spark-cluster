@@ -199,6 +199,10 @@ async def test_model_deletion_propagates_to_controller_and_cluster_storage(tmp_p
     bridge = create_app(settings(tmp_path, "bridge-delete"))
     controller_job = staged_job(controller, b"controller-copy")
     cluster_job = staged_job(bridge, b"cluster-copy")
+    controller_job.status = "completed"
+    cluster_job.status = "completed"
+    controller.state.runtime.store.save_download(controller_job)
+    bridge.state.runtime.store.save_download(cluster_job)
     controller.state.model_relay.transport = httpx.ASGITransport(app=bridge)
 
     result = await controller.state.model_manager.delete_model("acme/model")

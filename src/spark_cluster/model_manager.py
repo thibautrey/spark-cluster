@@ -4,8 +4,8 @@ import json
 import math
 import os
 import re
-import signal
 import shutil
+import signal
 import sys
 import threading
 import time

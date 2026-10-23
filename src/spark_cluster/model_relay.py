@@ -185,7 +185,9 @@ class ModelRelay:
                 )
             response.raise_for_status()
             result = ModelMutationResult.model_validate(response.json())
-            return result.model_copy(update={"cluster_deleted": result.controller_deleted or result.cluster_deleted})
+            return result.model_copy(
+                update={"cluster_deleted": result.controller_deleted or result.cluster_deleted}
+            )
 
     def _verify_manifest(self, manifest: dict, job: DownloadJob) -> None:
         signature = str(manifest.pop("signature", ""))
