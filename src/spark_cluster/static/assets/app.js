@@ -667,9 +667,12 @@ function renderLogLines() {
   const level = $('log-level').value;
   const visible = logEntries.filter(entry => (!instance || entry.pod === instance) && (!level || entry.level === level));
   const terminal = $('log-terminal');
+  const hasLogs = logEntries.length > 0;
+  $('logs-toolbar').hidden = !hasLogs;
+  $('log-footer').hidden = !hasLogs;
   $('log-count').textContent = `${visible.length} line${visible.length === 1 ? '' : 's'}`;
-  $('pause-logs').disabled = logEntries.length === 0;
-  $('clear-logs').disabled = logEntries.length === 0;
+  $('pause-logs').disabled = !hasLogs;
+  $('clear-logs').disabled = !hasLogs;
   terminal.classList.toggle('empty', visible.length === 0);
   if (!visible.length) {
     terminal.innerHTML = `<div class="log-empty">${logEntries.length ? 'No matching logs' : 'No logs yet'}</div>`;
@@ -703,6 +706,8 @@ async function loadLogHistory() {
     updateLogInstances(instances);
     renderLogLines();
   } catch (error) {
+    $('logs-toolbar').hidden = true;
+    $('log-footer').hidden = true;
     $('log-terminal').classList.add('empty');
     $('log-terminal').innerHTML = `<div class="log-empty">${escapeHtml(error.message)}</div>`;
     $('pause-logs').disabled = true;
@@ -1201,6 +1206,9 @@ $('pause-logs').addEventListener('click', () => {
   if (!logsPaused) renderLogLines();
 });
 $('clear-logs').addEventListener('click', () => {
+  logsPaused = false;
+  $('pause-logs').classList.remove('active');
+  $('pause-logs').textContent = 'Pause';
   logEntries = [];
   renderLogLines();
 });

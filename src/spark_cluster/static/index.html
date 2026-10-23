@@ -313,7 +313,7 @@
         </section>
 
         <section class="panel logs-panel" id="logs" data-route-view="logs">
-          <div class="view-toolbar logs-head">
+          <div class="view-toolbar logs-head" id="logs-toolbar" hidden>
             <div class="log-controls">
               <select id="log-instance"><option value="">All instances</option></select>
               <select id="log-level"><option value="">All levels</option><option value="debug">Debug</option><option value="info">Info</option><option value="warning">Warning</option><option value="error">Error</option></select>
@@ -322,12 +322,12 @@
             </div>
           </div>
           <div class="log-terminal empty" id="log-terminal"><div class="log-empty">No logs yet</div></div>
-          <footer class="log-footer"><span><i></i>Live stream</span><span id="log-count">0 lines</span></footer>
+          <footer class="log-footer" id="log-footer" hidden><span><i></i>Live stream</span><span id="log-count">0 lines</span></footer>
         </section>
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=memory-clean-v1"></script>
+    <script src="/assets/app.js?v=logs-empty-v2"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>
