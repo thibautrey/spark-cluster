@@ -90,6 +90,54 @@ class SetupCheck(BaseModel):
     automatic: bool = False
 
 
+class FabricPort(BaseModel):
+    name: str
+    status: Literal["connected", "slow", "disconnected", "unknown"]
+    carrier: bool
+    speed_gbps: int = 0
+    rdma: bool = False
+    rdma_device: str | None = None
+    pci_address: str | None = None
+    mac_address: str | None = None
+    mtu: int = 0
+    addresses: list[str] = Field(default_factory=list)
+
+
+class HardwareNode(BaseModel):
+    address: str
+    hostname: str
+    role: Literal["head", "worker"]
+    status: Literal["pass", "warning", "error", "pending"]
+    ports: list[FabricPort] = Field(default_factory=list)
+
+
+class FabricLink(BaseModel):
+    source: str
+    target: str
+    status: Literal["pass", "warning", "error", "pending"]
+    source_port: str | None = None
+    target_port: str | None = None
+    speed_gbps: int = 0
+    message: str
+
+
+class HardwareInstruction(BaseModel):
+    status: Literal["pass", "warning", "error", "info"]
+    title: str
+    detail: str
+
+
+class HardwareTopology(BaseModel):
+    topology: Literal["single", "direct", "switch"]
+    verdict: Literal["pass", "warning", "error", "pending"]
+    expected_cables: int
+    detected_cables: int
+    summary: str
+    nodes: list[HardwareNode]
+    links: list[FabricLink]
+    instructions: list[HardwareInstruction]
+
+
 class SetupStep(BaseModel):
     id: str
     label: str
@@ -104,6 +152,7 @@ class SetupJob(BaseModel):
     status: Literal["queued", "running", "blocked", "failed", "ready"] = "queued"
     steps: list[SetupStep]
     checks: list[SetupCheck] = Field(default_factory=list)
+    hardware_topology: HardwareTopology | None = None
     logs: list[dict[str, str]] = Field(default_factory=list)
     dashboard_url: str | None = None
     error: str | None = None

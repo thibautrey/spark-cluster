@@ -212,8 +212,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/v1/setup/check", dependencies=[Depends(require_model_token)])
     async def setup_check(request: SetupRequest):
-        checks = await setup_service.preflight(request)
-        return {"checks": checks, "nodes": request.nodes}
+        return await setup_service.inspect_hardware(request)
+
+    @app.post("/api/v1/setup/hardware", dependencies=[Depends(require_model_token)])
+    async def setup_hardware(request: SetupRequest):
+        return await setup_service.inspect_hardware(request)
 
     @app.post("/api/v1/setup/jobs", status_code=202, dependencies=[Depends(require_model_token)])
     async def start_setup(request: SetupRequest):

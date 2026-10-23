@@ -10,6 +10,8 @@ cache storage, per-node telemetry, capacity planning, and a live cluster dashboa
 
 - **Guided cluster setup** — discover LAN machines, verify SSH and GB10 compatibility, configure roles,
   install cluster services, diagnose failures and resume interrupted setup from the dashboard.
+- **Visual hardware preparation** — inspect ConnectX-7 carrier, RDMA devices, negotiated speed and
+  point-to-point subnets, then show the exact missing cable on 2-node, 3-node ring or switch diagrams.
 - **External controller mode** — host the dashboard on another Linux, macOS, NAS, VM, or container
   host and transparently control a Spark cluster through its authenticated LAN bridge.
 - **Distributed inference** — a Ray-backed vLLM runtime with tensor and pipeline parallel settings.
@@ -216,6 +218,7 @@ not in the dashboard.
 | `GET /api/v1/control` | Aggregated runtime, model, download, and launch dashboard state |
 | `WS /api/v1/stream` | Live dashboard updates |
 | `POST /api/v1/setup/connect` | Attach this dashboard to an existing LAN bridge |
+| `POST /api/v1/setup/hardware` | Detect ports and return the visual physical-topology plan |
 | `GET /api/v1/controller/verify` | Authenticate and identify a cluster bridge |
 | `GET /metrics` | Prometheus exposition |
 

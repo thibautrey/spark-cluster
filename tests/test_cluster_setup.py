@@ -308,7 +308,12 @@ async def test_concurrent_setups_are_rejected(tmp_path):
 def test_live_setup_requires_opt_in_and_admin_authentication(tmp_path):
     app = create_app(settings(tmp_path))
     with TestClient(app) as client:
-        for path in ["/api/v1/setup/discover", "/api/v1/setup/check", "/api/v1/setup/jobs"]:
+        for path in [
+            "/api/v1/setup/discover",
+            "/api/v1/setup/hardware",
+            "/api/v1/setup/check",
+            "/api/v1/setup/jobs",
+        ]:
             assert client.post(path, json={}).status_code == 401
         assert client.get("/api/v1/setup").status_code == 401
         assert client.post("/api/v1/setup/jobs/missing/resume").status_code == 401

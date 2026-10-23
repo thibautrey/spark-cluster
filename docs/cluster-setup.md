@@ -78,6 +78,29 @@ using the selected source addresses. These checks establish reachability, not me
 NCCL performance. Use Sync's link-speed test and a model launch for those checks. One Spark needs no
 fabric step.
 
+### Visual cable assistant
+
+After selecting head and worker roles, the dashboard immediately draws the expected physical layout:
+
+- two Sparks: one direct cable;
+- three Sparks with direct links: three cables forming a triangle, with every Spark connected to the
+  other two;
+- two to four Sparks through a switch: one cable from every Spark to the same switch;
+- one Spark: management Ethernet and power only.
+
+Select **Inspect cables** after verifying SSH fingerprints. The read-only probe maps each Linux network
+interface to its PCI device and `mlx5`/RDMA device, then reads carrier state, negotiated speed, MTU,
+MAC address, IP prefix, RDMA port state and neighbor table. Pairwise point-to-point subnets identify
+direct cables. Switch layouts require one active link from every selected node. Links at or above the
+documented 184 Gbit/s lower bound appear green; slower carrier appears amber; missing expected links
+appear red and block installation.
+
+The result names the affected Sparks and the detected interface or available ConnectX-7 port. The
+diagram then gives a numbered instruction such as connecting one node's port to a particular peer or
+to the switch. Reseat the cable, wait for the port LEDs, and run inspection again. The assistant does
+not infer a healthy cable from interface presence alone, and the complete preflight repeats the same
+physical-topology gate before any installation changes.
+
 ## What installation does
 
 The review page lists exact machines, users and roles before applying changes. Steps are persisted in
@@ -146,6 +169,7 @@ All setup endpoints use the model administration bearer token in live mode.
 | `GET /api/v1/setup` | Mode, enablement, saved jobs and progress logs |
 | `POST /api/v1/setup/connect` | Authenticate and persist an existing LAN bridge |
 | `POST /api/v1/setup/discover` | mDNS discovery and optional bounded LAN probes |
+| `POST /api/v1/setup/hardware` | Inspect ports and build the physical cable diagram |
 | `POST /api/v1/setup/check` | Read-only preflight and detected node fabric addresses |
 | `POST /api/v1/setup/jobs` | Start a reviewed installation |
 | `POST /api/v1/setup/jobs/{id}/resume` | Revalidate and resume an interrupted installation |

@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .config import Settings
+from .hardware import build_hardware_topology
 from .setup_models import (
     DiscoveryRequest,
     SetupCheck,
@@ -176,6 +177,7 @@ class ClusterSetupService:
         self.lock = asyncio.Lock()
         self.discovery_lock = asyncio.Lock()
         self.on_cluster_ready: Callable[[SetupJob], Awaitable[None]] | None = None
+        self.last_hardware_topology = None
 
     @property
     def enabled(self) -> bool:
@@ -322,8 +324,22 @@ class ClusterSetupService:
             self._no_active_job()
             return await self._preflight(request)
 
+    async def inspect_hardware(self, request: SetupRequest) -> dict:
+        self.require_enabled()
+        async with self.lock:
+            self._no_active_job()
+            checks = await self._preflight(request)
+            return {
+                "checks": checks,
+                "nodes": request.nodes,
+                "topology": self.last_hardware_topology,
+            }
+
     async def _preflight(self, request: SetupRequest) -> list[SetupCheck]:
         if self.mode == "demo":
+            self.last_hardware_topology = build_hardware_topology(
+                request, {}, simulated=True
+            )
             return [
                 SetupCheck(
                     node=node.address,
@@ -428,8 +444,8 @@ class ClusterSetupService:
                         for address in iface["addresses"]
                     ]
                     addresses = [address for address in addresses if _is_lan(address)]
-                    if len(addresses) == 1:
-                        node.fabric_address = addresses[0]
+                    if addresses:
+                        node.fabric_address = sorted(addresses)[0]
                 selected = node.fabric_address
                 active = [
                     iface
@@ -484,8 +500,7 @@ class ClusterSetupService:
             for node in request.nodes:
                 peers = [peer.fabric_address for peer in request.nodes if peer != node]
                 command = "\n".join(
-                    f"ping -I {shlex.quote(node.fabric_address)} -c 2 -W 2 "
-                    f"{shlex.quote(peer)} >/dev/null"
+                    f"ping -c 2 -W 2 {shlex.quote(peer)} >/dev/null"
                     for peer in peers
                 )
                 try:
@@ -508,6 +523,19 @@ class ClusterSetupService:
                             remedy="Check Sync routes, QSFP cabling, switch ports and ICMP policy.",
                         )
                     )
+        self.last_hardware_topology = build_hardware_topology(request, facts)
+        if self.last_hardware_topology.verdict in {"error", "warning"}:
+            checks.append(
+                SetupCheck(
+                    node="cluster",
+                    code="physical-topology",
+                    status=self.last_hardware_topology.verdict,
+                    message=self.last_hardware_topology.summary,
+                    remedy=(
+                        "Follow the cabling diagram, wait for link LEDs, then run hardware detection again."
+                    ),
+                )
+            )
         return checks
 
     async def launch(self, request: SetupRequest) -> SetupJob:
@@ -563,6 +591,7 @@ class ClusterSetupService:
                 self.log(job, current.label)
                 if current.id == "preflight":
                     job.checks = await self._preflight(job.request)
+                    job.hardware_topology = self.last_hardware_topology
                     if any(check.status == "error" for check in job.checks):
                         job.status = "blocked"
                         raise SetupFailure("Resolve the highlighted diagnostics, then resume setup")

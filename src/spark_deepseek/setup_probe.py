@@ -19,6 +19,33 @@ def command(*args):
         return ""
 
 
+def read(path: Path, default=""):
+    try:
+        return path.read_text().strip()
+    except OSError:
+        return default
+
+
+def rdma_details(interface: str):
+    devices = []
+    for device_path in Path("/sys/class/infiniband").glob("*"):
+        if not (device_path / "device" / "net" / interface).exists():
+            continue
+        ports = []
+        for port_path in (device_path / "ports").glob("*"):
+            ports.append(
+                {
+                    "port": port_path.name,
+                    "state": read(port_path / "state"),
+                    "physical_state": read(port_path / "phys_state"),
+                    "rate": read(port_path / "rate"),
+                    "link_layer": read(port_path / "link_layer"),
+                }
+            )
+        devices.append({"device": device_path.name, "ports": ports})
+    return devices
+
+
 if __name__ == "__main__":
     interfaces = []
     for item in json.loads(command("ip", "-j", "-4", "addr") or "[]"):
@@ -27,12 +54,36 @@ if __name__ == "__main__":
             speed = int((path / "speed").read_text().strip())
         except (OSError, ValueError):
             speed = 0
+        details = rdma_details(item["ifname"])
+        device_path = path / "device"
+        try:
+            pci_address = device_path.resolve().name
+        except OSError:
+            pci_address = None
+        try:
+            driver = (device_path / "driver").resolve().name
+        except OSError:
+            driver = None
         interfaces.append(
             {
                 "name": item["ifname"],
                 "speed_mbps": speed,
                 "addresses": [a["local"] for a in item.get("addr_info", [])],
+                "address_info": [
+                    {"local": a["local"], "prefixlen": a["prefixlen"]}
+                    for a in item.get("addr_info", [])
+                ],
                 "up": item.get("operstate") == "UP",
+                "carrier": read(path / "carrier") == "1",
+                "mtu": int(item.get("mtu", 0) or 0),
+                "mac_address": item.get("address"),
+                "pci_address": pci_address,
+                "driver": driver,
+                "rdma": bool(details),
+                "rdma_device": details[0]["device"] if details else None,
+                "rdma_ports": [port for device in details for port in device["ports"]],
+                "neighbors": json.loads(command("ip", "-j", "neigh", "show", "dev", item["ifname"])
+                                        or "[]"),
             }
         )
     memory = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines())
