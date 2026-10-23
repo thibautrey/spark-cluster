@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=clean-detail-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=simple-launch-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -232,6 +232,8 @@
           <div class="launch-layout">
             <form class="launch-form" id="launch-form">
               <label>Local model<select id="launch-model" required><option value="">Loading models…</option></select></label>
+              <label>Optimization goal<select id="launch-workload"><option value="balanced">Balanced</option><option value="latency">Lowest latency</option><option value="throughput">Maximum throughput</option><option value="long-context">Long context</option></select></label>
+              <details class="launch-options" id="launch-options"><summary><span>Launch options</span><small>Automatic defaults</small></summary><div class="launch-options-body">
               <label>Served model name<input id="served-model-name" placeholder="deepseek-r1" required /></label>
               <div class="form-row three">
                 <label>Context<select id="launch-context"><option value="131072">128k</option><option value="262144">256k</option><option value="524288" selected>512k</option><option value="1048576">1M</option></select></label>
@@ -242,10 +244,7 @@
                 <label>Weight bits<select id="launch-bits"><option value="4">4-bit</option><option value="8">8-bit</option><option value="16">BF16 / FP16</option></select></label>
                 <label>GPU memory utilization<input id="gpu-memory-utilization" type="number" min="0.1" max="0.99" step="0.01" value="0.82" /></label>
               </div>
-              <div class="form-row">
-                <label>Optimization goal<select id="launch-workload"><option value="balanced">Balanced</option><option value="latency">Lowest latency</option><option value="throughput">Maximum throughput</option><option value="long-context">Long context</option></select></label>
-                <label>Concurrent sequences<input id="launch-concurrency" type="number" min="1" max="1024" value="1" /></label>
-              </div>
+              <label>Concurrent sequences<input id="launch-concurrency" type="number" min="1" max="1024" value="1" /></label>
               <details class="runtime-advanced">
                 <summary>Advanced runtime optimization</summary>
                 <div class="form-row">
@@ -260,8 +259,9 @@
                 <div class="runtime-switches"><label><input id="launch-expert-parallel" type="checkbox" /> Expert parallel</label><label><input id="launch-eplb" type="checkbox" /> Expert load balancing</label><label><input id="launch-cuda-graphs" type="checkbox" checked /> CUDA graphs</label><label><input id="launch-chunked-prefill" type="checkbox" checked /> Chunked prefill</label></div>
                 <div class="form-row"><label>CPU cache GiB<input id="launch-cache-cpu" type="number" min="0" max="512" value="32" /></label><label>NVMe cache GiB<input id="launch-cache-disk" type="number" min="0" max="16384" value="1536" /></label></div>
               </details>
-              <div class="performance-plan" id="performance-plan"><span>◎</span><div><b>Automatic performance plan</b><small>Select a model to apply model, workload, and fabric-aware runtime settings.</small></div></div>
               <label>Admin token <span class="optional">optional</span><input id="launch-admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label>
+              </div></details>
+              <div class="performance-plan" id="performance-plan"><span>◎</span><div><b>Automatic performance plan</b><small>Select a model to apply model, workload, and fabric-aware runtime settings.</small></div></div>
               <div class="fit-result neutral" id="launch-fit"><span class="fit-symbol">?</span><div><b>Select a model</b><small>The launch is revalidated against current cluster capacity.</small></div></div>
               <button class="primary launch-button" id="launch-model-button" type="submit" disabled>Launch on cluster</button>
             </form>

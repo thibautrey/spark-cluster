@@ -23,7 +23,9 @@ def make_client(tmp_path):
 
 def test_dashboard_and_live_snapshot(tmp_path):
     with make_client(tmp_path) as client:
-        assert client.get("/").status_code == 200
+        page = client.get("/")
+        assert page.status_code == 200
+        assert '<details class="launch-options" id="launch-options">' in page.text
         response = client.get("/api/v1/snapshot")
         assert response.status_code == 200
         payload = response.json()
