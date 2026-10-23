@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=model-header-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=compact-token-prompt-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -143,9 +143,11 @@
           <section class="active-downloads" id="active-downloads" aria-live="polite" hidden>
             <div class="active-downloads-head">
               <div><p class="eyebrow"><i></i>ACTIVE DOWNLOADS</p><h3 id="active-download-title">Downloading models</h3></div>
-              <span id="active-download-count">0 active</span>
+              <div class="active-downloads-head-actions">
+                <button class="hf-token-prompt" id="hf-token-prompt" type="button" aria-label="Add a Hugging Face token to reduce download throttling" hidden><span aria-hidden="true">HF</span><strong>Add token</strong></button>
+                <span id="active-download-count">0 active</span>
+              </div>
             </div>
-            <button class="hf-token-prompt" id="hf-token-prompt" type="button" hidden><span aria-hidden="true">HF</span><span><b>Faster Hub downloads</b><small>Add a read token to reduce throttling.</small></span><strong>Add token</strong></button>
             <div class="bottom-sheet hf-token-sheet" id="hf-token-sheet" hidden>
               <button class="bottom-sheet-backdrop" id="hf-token-backdrop" type="button" tabindex="-1" aria-label="Close Hugging Face token setup"></button>
               <section class="bottom-sheet-panel hf-token-sheet-panel" role="dialog" aria-modal="true" aria-labelledby="hf-token-title">
