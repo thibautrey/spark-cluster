@@ -17,7 +17,7 @@ from spark_deepseek.cluster_setup import (
 )
 from spark_deepseek.config import Settings
 from spark_deepseek.setup_models import DiscoveryRequest, SetupRequest
-from spark_deepseek.setup_scripts import chart_archive
+from spark_deepseek.setup_scripts import chart_archive, registry_configuration
 from spark_deepseek.store import SnapshotStore
 
 PIN = "SHA256:" + "A" * 43
@@ -367,6 +367,25 @@ def test_chart_is_packaged_in_bootstrap_archive():
     with tarfile.open(fileobj=io.BytesIO(chart_archive()), mode="r:gz") as archive:
         assert "spark-deepseek/Chart.yaml" in archive.getnames()
         assert "spark-deepseek/templates/runtime.yaml" in archive.getnames()
+
+
+def test_lan_registry_configuration_is_scoped_and_digest_ready(tmp_path):
+    config = settings(
+        tmp_path,
+        setup_registry_endpoint="http://192.168.50.5:5002",
+        setup_image_repository="192.168.50.5:5002/spark-deepseek",
+        setup_image_digest="sha256:" + "a" * 64,
+    )
+    script = registry_configuration(config)
+    assert "registries.yaml" in script
+    assert "systemctl restart k3s" in script
+    config.setup_registry_endpoint = "http://8.8.8.8:5002"
+    with pytest.raises(SetupFailure, match="private LAN"):
+        registry_configuration(config)
+    config.setup_registry_endpoint = "http://192.168.50.5:5002"
+    config.setup_image_repository = "192.168.50.6:5002/spark-deepseek"
+    with pytest.raises(SetupFailure, match="must belong"):
+        registry_configuration(config)
 
 
 def test_packaged_chart_matches_development_chart():

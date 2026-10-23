@@ -16,7 +16,7 @@ spec:
       runtimeClassName: nvidia
       containers:
         - name: agent
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ include "spark-deepseek.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: ["agent", "--server", "http://spark-deepseek:8080", "--node-id", "$(NODE_NAME)", "--interval", {{ .Values.agent.intervalSeconds | quote }}]
           env:

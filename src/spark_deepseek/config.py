@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     setup_ssh_config: Path | None = None
     setup_image_repository: str = "ghcr.io/thibautrey/spark-deepseek"
     setup_image_tag: str = "latest"
+    setup_image_digest: str | None = None
+    setup_registry_endpoint: str | None = None
     remote_cluster_url: str | None = None
 
     @property

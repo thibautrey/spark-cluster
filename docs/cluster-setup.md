@@ -110,6 +110,13 @@ volume mounted. Model capacity and runtime readiness are validated separately. L
 deferred head and required Ray workers. The OpenAI-compatible runtime is exposed on head NodePort
 **30000**, and the API panel displays that LAN URL after launch.
 
+For an image hosted by an HTTP registry on the trusted LAN, set `SETUP_REGISTRY_ENDPOINT` to its origin
+and `SETUP_IMAGE_REPOSITORY` to a repository under the same host and port. The assistant writes the
+matching k3s mirror configuration on every selected node before installation. Set
+`SETUP_IMAGE_DIGEST=sha256:...` to pin the exact manifest; the generated Kubernetes workloads then use
+`repository@digest`, so a mutable or replaced registry tag cannot change the deployed image. Registry
+write access should remain restricted to administrators even when every deployment is digest-pinned.
+
 The head is a single control-plane and storage server. Keep API, Ray, NFS and dashboard ports on a
 trusted private network. Allow SSH 22, Kubernetes 6443/10250, k3s overlay 8472/UDP, NFS 2049 and
 NodePort 30080 where needed; Ray/NCCL host-network traffic must be reachable among fabric peers.

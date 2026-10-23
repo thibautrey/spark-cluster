@@ -17,7 +17,7 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: control-plane
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          image: {{ include "spark-deepseek.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: ["serve"]
           env:

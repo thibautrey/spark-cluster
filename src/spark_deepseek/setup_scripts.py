@@ -3,11 +3,14 @@
 import base64
 import io
 import json
+import re
 import shlex
 import tarfile
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .cluster_setup import SetupFailure
+from .setup_models import private_address
 
 K3S_VERSION = "v1.34.1+k3s1"
 HELM_VERSION = "v3.19.0"
@@ -26,6 +29,43 @@ def chart_archive() -> bytes:
 
 def cluster_ip(node):
     return node.fabric_address or node.address
+
+
+def registry_configuration(settings) -> str:
+    endpoint = settings.setup_registry_endpoint
+    if not endpoint:
+        return ""
+    parsed = urlparse(endpoint)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise SetupFailure("SETUP_REGISTRY_ENDPOINT must be an HTTP(S) LAN origin")
+    try:
+        private_address(parsed.hostname)
+        port = parsed.port
+    except ValueError as error:
+        raise SetupFailure("SETUP_REGISTRY_ENDPOINT must use a private LAN IPv4 address") from error
+    repository_prefix = f"{parsed.hostname}:{port}" if port else parsed.hostname
+    if not settings.setup_image_repository.startswith(repository_prefix + "/"):
+        raise SetupFailure("SETUP_IMAGE_REPOSITORY must belong to the configured LAN registry")
+    registry = (
+        f'mirrors:\n  "{repository_prefix}":\n'
+        f"    endpoint:\n      - \"{endpoint.rstrip('/')}\"\n"
+    )
+    encoded = base64.b64encode(registry.encode()).decode()
+    return (
+        "sudo -n install -d -m 755 /etc/rancher/k3s\n"
+        f"echo {shlex.quote(encoded)} | base64 -d | sudo -n tee "
+        "/etc/rancher/k3s/registries.yaml >/dev/null\n"
+        "if sudo -n systemctl is-active --quiet k3s; then "
+        "sudo -n systemctl restart k3s; "
+        "elif sudo -n systemctl is-active --quiet k3s-agent; then "
+        "sudo -n systemctl restart k3s-agent; fi\n"
+    )
 
 
 def guard(name, role):
@@ -65,6 +105,7 @@ sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
 command -v nvidia-container-runtime >/dev/null
 sudo -n mkdir -p /var/lib/spark-deepseek
 """
+                + registry_configuration(service.settings)
             )
             await run(node, script, timeout=600)
             service.log(job, "NVIDIA container toolkit and NFS client ready", node.address)
@@ -244,10 +285,14 @@ sudo -n install -m 0755 "$helmdir/linux-$arch/helm" /usr/local/bin/helm
             "type": "Opaque",
             "data": {"token": token64},
         }
+        digest = service.settings.setup_image_digest or ""
+        if digest and not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+            raise SetupFailure("SETUP_IMAGE_DIGEST must be a lowercase sha256 digest")
         values = {
             "image": {
                 "repository": service.settings.setup_image_repository,
                 "tag": service.settings.setup_image_tag,
+                "digest": digest,
             },
             "controlPlane": {
                 "clusterName": name,

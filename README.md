@@ -251,6 +251,8 @@ All control-plane settings use the `SPARK_DEEPSEEK_` prefix:
 | `SETUP_SSH_CONFIG` | unset | Optional dedicated OpenSSH client configuration |
 | `SETUP_IMAGE_REPOSITORY` | `ghcr.io/thibautrey/spark-deepseek` | Dashboard/agent image installed by setup |
 | `SETUP_IMAGE_TAG` | `latest` | Published dashboard/agent image version |
+| `SETUP_IMAGE_DIGEST` | unset | Optional immutable `sha256:` image digest used instead of the tag |
+| `SETUP_REGISTRY_ENDPOINT` | unset | Optional private LAN registry origin configured on k3s nodes |
 | `REMOTE_CLUSTER_URL` | unset | Existing bridge URL, such as `http://192.168.1.42:30080` |
 
 ## Development
