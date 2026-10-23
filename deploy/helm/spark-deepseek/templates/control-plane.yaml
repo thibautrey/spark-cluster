@@ -1,0 +1,61 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "spark-deepseek.name" . }}
+  labels: {{- include "spark-deepseek.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.controlPlane.replicas }}
+  selector:
+    matchLabels: { app.kubernetes.io/name: spark-deepseek, app.kubernetes.io/component: control-plane }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: spark-deepseek, app.kubernetes.io/component: control-plane }
+    spec:
+      containers:
+        - name: control-plane
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve"]
+          env:
+            - { name: SPARK_DEEPSEEK_MODE, value: {{ .Values.controlPlane.mode | quote }} }
+            - { name: SPARK_DEEPSEEK_DATABASE_PATH, value: /data/spark-deepseek.db }
+            - { name: SPARK_DEEPSEEK_RUNTIME_MODEL, value: {{ .Values.runtime.model | quote }} }
+            - { name: SPARK_DEEPSEEK_RUNTIME_CONTEXT_LENGTH, value: {{ .Values.runtime.maxModelLen | quote }} }
+            - { name: SPARK_DEEPSEEK_RUNTIME_TENSOR_PARALLEL, value: {{ .Values.runtime.tensorParallelSize | quote }} }
+            - { name: SPARK_DEEPSEEK_RUNTIME_PIPELINE_PARALLEL, value: {{ .Values.runtime.pipelineParallelSize | quote }} }
+            - name: SPARK_DEEPSEEK_INGEST_TOKEN
+              valueFrom: { secretKeyRef: { name: spark-deepseek-ingest, key: token } }
+          ports: [{ name: http, containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 3, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 10, periodSeconds: 15 }
+          volumeMounts: [{ name: data, mountPath: /data }]
+          resources: {{- toYaml .Values.resources.controlPlane | nindent 12 }}
+      volumes:
+        - name: data
+          {{- if .Values.controlPlane.persistence.enabled }}
+          persistentVolumeClaim: { claimName: spark-deepseek-data }
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-deepseek
+spec:
+  type: {{ .Values.controlPlane.service.type }}
+  selector: { app.kubernetes.io/name: spark-deepseek, app.kubernetes.io/component: control-plane }
+  ports: [{ name: http, port: {{ .Values.controlPlane.service.port }}, targetPort: http }]
+{{- if .Values.controlPlane.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: spark-deepseek-data
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- if .Values.controlPlane.persistence.storageClass }}
+  storageClassName: {{ .Values.controlPlane.persistence.storageClass }}
+  {{- end }}
+  resources: { requests: { storage: {{ .Values.controlPlane.persistence.size }} } }
+{{- end }}

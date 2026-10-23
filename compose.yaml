@@ -1,0 +1,15 @@
+services:
+  control-plane:
+    build: .
+    environment:
+      SPARK_DEEPSEEK_MODE: demo
+      SPARK_DEEPSEEK_DATABASE_PATH: /data/spark-deepseek.db
+      SPARK_DEEPSEEK_CLUSTER_NAME: gb10-lab
+    ports:
+      - "8080:8080"
+    volumes:
+      - dashboard-data:/data
+    restart: unless-stopped
+
+volumes:
+  dashboard-data:

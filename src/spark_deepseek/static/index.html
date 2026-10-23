@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#080b12" />
+    <title>Spark DeepSeek — Cluster control plane</title>
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/app.css" />
+  </head>
+  <body>
+    <div class="noise"></div>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="#">
+          <span class="brand-mark"><i></i><i></i><i></i></span>
+          <span><b>Spark</b><small>DeepSeek</small></span>
+        </a>
+        <nav>
+          <a class="active" href="#overview"><span>⌁</span>Overview</a>
+          <a href="#topology"><span>◇</span>Topology</a>
+          <a href="#cache"><span>◫</span>KV cache</a>
+          <a href="#memory"><span>▤</span>Memory</a>
+        </nav>
+        <div class="runtime-card">
+          <span class="eyebrow">ACTIVE RUNTIME</span>
+          <b id="model-short">DeepSeek R1</b>
+          <span><i class="status-dot"></i><span id="runtime-status">Healthy</span></span>
+          <dl><dt>Context</dt><dd id="runtime-context">512k</dd><dt>Parallel</dt><dd id="runtime-parallel">4 × 1</dd></dl>
+        </div>
+        <div class="sidebar-foot"><span id="connection-dot"></span><span id="connection-label">Connecting</span><small>v0.1</small></div>
+      </aside>
+
+      <main>
+        <header>
+          <div><p class="eyebrow">CONTROL PLANE / <span id="cluster-name">GB10 LAB</span></p><h1>Cluster overview</h1></div>
+          <div class="header-actions"><span class="live"><i></i>LIVE</span><span class="timestamp" id="timestamp">—</span></div>
+        </header>
+
+        <section class="metrics" id="overview">
+          <article class="metric"><span>Cluster output</span><strong><b id="output-tps">—</b><small> tok/s</small></strong><canvas id="throughput-spark" width="180" height="42"></canvas><footer><em>↗</em> live generation rate</footer></article>
+          <article class="metric accent"><span>KV cache hit rate</span><strong><b id="hit-rate">—</b><small>%</small></strong><div class="ring" id="hit-ring"><span></span></div><footer><em>↗</em> across all tiers</footer></article>
+          <article class="metric"><span>Unified memory</span><strong><b id="memory-used">—</b><small> GiB</small></strong><div class="bar"><i id="memory-bar"></i></div><footer><span id="memory-total">— GiB total</span></footer></article>
+          <article class="metric"><span>Prefix reuse</span><strong><b id="prefix-reuse">—</b><small> tokens</small></strong><div class="stack"><i></i><i></i><i></i><i></i></div><footer>avoided recomputation</footer></article>
+        </section>
+
+        <section class="grid-main">
+          <article class="panel topology-panel" id="topology">
+            <div class="panel-head"><div><p class="eyebrow">FABRIC</p><h2>Cluster topology</h2></div><span class="pill" id="node-count">0 nodes</span></div>
+            <div class="topology" id="topology-map"><div class="fabric-line"></div></div>
+            <div class="legend"><span><i class="green"></i>Healthy</span><span><i class="amber"></i>Degraded</span><span><i class="muted"></i>Offline</span><span class="fabric-label">200G fabric</span></div>
+          </article>
+
+          <article class="panel cache-panel" id="cache">
+            <div class="panel-head"><div><p class="eyebrow">MULTI-TIER</p><h2>KV cache</h2></div><span class="pill persistent">● persistent</span></div>
+            <div id="cache-tiers" class="cache-tiers"></div>
+          </article>
+        </section>
+
+        <section class="panel memory-panel" id="memory">
+          <div class="panel-head"><div><p class="eyebrow">UNIFIED MEMORY</p><h2>Node allocation</h2></div><div class="segmented"><button class="active">Allocation</button><button>Utilization</button></div></div>
+          <div class="memory-grid" id="memory-grid"></div>
+        </section>
+      </main>
+    </div>
+    <script src="/assets/app.js"></script>
+  </body>
+</html>

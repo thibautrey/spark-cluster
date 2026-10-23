@@ -1,0 +1,174 @@
+import asyncio
+import contextlib
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+
+from .capacity import calculate_capacity
+from .config import Settings
+from .models import CapacityPlan, CapacityRequest, ClusterSnapshot, ModelRuntime, NodeSnapshot
+from .prometheus import render_metrics
+from .simulator import ClusterSimulator
+from .store import SnapshotStore
+
+
+class Runtime:
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self.store = SnapshotStore(settings.database_path)
+        self.simulator = ClusterSimulator(settings.cluster_name)
+        self.latest = self.store.latest()
+        self.subscribers: set[asyncio.Queue[ClusterSnapshot]] = set()
+        self.task: asyncio.Task | None = None
+
+    async def start(self) -> None:
+        if self.settings.mode == "demo":
+            self.task = asyncio.create_task(self._simulation_loop())
+
+    async def stop(self) -> None:
+        if self.task:
+            self.task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self.task
+        self.store.close()
+
+    async def publish(self, snapshot: ClusterSnapshot) -> None:
+        self.latest = snapshot
+        await asyncio.to_thread(self.store.append, snapshot)
+        for queue in tuple(self.subscribers):
+            if queue.full():
+                with contextlib.suppress(asyncio.QueueEmpty):
+                    queue.get_nowait()
+            queue.put_nowait(snapshot)
+
+    async def _simulation_loop(self) -> None:
+        while True:
+            await self.publish(self.simulator.snapshot())
+            if self.simulator.tick % 120 == 0:
+                await asyncio.to_thread(self.store.prune, self.settings.history_retention_hours)
+            await asyncio.sleep(self.settings.sample_interval_seconds)
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or Settings()
+    runtime = Runtime(settings)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        await runtime.start()
+        yield
+        await runtime.stop()
+
+    app = FastAPI(title=settings.title, version="0.1.0", lifespan=lifespan)
+    app.state.runtime = runtime
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origin_list,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
+    static_dir = Path(__file__).parent / "static"
+    app.mount("/assets", StaticFiles(directory=static_dir / "assets"), name="assets")
+
+    def require_token(authorization: str | None = Header(default=None)) -> None:
+        expected = settings.ingest_token
+        if expected and authorization != f"Bearer {expected}":
+            raise HTTPException(status_code=401, detail="Invalid ingest token")
+
+    @app.get("/", include_in_schema=False)
+    async def index() -> FileResponse:
+        return FileResponse(static_dir / "index.html")
+
+    @app.get("/healthz")
+    async def health() -> dict:
+        return {"status": "ok", "mode": settings.mode, "has_snapshot": runtime.latest is not None}
+
+    @app.get("/api/v1/snapshot", response_model=ClusterSnapshot)
+    async def snapshot() -> ClusterSnapshot:
+        if runtime.latest is None:
+            raise HTTPException(status_code=503, detail="Waiting for the first cluster sample")
+        return runtime.latest
+
+    @app.get("/api/v1/history")
+    async def history(minutes: int = Query(default=30, ge=1, le=1440)) -> list[dict]:
+        return await asyncio.to_thread(runtime.store.history, minutes)
+
+    @app.post(
+        "/api/v1/snapshot", response_model=ClusterSnapshot, dependencies=[Depends(require_token)]
+    )
+    async def ingest(snapshot: ClusterSnapshot) -> ClusterSnapshot:
+        await runtime.publish(snapshot)
+        return snapshot
+
+    @app.post(
+        "/api/v1/nodes", response_model=ClusterSnapshot, dependencies=[Depends(require_token)]
+    )
+    async def ingest_node(node: NodeSnapshot) -> ClusterSnapshot:
+        if runtime.latest is None:
+            updated = ClusterSnapshot(
+                cluster_name=settings.cluster_name,
+                nodes=[node],
+                cache_tiers=[],
+                runtime=ModelRuntime(
+                    model=settings.runtime_model,
+                    quantization=settings.runtime_quantization,
+                    context_length=settings.runtime_context_length,
+                    tensor_parallel=settings.runtime_tensor_parallel,
+                    pipeline_parallel=settings.runtime_pipeline_parallel,
+                ),
+                total_input_tokens_per_second=node.input_tokens_per_second,
+                total_output_tokens_per_second=node.output_tokens_per_second,
+            )
+        else:
+            nodes = [current for current in runtime.latest.nodes if current.id != node.id] + [node]
+            updated = runtime.latest.model_copy(
+                update={
+                    "timestamp": datetime.now(UTC),
+                    "nodes": nodes,
+                    "total_input_tokens_per_second": sum(
+                        current.input_tokens_per_second for current in nodes
+                    ),
+                    "total_output_tokens_per_second": sum(
+                        current.output_tokens_per_second for current in nodes
+                    ),
+                }
+            )
+        await runtime.publish(updated)
+        return updated
+
+    @app.post("/api/v1/capacity", response_model=CapacityPlan)
+    async def capacity(request: CapacityRequest) -> CapacityPlan:
+        return calculate_capacity(request)
+
+    @app.get("/metrics", response_class=PlainTextResponse)
+    async def metrics() -> str:
+        if runtime.latest is None:
+            return ""
+        return render_metrics(runtime.latest)
+
+    @app.websocket("/api/v1/stream")
+    async def stream(websocket: WebSocket) -> None:
+        await websocket.accept()
+        queue: asyncio.Queue[ClusterSnapshot] = asyncio.Queue(maxsize=1)
+        runtime.subscribers.add(queue)
+        try:
+            if runtime.latest:
+                await websocket.send_json(runtime.latest.model_dump(mode="json"))
+            while True:
+                value = await queue.get()
+                await websocket.send_json(value.model_dump(mode="json"))
+        except WebSocketDisconnect:
+            pass
+        finally:
+            runtime.subscribers.discard(queue)
+
+    return app
+
+
+app = create_app()

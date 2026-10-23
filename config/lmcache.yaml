@@ -1,0 +1,7 @@
+chunk_size: 256
+local_cpu: true
+max_local_cpu_size: 32
+local_disk: "file:///var/lib/lmcache"
+max_local_disk_size: 1536
+save_decode_cache: true
+enable_blending: true

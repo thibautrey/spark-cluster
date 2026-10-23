@@ -1,0 +1,103 @@
+{{- if .Values.runtime.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-deepseek-ray-head
+spec:
+  clusterIP: None
+  selector: { app.kubernetes.io/name: spark-deepseek-runtime, app.kubernetes.io/component: head }
+  ports:
+    - { name: ray, port: 6379, targetPort: ray }
+    - { name: api, port: 8000, targetPort: api }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-deepseek-runtime-head
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: spark-deepseek-runtime, app.kubernetes.io/component: head }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: spark-deepseek-runtime, app.kubernetes.io/component: head }
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: { matchLabels: { app.kubernetes.io/name: spark-deepseek-runtime } }
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: engine
+          image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
+          imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+          command: [bash, -lc]
+          args:
+            - |
+              ray start --head --port=6379 --dashboard-host=0.0.0.0
+              exec python -m vllm.entrypoints.openai.api_server \
+                --model "{{ .Values.runtime.model }}" \
+                --served-model-name "{{ .Values.runtime.servedModelName }}" \
+                --distributed-executor-backend ray \
+                --tensor-parallel-size "{{ .Values.runtime.tensorParallelSize }}" \
+                --pipeline-parallel-size "{{ .Values.runtime.pipelineParallelSize }}" \
+                --max-model-len "{{ .Values.runtime.maxModelLen }}" \
+                --gpu-memory-utilization "{{ .Values.runtime.gpuMemoryUtilization }}" \
+                --enable-prefix-caching \
+                --kv-transfer-config '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"}' \
+                --host 0.0.0.0 --port 8000
+          env:
+            - { name: VLLM_USE_V1, value: "1" }
+            - { name: LMCACHE_CONFIG_FILE, value: /etc/lmcache/lmcache.yaml }
+          ports: [{ name: ray, containerPort: 6379 }, { name: api, containerPort: 8000 }]
+          resources:
+            limits: { nvidia.com/gpu: 1 }
+            requests: { nvidia.com/gpu: 1, memory: 96Gi, cpu: "8" }
+          volumeMounts:
+            - { name: lmcache-config, mountPath: /etc/lmcache }
+            - { name: lmcache, mountPath: /var/lib/lmcache }
+      volumes:
+        - { name: lmcache-config, configMap: { name: spark-deepseek-runtime } }
+        - { name: lmcache, hostPath: { path: {{ .Values.runtime.cache.hostPath }}, type: DirectoryOrCreate } }
+      nodeSelector: {{- toYaml .Values.runtime.nodeSelector | nindent 8 }}
+      tolerations: {{- toYaml .Values.runtime.tolerations | nindent 8 }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: spark-deepseek-runtime-worker
+spec:
+  serviceName: spark-deepseek-ray-head
+  replicas: {{ sub .Values.runtime.tensorParallelSize 1 }}
+  selector:
+    matchLabels: { app.kubernetes.io/name: spark-deepseek-runtime, app.kubernetes.io/component: worker }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: spark-deepseek-runtime, app.kubernetes.io/component: worker }
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector: { matchLabels: { app.kubernetes.io/name: spark-deepseek-runtime } }
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: ray-worker
+          image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
+          imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
+          command: [bash, -lc]
+          args: ["until (echo > /dev/tcp/spark-deepseek-ray-head/6379) 2>/dev/null; do sleep 2; done; exec ray start --address=spark-deepseek-ray-head:6379 --block"]
+          env:
+            - { name: VLLM_USE_V1, value: "1" }
+            - { name: LMCACHE_CONFIG_FILE, value: /etc/lmcache/lmcache.yaml }
+          resources:
+            limits: { nvidia.com/gpu: 1 }
+            requests: { nvidia.com/gpu: 1, memory: 96Gi, cpu: "8" }
+          volumeMounts:
+            - { name: lmcache-config, mountPath: /etc/lmcache }
+            - { name: lmcache, mountPath: /var/lib/lmcache }
+      volumes:
+        - { name: lmcache-config, configMap: { name: spark-deepseek-runtime } }
+        - { name: lmcache, hostPath: { path: {{ .Values.runtime.cache.hostPath }}, type: DirectoryOrCreate } }
+      nodeSelector: {{- toYaml .Values.runtime.nodeSelector | nindent 8 }}
+      tolerations: {{- toYaml .Values.runtime.tolerations | nindent 8 }}
+{{- end }}

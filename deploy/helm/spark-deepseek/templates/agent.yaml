@@ -1,0 +1,27 @@
+{{- if .Values.agent.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: spark-deepseek-agent
+  labels: {{- include "spark-deepseek.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels: { app.kubernetes.io/name: spark-deepseek, app.kubernetes.io/component: agent }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: spark-deepseek, app.kubernetes.io/component: agent }
+    spec:
+      hostNetwork: true
+      containers:
+        - name: agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["agent", "--server", "http://spark-deepseek:8080", "--node-id", "$(NODE_NAME)", "--interval", {{ .Values.agent.intervalSeconds | quote }}]
+          env:
+            - { name: NODE_NAME, valueFrom: { fieldRef: { fieldPath: spec.nodeName } } }
+            - name: SPARK_DEEPSEEK_INGEST_TOKEN
+              valueFrom: { secretKeyRef: { name: spark-deepseek-ingest, key: token } }
+          resources: {{- toYaml .Values.resources.agent | nindent 12 }}
+      nodeSelector: {{- toYaml .Values.agent.nodeSelector | nindent 8 }}
+      tolerations: {{- toYaml .Values.agent.tolerations | nindent 8 }}
+{{- end }}
