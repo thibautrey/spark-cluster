@@ -85,7 +85,7 @@ async function selectCluster(clusterId) {
 function render(snapshot) {
   const memoryUsed = snapshot.nodes.reduce((sum, node) => sum + node.memory.used_gib, 0);
   const memoryTotal = snapshot.nodes.reduce((sum, node) => sum + node.memory.total_gib, 0);
-  $('timestamp').textContent = new Date(snapshot.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+  $('stream-status').title = `Updated ${new Date(snapshot.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})}`;
   $('output-tps').textContent = Math.round(snapshot.total_output_tokens_per_second);
   $('hit-rate').textContent = snapshot.cache_hit_rate.toFixed(1);
   $('hit-ring').style.background = `conic-gradient(var(--green) ${snapshot.cache_hit_rate}%,#202a38 0)`;
@@ -163,11 +163,22 @@ function drawSparkline(values) {
   context.fill();
 }
 
+function setStreamStatus(state, label) {
+  $('stream-status').className = `live ${state}`;
+  $('stream-status').lastElementChild.textContent = label;
+}
+
 function connect() {
+  setStreamStatus('connecting', 'Connecting');
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const socket = new WebSocket(`${protocol}//${location.host}/api/v1/stream`);
-  socket.onmessage = event => render(JSON.parse(event.data));
+  socket.onopen = () => setStreamStatus('ready', 'Live');
+  socket.onmessage = event => {
+    setStreamStatus('ready', 'Live');
+    render(JSON.parse(event.data));
+  };
   socket.onclose = () => {
+    setStreamStatus('reconnecting', 'Reconnecting');
     setTimeout(connect, 1500);
   };
 }

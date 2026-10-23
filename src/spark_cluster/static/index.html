@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=compact-api-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=stream-status-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -32,7 +32,7 @@
       <main>
         <header>
           <div><h1 id="page-title">Cluster overview</h1></div>
-          <div class="header-actions"><label class="cluster-switch"><span>Cluster</span><select id="cluster-select" aria-label="Active cluster"><option value="">No cluster</option></select></label><label class="route-select"><span>Section</span><select id="route-select" aria-label="Dashboard section"><option value="setup">Cluster setup</option><option value="overview" selected>Overview</option><option value="api">API endpoint</option><option value="models">Models</option><option value="launch">Launch</option><option value="logs">Runtime logs</option><option value="topology">Topology</option><option value="cache">KV cache</option><option value="memory">Memory</option></select></label><span class="live"><i></i>LIVE</span><span class="timestamp" id="timestamp">—</span></div>
+          <div class="header-actions"><label class="cluster-switch"><span>Cluster</span><select id="cluster-select" aria-label="Active cluster"><option value="">No cluster</option></select></label><label class="route-select"><span>Section</span><select id="route-select" aria-label="Dashboard section"><option value="setup">Cluster setup</option><option value="overview" selected>Overview</option><option value="api">API endpoint</option><option value="models">Models</option><option value="launch">Launch</option><option value="logs">Runtime logs</option><option value="topology">Topology</option><option value="cache">KV cache</option><option value="memory">Memory</option></select></label><span class="live connecting" id="stream-status" role="status" aria-live="polite"><i></i><span>Connecting</span></span></div>
         </header>
 
         <section class="panel setup-panel" id="setup" data-route-view="setup">
@@ -326,7 +326,7 @@
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=cluster-card-v1"></script>
+    <script src="/assets/app.js?v=stream-status-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>
