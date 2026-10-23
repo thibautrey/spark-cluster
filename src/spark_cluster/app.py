@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import shutil
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -127,6 +128,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def refresh_remote_capacity() -> None:
         if settings.remote_cluster_url:
             runtime.latest = await cluster_connector.snapshot()
+
+    async def model_fit_plan(request: ModelFitRequest) -> ModelFitPlan:
+        await refresh_remote_capacity()
+        plan = await model_manager.fit(request)
+        if not settings.remote_cluster_url:
+            return plan
+        cluster_available = await cluster_connector.model_storage_available()
+        available_gib = min(plan.storage_available_gib, cluster_available / 2**30)
+        storage_fits = plan.storage_fits and plan.repository_bytes <= cluster_available
+        notes = list(plan.notes)
+        notes.append(
+            "Storage preflight uses the lower free-space value from the controller and cluster."
+        )
+        return plan.model_copy(
+            update={
+                "storage_available_gib": available_gib,
+                "storage_fits": storage_fits,
+                "fits": plan.memory_fits and storage_fits,
+                "notes": notes,
+            }
+        )
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -323,8 +345,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/v1/models/fit", response_model=ModelFitPlan)
     async def model_fit(request: ModelFitRequest) -> ModelFitPlan:
         try:
-            await refresh_remote_capacity()
-            return await model_manager.fit(request)
+            return await model_fit_plan(request)
         except RemoteClusterUnavailable:
             raise
         except ValueError as error:
@@ -355,7 +376,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     async def download_model(request: ModelDownloadRequest, http_request: Request) -> DownloadJob:
         try:
-            await refresh_remote_capacity()
+            fit_plan = await model_fit_plan(request)
             destination = "cluster" if settings.remote_cluster_url else "local"
             controller_url = (
                 model_relay.controller_url(str(http_request.base_url).rstrip("/"))
@@ -363,7 +384,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 else None
             )
             return await model_manager.enqueue(
-                request, destination=destination, controller_url=controller_url
+                request,
+                destination=destination,
+                controller_url=controller_url,
+                fit_plan=fit_plan,
             )
         except RemoteClusterUnavailable:
             raise
@@ -394,6 +418,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return await model_manager.enqueue_from_controller(request)
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get(
+        "/api/v1/models/storage",
+        dependencies=[Depends(require_model_token)],
+    )
+    async def model_storage() -> dict[str, int]:
+        return {"available_bytes": shutil.disk_usage(settings.model_cache_path).free}
 
     @app.get("/api/v1/downloads", response_model=list[DownloadJob])
     async def downloads() -> list[DownloadJob]:

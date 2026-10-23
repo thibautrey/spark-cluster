@@ -204,6 +204,7 @@ All setup endpoints use the model administration bearer token in live mode.
 | `POST /api/v1/setup/jobs` | Start a reviewed installation |
 | `POST /api/v1/setup/jobs/{id}/resume` | Revalidate and resume an interrupted installation |
 | `POST /api/v1/models/import` | Start or resume a controller-to-cluster model copy |
+| `GET /api/v1/models/storage` | Report free space in shared cluster model storage |
 | `GET /api/v1/downloads/{id}` | Read internet or LAN transfer progress |
 | `GET /api/v1/controller/downloads/{id}/manifest` | Retrieve the signed model file manifest |
 | `GET /api/v1/controller/downloads/{id}/files/{path}` | Resume an authenticated model file transfer |

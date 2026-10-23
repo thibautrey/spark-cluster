@@ -162,6 +162,7 @@ async def test_attached_cluster_download_is_queued_on_the_controller(tmp_path):
     app.state.cluster_connector.snapshot = AsyncMock(
         return_value=ClusterSimulator("relay-test").snapshot()
     )
+    app.state.cluster_connector.model_storage_available = AsyncMock(return_value=10 * 2**30)
     app.state.model_manager.fit = AsyncMock(return_value=fit())
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://192.168.50.5:8080"
@@ -175,3 +176,12 @@ async def test_attached_cluster_download_is_queued_on_the_controller(tmp_path):
     assert response.json()["destination"] == "cluster"
     assert response.json()["controller_url"] == "http://192.168.50.5:8080"
     assert app.state.runtime.latest.cluster_name == "relay-test"
+
+    app.state.cluster_connector.model_storage_available = AsyncMock(return_value=1)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://192.168.50.5:8080"
+    ) as client:
+        response = await client.post("/api/v1/models/fit", json={"repo_id": "acme/model"})
+    assert response.status_code == 200
+    assert response.json()["storage_fits"] is False
+    assert response.json()["fits"] is False

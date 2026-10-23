@@ -207,6 +207,7 @@ The complete setup-specific reference is in [docs/cluster-setup.md](docs/cluster
 | `POST /api/v1/capacity` | Model memory and node-count estimate. |
 | `GET /api/v1/models` | Managed, cached, and runtime-reported models. |
 | `POST /api/v1/models/fit` | Repository metadata and fit preflight. |
+| `GET /api/v1/models/storage` | Available bytes in the cluster's shared model volume. |
 | `POST /api/v1/models/download` | Resumable model download. |
 | `POST /api/v1/models/import` | Ask the bridge to copy a staged controller model into shared storage. |
 | `GET /api/v1/controller/downloads/{id}/manifest` | Signed file manifest used by the cluster bridge. |

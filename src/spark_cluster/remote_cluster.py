@@ -172,6 +172,26 @@ class RemoteClusterConnector:
                 "Cluster capacity is unavailable; check the bridge before downloading a model"
             ) from error
 
+    async def model_storage_available(self) -> int:
+        if not self.settings.remote_cluster_url:
+            raise RemoteClusterUnavailable("No cluster bridge is attached")
+        path = "/api/v1/models/storage"
+        headers = signed_controller_headers(self._authorization(), "GET", path)
+        try:
+            async with httpx.AsyncClient(
+                base_url=self.settings.remote_cluster_url,
+                transport=self.transport,
+                timeout=10,
+                trust_env=False,
+            ) as client:
+                response = await client.get(path, headers=headers)
+                response.raise_for_status()
+                return int(response.json()["available_bytes"])
+        except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+            raise RemoteClusterUnavailable(
+                "Cluster model storage is unavailable; check the bridge and shared volume"
+            ) from error
+
     def _authorization(self) -> str:
         if not self.settings.model_admin_token:
             raise RemoteClusterUnavailable("Configure MODEL_ADMIN_TOKEN before attaching a cluster")

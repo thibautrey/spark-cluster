@@ -313,8 +313,9 @@ class ModelManager:
         *,
         destination: str = "local",
         controller_url: str | None = None,
+        fit_plan: ModelFitPlan | None = None,
     ) -> DownloadJob:
-        fit = await self.fit(request)
+        fit = fit_plan or await self.fit(request)
         if not fit.fits and not request.allow_oversized:
             raise ModelDoesNotFit(fit)
         parts = safe_repo_parts(request.repo_id)
@@ -359,6 +360,12 @@ class ModelManager:
             return existing
         parts = safe_repo_parts(request.repo_id)
         target = self.settings.model_cache_path.joinpath(*parts)
+        available = shutil.disk_usage(self.settings.model_cache_path).free
+        if request.total_bytes > available:
+            raise ValueError(
+                f"Shared cluster model storage needs {request.total_bytes} bytes but only "
+                f"{available} bytes are available"
+            )
         job = DownloadJob(
             id=request.job_id,
             repo_id=request.repo_id,
