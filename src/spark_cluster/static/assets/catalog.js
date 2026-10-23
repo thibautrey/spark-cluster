@@ -137,8 +137,20 @@ function catalogReadme(model) {
 function recommendationBadge(model, detail = false) {
   const info = model.recommendation;
   if (!info) return '';
-  if (!detail) return `<span class="catalog-spark-badge ${info.priority < 0 ? 'caution' : ''}" title="${escapeHtml([...info.reasons, ...info.caveats].join(' '))}">${escapeHtml(info.label)}</span>`;
+  if (!detail) {
+    if (info.priority === 0 || info.priority === 1) return '';
+    return `<span class="catalog-spark-badge ${info.priority < 0 ? 'caution' : ''}" title="${escapeHtml([...info.reasons, ...info.caveats].join(' '))}">${escapeHtml(info.label)}</span>`;
+  }
   return `<section class="catalog-spark-info"><h4>${escapeHtml(info.label)}</h4>${info.runtime ? `<p>${escapeHtml(info.runtime)} · reported on ${info.reported_nodes.join(', ')} Sparks · reviewed ${escapeHtml(info.reviewed)}</p>` : ''}<ul>${info.reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join('')}</ul>${info.caveats.map(note => `<p>${escapeHtml(note)}</p>`).join('')}${info.sources.map((url, index) => `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Evidence ${index + 1} ↗</a>`).join(' · ')}<p>Discovery evidence does not guarantee fit, model quality, speed or launch support.</p></section>`;
+}
+
+function catalogCardTags(model) {
+  const library = model.library && !['transformers', 'safetensors'].includes(model.library.toLowerCase())
+    ? model.library
+    : null;
+  return [model.task, model.parameters ? `${formatNumber(model.parameters)} params` : null, library]
+    .filter(Boolean)
+    .slice(0, 3);
 }
 
 function selectedCapacity() {
@@ -188,7 +200,7 @@ function renderCatalogCards() {
       <span class="catalog-card-content">
         <span class="catalog-card-head">${catalogAvatar(model)}<span class="catalog-author">${escapeHtml(model.author)}</span><span class="catalog-card-arrow">↗</span></span>
         <b class="catalog-card-title">${escapeHtml(model.id.split('/').pop())}</b>
-        <span class="catalog-tags">${[model.task, model.library, model.parameters ? `${formatNumber(model.parameters)} params` : null].filter(Boolean).slice(0, 3).map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</span>
+        <span class="catalog-tags">${catalogCardTags(model).map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</span>
         ${recommendationBadge(model)}
         ${sparkBadge(model)}
         ${fitBadge(model)}
