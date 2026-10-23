@@ -101,7 +101,6 @@
 .active-download-identity p{color:var(--green);font:8px DM Mono;text-transform:uppercase;letter-spacing:.07em}
 .active-download-identity h4{margin:3px 0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .active-download-identity small{color:#73877d;font:8px DM Mono;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.active-download-status{padding:5px 7px;border-radius:5px;background:#18281f;color:#9ac2a9;font:8px DM Mono;text-transform:uppercase}
 .active-download-progress{display:grid;grid-template-columns:1fr 58px;gap:11px;align-items:center}
 .active-download-progress>div{height:9px;padding:2px;border-radius:999px;background:#07100c;border:1px solid #263a31;overflow:hidden}
 .active-download-progress i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#2b9b6c,var(--green));box-shadow:0 0 12px #63f2b34d;transition:width .35s ease}
@@ -118,7 +117,7 @@
 .active-download-phases span.active{color:#b8c9bf}.active-download-phases span.active i{border-color:var(--green);color:var(--green);box-shadow:0 0 9px #63f2b329}.active-download-phases span.done{color:#6fa98d}.active-download-phases span.done i{background:#173629;border-color:#285f46;color:var(--green)}
 @keyframes active-download-pulse{50%{opacity:.4;transform:scale(.75)}}
 @media(max-width:800px){.active-download-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:520px){.active-download-identity{grid-template-columns:34px minmax(0,1fr)}.active-download-status{grid-column:2;justify-self:start}.active-download-stats{grid-template-columns:1fr}.active-download-phases span{font-size:0}.active-download-phases i{font-size:8px}}
+@media(max-width:520px){.active-download-identity{grid-template-columns:34px minmax(0,1fr)}.active-download-stats{grid-template-columns:1fr}.active-download-phases span{font-size:0}.active-download-phases i{font-size:8px}}
 
 /* Catalog capacity filter */
 .catalog-fit-badge{display:flex;align-items:center;gap:5px;color:#8fc0a7;font:8px DM Mono;text-transform:capitalize}.catalog-fit-badge i{width:15px;height:15px;display:grid;place-items:center;border-radius:50%;background:#17372b;color:var(--green);font-style:normal}.catalog-analyzing{display:grid!important;place-items:center;gap:8px}.catalog-analyzing i{width:24px;height:24px;border:2px solid #294236;border-top-color:var(--green);border-radius:50%;animation:catalog-spin .8s linear infinite}.catalog-analyzing b{color:#b9cbbf}.catalog-analyzing span{color:#71877a;font-size:9px}@keyframes catalog-spin{to{transform:rotate(360deg)}}
@@ -303,7 +302,7 @@ body.bottom-sheet-open{overflow:hidden}
 #hf-token-message{grid-column:1/-1;margin:0!important;color:var(--amber)!important;font-size:9px}.hf-token-form:has(#hf-token-message:empty) #hf-token-message{display:none}
 #hf-token-saved{margin:0 0 10px;padding:8px 10px;border:1px solid #2d4c3d;border-radius:7px;background:#0e1c16;font-size:9px}
 .active-download-list{gap:8px}.active-download-card{gap:9px;padding:12px;border-radius:8px;background:#09110e}
-.active-download-identity{grid-template-columns:32px minmax(0,1fr) auto;gap:9px}.active-download-icon{width:32px;height:32px;border-radius:7px;font-size:14px}.active-download-identity h4{font-size:11px}.active-download-identity p{font-size:7px}.active-download-identity small{font-size:8px}
+.active-download-identity{grid-template-columns:32px minmax(0,1fr);gap:9px}.active-download-icon{width:32px;height:32px;border-radius:7px;font-size:14px}.active-download-identity h4{font-size:11px}.active-download-identity p{font-size:7px}
 .active-download-progress{grid-template-columns:1fr 48px;gap:9px}.active-download-progress>div{height:7px}.active-download-progress b{font-size:9px}
 .active-download-footer{display:flex;align-items:center;gap:12px}.active-download-summary{display:flex;flex:1;min-width:0;gap:0;color:#71877c;font:8px DM Mono}.active-download-summary span{white-space:nowrap}.active-download-summary span+span::before{content:'·';margin:0 8px;color:#3e594c}.active-download-summary b{color:#afc4b8;font-weight:500}
 .active-download-actions{flex:none;padding:0;border:0}.download-control{padding:5px 7px;font-size:7px}.download-control.danger{background:transparent}
