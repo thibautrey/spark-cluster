@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=route-clean-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=filter-sheet-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -153,20 +153,25 @@
             <div class="active-download-list" id="active-download-list"></div>
           </section>
           <div class="catalog-toolbar">
-            <label class="catalog-search"><span>⌕</span><input id="catalog-query" type="search" aria-label="Search Hugging Face models" placeholder="Search models, authors, or paste a repository ID…" autocomplete="off" /></label>
-            <label>Sort by<select id="catalog-sort"><option value="spark">Recommended for active cluster</option><option value="trendingScore">Trending</option><option value="downloads">Most downloaded</option><option value="likes">Most liked</option><option value="lastModified">Recently updated</option></select></label>
+            <label class="catalog-search"><span>⌕</span><input id="catalog-query" type="search" aria-label="Search Hugging Face models" placeholder="Search models or paste a repository ID…" autocomplete="off" /></label>
+            <label class="catalog-sort">Sort<select id="catalog-sort"><option value="spark">Recommended</option><option value="trendingScore">Trending</option><option value="downloads">Most downloaded</option><option value="likes">Most liked</option><option value="lastModified">Recently updated</option></select></label>
+            <button id="catalog-filter-open" type="button" class="secondary catalog-tool-button">Filters <span id="catalog-filter-count" hidden>0</span></button>
+            <button id="catalog-manual" type="button" class="secondary catalog-tool-button">＋ Repository</button>
           </div>
-          <div class="catalog-filters">
-            <label>Task<select id="catalog-task"><option value="">All tasks (includes vision)</option><option value="text-generation">Text generation only</option><option value="image-text-to-text">Vision &amp; language</option><option value="feature-extraction">Embeddings</option><option value="text-to-image">Text to image</option><option value="automatic-speech-recognition">Speech recognition</option></select></label>
-            <label>Format / library<select id="catalog-library"><option value="">All formats</option><option value="transformers">Transformers</option><option value="safetensors">Safetensors</option><option value="gguf">GGUF</option><option value="diffusers">Diffusers</option></select></label>
-            <label>Cluster capacity<select id="catalog-capacity"><option value="">Any capacity</option><option value="1">1 accelerator</option><option value="2">2 accelerators</option><option value="3">3 accelerators</option><option value="4">4 accelerators</option><option value="5">5 accelerators</option><option value="6">6 accelerators</option><option value="8">8 accelerators</option></select></label>
-            <label>Fit context<select id="catalog-fit-context"><option value="8192">8k</option><option value="32768" selected>32k</option><option value="131072">128k</option><option value="524288">512k</option><option value="1048576">1M</option></select></label>
-            <label>Selection · loaded results<select id="catalog-selection"><option value="standard">Standard checkpoints</option><option value="recipes">Documented Spark recipes</option><option value="publisher">Family publisher / NVIDIA</option><option value="all">All variants, including experimental</option></select></label>
-            <label>Access<select id="catalog-access"><option value="">All models</option><option value="open">Open access</option><option value="gated">License approval</option></select></label>
-            <button id="catalog-reset" type="button" class="secondary">Reset filters</button>
-            <button id="catalog-manual" type="button" class="secondary">Use repository ID</button>
+          <div class="bottom-sheet catalog-filter-sheet" id="catalog-filter-sheet" hidden>
+            <button class="bottom-sheet-backdrop" id="catalog-filter-backdrop" type="button" tabindex="-1" aria-label="Close model filters"></button>
+            <section class="bottom-sheet-panel catalog-filter-panel" role="dialog" aria-modal="true" aria-labelledby="catalog-filter-title">
+              <header class="bottom-sheet-header"><span class="catalog-sheet-handle" aria-hidden="true"></span><div><p class="eyebrow">MODEL CATALOG</p><h3 id="catalog-filter-title">Filters</h3></div><button class="catalog-sheet-close" id="catalog-filter-close" type="button" aria-label="Close model filters">×</button></header>
+              <div class="catalog-filter-content"><div class="catalog-filters">
+                <label>Task<select id="catalog-task"><option value="">All tasks</option><option value="text-generation">Text generation</option><option value="image-text-to-text">Vision &amp; language</option><option value="feature-extraction">Embeddings</option><option value="text-to-image">Text to image</option><option value="automatic-speech-recognition">Speech recognition</option></select></label>
+                <label>Format<select id="catalog-library"><option value="">All formats</option><option value="transformers">Transformers</option><option value="safetensors">Safetensors</option><option value="gguf">GGUF</option><option value="diffusers">Diffusers</option></select></label>
+                <label>Cluster capacity<select id="catalog-capacity"><option value="">Any capacity</option><option value="1">1 accelerator</option><option value="2">2 accelerators</option><option value="3">3 accelerators</option><option value="4">4 accelerators</option><option value="5">5 accelerators</option><option value="6">6 accelerators</option><option value="8">8 accelerators</option></select></label>
+                <label>Fit context<select id="catalog-fit-context"><option value="8192">8k</option><option value="32768" selected>32k</option><option value="131072">128k</option><option value="524288">512k</option><option value="1048576">1M</option></select></label>
+                <label>Model selection<select id="catalog-selection"><option value="standard">Standard checkpoints</option><option value="recipes">Documented Spark recipes</option><option value="publisher">Family publisher / NVIDIA</option><option value="all">All variants</option></select></label>
+                <label>Access<select id="catalog-access"><option value="">All models</option><option value="open">Open access</option><option value="gated">License approval</option></select></label>
+              </div><div class="catalog-filter-actions"><button id="catalog-reset" type="button" class="secondary">Reset</button><button id="catalog-filter-done" type="button" class="primary">Show models</button></div></div>
+            </section>
           </div>
-          <p class="catalog-ranking-help">Spark-targeted and NVFP4 checkpoints are highlighted. Publisher signals guide discovery; memory fit and runtime support are checked separately.</p>
           <div class="catalog-workspace">
             <div class="catalog-results">
               <div class="catalog-status"><span id="catalog-status" role="status" aria-live="polite">Loading models…</span><button id="catalog-retry" type="button" class="secondary" hidden>Retry</button></div>
@@ -325,7 +330,7 @@
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>
-    <script src="/assets/catalog.js?v=readme-render-v1"></script>
+    <script src="/assets/catalog.js?v=filter-sheet-v1"></script>
     <script src="/assets/setup.js?v=setup-sheet-v1"></script>
   </body>
 </html>

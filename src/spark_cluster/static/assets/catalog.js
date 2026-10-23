@@ -12,6 +12,8 @@ let catalogCapacityLoading = false;
 let catalogBaseStatus = '';
 let catalogSheetOpener = null;
 let catalogSheetCloseTimer = null;
+let catalogFilterOpener = null;
+let catalogFilterCloseTimer = null;
 
 function openCatalogSheet(opener, title = 'Model details') {
   const wasHidden = $('catalog-sheet').hidden;
@@ -34,6 +36,43 @@ function closeCatalogSheet() {
   const opener = catalogSheetOpener;
   catalogSheetCloseTimer = setTimeout(() => {
     $('catalog-sheet').hidden = true;
+    if (opener?.isConnected) opener.focus({preventScroll: true});
+  }, 220);
+}
+
+
+function updateCatalogFilterCount() {
+  const values = [
+    $('catalog-task').value,
+    $('catalog-library').value,
+    $('catalog-capacity').value,
+    $('catalog-fit-context').value !== '32768' ? $('catalog-fit-context').value : '',
+    $('catalog-selection').value !== 'standard' ? $('catalog-selection').value : '',
+    $('catalog-access').value,
+  ];
+  const count = values.filter(Boolean).length;
+  $('catalog-filter-count').textContent = count;
+  $('catalog-filter-count').hidden = count === 0;
+}
+
+function openCatalogFilters(opener) {
+  clearTimeout(catalogFilterCloseTimer);
+  catalogFilterOpener = opener || catalogFilterOpener;
+  $('catalog-filter-sheet').hidden = false;
+  document.body.classList.add('bottom-sheet-open');
+  requestAnimationFrame(() => {
+    $('catalog-filter-sheet').classList.add('open');
+    $('catalog-filter-close').focus({preventScroll: true});
+  });
+}
+
+function closeCatalogFilters() {
+  if ($('catalog-filter-sheet').hidden) return;
+  $('catalog-filter-sheet').classList.remove('open');
+  document.body.classList.remove('bottom-sheet-open');
+  const opener = catalogFilterOpener;
+  catalogFilterCloseTimer = setTimeout(() => {
+    $('catalog-filter-sheet').hidden = true;
     if (opener?.isConnected) opener.focus({preventScroll: true});
   }, 220);
 }
@@ -226,7 +265,7 @@ async function loadCatalog(append = false) {
     const existing = new Set(catalogModels.map(model => model.id));
     catalogModels.push(...page.models.filter(model => !existing.has(model.id)));
     catalogCursor = page.cursor;
-    catalogBaseStatus = `${catalogModels.length} models${catalogCursor ? ' · more available' : ''} · ${page.ranking_note || 'Hugging Face Hub'}`;
+    catalogBaseStatus = `${catalogModels.length} model${catalogModels.length === 1 ? '' : 's'}${catalogCursor ? ' · more available' : ''}`;
     if (selectedCapacity()) await applyCapacityFilter();
     else {
       renderCatalogCards();
@@ -300,9 +339,10 @@ $('catalog-query').addEventListener('input', () => {
 $('catalog-query').addEventListener('keydown', event => {
   if (event.key === 'Enter') { event.preventDefault(); loadCatalog(); }
 });
-$('catalog-selection').addEventListener('change', () => renderCatalogCards());
-['catalog-sort', 'catalog-task', 'catalog-library', 'catalog-access'].forEach(id => $(id).addEventListener('change', () => loadCatalog()));
-['catalog-capacity', 'catalog-fit-context'].forEach(id => $(id).addEventListener('change', () => applyCapacityFilter()));
+$('catalog-selection').addEventListener('change', () => { updateCatalogFilterCount(); renderCatalogCards(); });
+$('catalog-sort').addEventListener('change', () => loadCatalog());
+['catalog-task', 'catalog-library', 'catalog-access'].forEach(id => $(id).addEventListener('change', () => { updateCatalogFilterCount(); loadCatalog(); }));
+['catalog-capacity', 'catalog-fit-context'].forEach(id => $(id).addEventListener('change', () => { updateCatalogFilterCount(); applyCapacityFilter(); }));
 $('catalog-reset').addEventListener('click', () => {
   $('catalog-query').value = '';
   $('catalog-sort').value = 'spark';
@@ -313,10 +353,15 @@ $('catalog-reset').addEventListener('click', () => {
   $('catalog-capacity').value = '';
   $('catalog-fit-context').value = '32768';
   catalogFits = new Map();
+  updateCatalogFilterCount();
   loadCatalog();
 });
 $('catalog-retry').addEventListener('click', () => loadCatalog());
 $('catalog-more').addEventListener('click', () => loadCatalog(true));
+$('catalog-filter-open').addEventListener('click', event => openCatalogFilters(event.currentTarget));
+$('catalog-filter-close').addEventListener('click', closeCatalogFilters);
+$('catalog-filter-backdrop').addEventListener('click', closeCatalogFilters);
+$('catalog-filter-done').addEventListener('click', closeCatalogFilters);
 $('catalog-manual').addEventListener('click', () => {
   ++detailRequest;
   catalogSelection = null;
@@ -334,9 +379,11 @@ $('catalog-manual').addEventListener('click', () => {
 $('catalog-sheet-close').addEventListener('click', closeCatalogSheet);
 $('catalog-sheet-backdrop').addEventListener('click', closeCatalogSheet);
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && !$('catalog-sheet').hidden) closeCatalogSheet();
+  if (event.key !== 'Escape') return;
+  if (!$('catalog-filter-sheet').hidden) closeCatalogFilters();
+  else if (!$('catalog-sheet').hidden) closeCatalogSheet();
 });
-window.addEventListener('hashchange', closeCatalogSheet);
+window.addEventListener('hashchange', () => { closeCatalogFilters(); closeCatalogSheet(); });
 $('revision').addEventListener('change', () => {
   if (catalogSelection) inspectCatalogModel(catalogSelection, $('revision').value.trim() || 'main');
 });
@@ -351,3 +398,5 @@ loadCatalog();
 document.addEventListener('error', event => {
   if (event.target.matches?.('.catalog-media img')) event.target.classList.add('failed');
 }, true);
+
+updateCatalogFilterCount();

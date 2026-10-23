@@ -447,3 +447,11 @@ def test_detail_truncates_oversized_readme(catalog):
     result = client.get("/api/v1/catalog/models/acme/large-readme?revision=large123").json()
     assert len(result["readme"].encode()) == 512 * 1024
     assert result["readme_truncated"] is True
+
+
+def test_catalog_filters_are_hidden_until_requested(catalog):
+    client, _, _ = catalog
+    page = client.get("/").text
+    assert 'id="catalog-filter-open"' in page
+    assert 'id="catalog-filter-sheet" hidden' in page
+    assert "catalog-ranking-help" not in page
