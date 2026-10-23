@@ -33,8 +33,7 @@ REPORTS = {
         "commit": "45ee5d0fd106c94a3d77f721e09cbb2f50e5a16b",
         "nodes": [2],
         "runtime": "TensorFold DeepSeek V4.1 fork",
-        "source": "https://huggingface.co/Mia-AiLab/"
-        "DeepSeek-V4.1-Flash-1017-EXL3-EAQ-v1-2.9-bpw",
+        "source": "https://huggingface.co/Mia-AiLab/DeepSeek-V4.1-Flash-1017-EXL3-EAQ-v1-2.9-bpw",
         "note": "Publisher documents compatibility with the TensorFold TP2 recipe; "
         "not a separate independent benchmark. Requires official 1017 Engram shards.",
     },
@@ -49,15 +48,19 @@ REPORTS = {
 }
 REVIEWED = date(2026, 10, 23)
 EXPERIMENTAL = {
-    "Baekpica/DeepSeek-V4.1-Flash-1017-VQ-GGUF":
-    "Publisher warns of experimental ~1.6-bit expert weights, reasoning loops and degraded output."
+    "Baekpica/DeepSeek-V4.1-Flash-1017-VQ-GGUF": "Publisher warns of experimental ~1.6-bit expert weights, reasoning loops and degraded output."
 }
 # Namespace is an identity hint only when it matches the model family. It is never
 # evidence of Spark support or model quality.
 PUBLISHERS = {
-    "deepseek-ai": "deepseek", "qwen": "qwen", "zai-org": "glm",
-    "google": "gemma", "stepfun-ai": "step", "minimaxai": "minimax",
-    "moonshotai": "kimi", "nvidia": "nemotron",
+    "deepseek-ai": "deepseek",
+    "qwen": "qwen",
+    "zai-org": "glm",
+    "google": "gemma",
+    "stepfun-ai": "step",
+    "minimaxai": "minimax",
+    "moonshotai": "kimi",
+    "nvidia": "nemotron",
 }
 
 
@@ -85,7 +88,9 @@ def recommend(data: dict, spark: SparkOptimization, today: date | None = None) -
     result = Recommendation()
     if re.search(r"abliterat|uncensored|(?:^|[\s_-])merge(?:[\s_-]|$)", text):
         result.variant = "modified"
-        result.caveats.append("Behavior-modified derivative; evaluate against the original for your task.")
+        result.caveats.append(
+            "Behavior-modified derivative; evaluate against the original for your task."
+        )
     if repo_id in EXPERIMENTAL:
         result.variant = "experimental"
         result.caveats.append(EXPERIMENTAL[repo_id])
@@ -96,7 +101,9 @@ def recommend(data: dict, spark: SparkOptimization, today: date | None = None) -
         result.reasons.append("Model-family publisher namespace; not proof of Spark support.")
     elif namespace == "nvidia":
         result.publisher = "vendor-conversion"
-        result.reasons.append("NVIDIA-published conversion; check GB10 support for this architecture.")
+        result.reasons.append(
+            "NVIDIA-published conversion; check GB10 support for this architecture."
+        )
     if not card.get("license") and not any(tag.startswith("license:") for tag in tags):
         result.caveats.append("License not reported in catalog metadata; inspect the model card.")
     if data.get("gated"):
@@ -109,9 +116,10 @@ def recommend(data: dict, spark: SparkOptimization, today: date | None = None) -
         result.variant = spark.tier
     if spark.score:
         structured = (data.get("config") or {}).get("quantization_config") or {}
-        declared = any(tag.casefold() in {
-            "nvfp4", "dgx-spark", "gb10", "sm121", "sm-121", "nvidia-dgx-spark"
-        } for tag in tags)
+        declared = any(
+            tag.casefold() in {"nvfp4", "dgx-spark", "gb10", "sm121", "sm-121", "nvidia-dgx-spark"}
+            for tag in tags
+        )
         result.priority = int(bool(declared or structured))
         result.label = "Spark candidate · unverified"
         result.evidence = int(declared) + int(bool(structured))
@@ -127,10 +135,16 @@ def recommend(data: dict, spark: SparkOptimization, today: date | None = None) -
         if data.get("sha") == report["commit"] and 0 <= age <= 30:
             result.priority, result.evidence = 2, 2
             result.label = "Documented Spark recipe"
-            result.reasons.append("Exact repository revision reviewed with a linked community recipe.")
+            result.reasons.append(
+                "Exact repository revision reviewed with a linked community recipe."
+            )
         else:
-            result.caveats.append("Recipe review expired or checkpoint revision changed; revalidation required.")
-        result.caveats.append("Community evidence only; runtime installation and launch are separate checks.")
+            result.caveats.append(
+                "Recipe review expired or checkpoint revision changed; revalidation required."
+            )
+        result.caveats.append(
+            "Community evidence only; runtime installation and launch are separate checks."
+        )
     if result.variant != "standard":
         result.priority = -1
         result.label = result.variant.replace("-", " ").capitalize()
@@ -142,7 +156,8 @@ def ranking_key(model):
     recommendation = model.recommendation
     popularity = round(
         min(6, math.log10(max(0, model.downloads) + 1))
-        + min(3, math.log10(max(0, model.likes) + 1)), 4
+        + min(3, math.log10(max(0, model.likes) + 1)),
+        4,
     )
     return (
         -recommendation.priority,

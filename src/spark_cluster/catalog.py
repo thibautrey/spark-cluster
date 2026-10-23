@@ -224,10 +224,17 @@ class ModelBrowser:
     ) -> CatalogPage:
         # Cache the entire ranked shortlist, not individual pages, so pagination is
         # stable and classification is reused across controller restarts.
-        identity = json.dumps((
-            CLASSIFIER_VERSION, RECOMMENDATION_VERSION,
-            time.strftime("%Y-%m-%d", time.gmtime()), query, task, library, access,
-        ))
+        identity = json.dumps(
+            (
+                CLASSIFIER_VERSION,
+                RECOMMENDATION_VERSION,
+                time.strftime("%Y-%m-%d", time.gmtime()),
+                query,
+                task,
+                library,
+                access,
+            )
+        )
         digest = hashlib.sha256(identity.encode()).hexdigest()[:24]
         key = f"spark-ranking:{digest}"
         offset = 0
@@ -276,7 +283,7 @@ class ModelBrowser:
             if isinstance(responses[0], Exception):
                 raise responses[0]
             candidates = {}
-            for index, response in enumerate(responses):
+            for response in responses:
                 if isinstance(response, Exception):
                     continue
                 for item in response[0]:

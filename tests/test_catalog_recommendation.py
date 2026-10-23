@@ -16,9 +16,14 @@ def test_revision_and_expiry_bound_community_evidence():
     assert "Community" in " ".join(current.caveats)
     assert recommend(data, spark, date(2026, 11, 24)).priority < 2
     assert recommend({**data, "sha": "new"}, spark, date(2026, 10, 23)).priority < 2
-    assert recommend({**data, "siblings": [{"rfilename": "README.md"}]},
-                     classify_spark({**data, "siblings": [{"rfilename": "README.md"}]}),
-                     date(2026, 10, 23)).priority == -1
+    assert (
+        recommend(
+            {**data, "siblings": [{"rfilename": "README.md"}]},
+            classify_spark({**data, "siblings": [{"rfilename": "README.md"}]}),
+            date(2026, 10, 23),
+        ).priority
+        == -1
+    )
 
 
 def test_modified_experimental_and_other_hardware_are_explicit():
@@ -35,11 +40,15 @@ def test_modified_experimental_and_other_hardware_are_explicit():
 
 
 def test_popularity_never_overrides_evidence_and_order_is_stable():
-    models = [summary(data) for data in [
-        {"id": "a/popular", "downloads": 10**12, "likes": 10**9},
-        {"id": "z/candidate", "tags": ["dgx-spark"]},
-        {"id": "b/same"}, {"id": "a/same"},
-    ]]
+    models = [
+        summary(data)
+        for data in [
+            {"id": "a/popular", "downloads": 10**12, "likes": 10**9},
+            {"id": "z/candidate", "tags": ["dgx-spark"]},
+            {"id": "b/same"},
+            {"id": "a/same"},
+        ]
+    ]
     ordered = sorted(models, key=ranking_key)
     assert ordered[0].id == "z/candidate"
     assert sorted(reversed(models), key=ranking_key) == ordered
@@ -48,6 +57,12 @@ def test_popularity_never_overrides_evidence_and_order_is_stable():
 
 def test_publisher_identity_is_not_inferred_from_base_model_or_substring():
     assert summary({"id": "Qwen/Qwen3.8-27B"}).recommendation.publisher == "original"
-    assert summary({"id": "nvidia/MiniMax-M3-NVFP4"}).recommendation.publisher == "vendor-conversion"
-    assert summary({"id": "not-qwen/Qwen3.8", "cardData": {
-        "base_model": "Qwen/Qwen3.8-27B"}}).recommendation.publisher == "community"
+    assert (
+        summary({"id": "nvidia/MiniMax-M3-NVFP4"}).recommendation.publisher == "vendor-conversion"
+    )
+    assert (
+        summary(
+            {"id": "not-qwen/Qwen3.8", "cardData": {"base_model": "Qwen/Qwen3.8-27B"}}
+        ).recommendation.publisher
+        == "community"
+    )
