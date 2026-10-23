@@ -185,7 +185,8 @@ class ModelBrowser:
         self.transport: httpx.AsyncBaseTransport | None = None
 
     async def fetch(self, path: str, params: dict) -> tuple[dict | list, str | None]:
-        key = (path, *sorted(params.items()))
+        credential_scope = hashlib.sha256((self.token or "").encode()).hexdigest()
+        key = (credential_scope, path, *sorted(params.items()))
         persistent_key = json.dumps(key, separators=(",", ":"), default=str)
         async with self.lock:
             cached = self.cache.get(key)

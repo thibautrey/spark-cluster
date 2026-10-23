@@ -2,6 +2,7 @@ import asyncio
 import sys
 from types import SimpleNamespace
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from test_model_manager import metadata
@@ -130,3 +131,25 @@ async def test_active_worker_restarts_with_new_token_and_keeps_partial_files(tmp
     finally:
         await manager.stop()
         store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,exception", [(200, None), (401, ValueError), (429, RuntimeError)])
+async def test_validation_checks_huggingface_before_saving(monkeypatch, status, exception):
+    real_client = httpx.AsyncClient
+
+    def handle(request):
+        assert str(request.url) == "https://huggingface.co/api/whoami-v2"
+        assert request.headers["authorization"] == "Bearer hf_test"
+        return httpx.Response(status)
+
+    monkeypatch.setattr(
+        hf_credentials.httpx,
+        "AsyncClient",
+        lambda **kw: real_client(transport=httpx.MockTransport(handle), **kw),
+    )
+    if exception:
+        with pytest.raises(exception):
+            await hf_credentials.validate_token("hf_test")
+    else:
+        await hf_credentials.validate_token("hf_test")
