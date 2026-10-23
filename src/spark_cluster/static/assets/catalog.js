@@ -114,7 +114,6 @@ function catalogImage(model, detail = false) {
   return `<span class="catalog-media ${detail ? 'catalog-detail-media' : ''}">
     <span class="catalog-image-fallback" aria-hidden="true"><i>${escapeHtml(catalogMonogram(model))}</i><small>Hugging Face model</small></span>
     <img src="${escapeHtml(model.thumbnail_url)}" alt="Hugging Face preview for ${escapeHtml(model.id)}" ${detail ? '' : 'loading="lazy"'} decoding="async" referrerpolicy="no-referrer">
-    <span class="catalog-media-source">Hugging Face</span>
     ${model.gated ? '<span class="catalog-media-badge gated">License required</span>' : ''}
     ${catalogState(model.id) ? `<span class="catalog-media-badge state">${escapeHtml(catalogState(model.id))}</span>` : ''}
   </span>`;
@@ -198,13 +197,13 @@ function renderCatalogCards() {
     <button type="button" class="catalog-card ${catalogSelection === model.id ? 'selected' : ''}" data-repo="${escapeHtml(model.id)}" aria-pressed="${catalogSelection === model.id}">
       ${catalogImage(model)}
       <span class="catalog-card-content">
-        <span class="catalog-card-head">${catalogAvatar(model)}<span class="catalog-author">${escapeHtml(model.author)}</span><span class="catalog-card-arrow">↗</span></span>
+        <span class="catalog-card-head">${catalogAvatar(model)}<span class="catalog-author">${escapeHtml(model.author)}</span></span>
         <b class="catalog-card-title">${escapeHtml(model.id.split('/').pop())}</b>
         <span class="catalog-tags">${catalogCardTags(model).map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</span>
         ${recommendationBadge(model)}
         ${sparkBadge(model)}
         ${fitBadge(model)}
-        <span class="catalog-card-foot"><span title="Downloads">↓ ${formatNumber(model.downloads)}</span><span title="Likes">♡ ${formatNumber(model.likes)}</span>${model.updated ? `<span class="catalog-updated">${escapeHtml(new Date(model.updated).toLocaleDateString())}</span>` : ''}</span>
+        <span class="catalog-card-foot"><span title="Downloads">↓ ${formatNumber(model.downloads)}</span><span title="Likes">♡ ${formatNumber(model.likes)}</span></span>
       </span>
     </button>`).join('') : `<div class="catalog-empty">${selectedCapacity() ? `No analyzed model fits ${selectedCapacity()} accelerator${selectedCapacity() === 1 ? '' : 's'} at this context.<br>Try more machines, a shorter context, or load more models.` : 'No loaded models match these filters.<br>Load more models, change Selection, or reset the filters.'}</div>`;
   activateCatalogAvatars($('catalog-grid'));
