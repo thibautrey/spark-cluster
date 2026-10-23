@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     runtime_tensor_parallel: int = 4
     runtime_pipeline_parallel: int = 1
     openai_api_base: str = "http://localhost:8000/v1"
+    openai_api_key: str | None = None
     model_cache_path: Path = Path("./models")
     hf_token: str | None = None
     model_admin_token: str | None = None

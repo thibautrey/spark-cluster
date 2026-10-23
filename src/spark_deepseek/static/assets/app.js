@@ -231,7 +231,7 @@ $('allow-oversized').addEventListener('change', () => {
   $('download-model').disabled = !currentFit || (!currentFit.fits && !$('allow-oversized').checked);
 });
 $('model-form').addEventListener('input', event => {
-  if (event.target.id === 'allow-oversized') return;
+  if (['allow-oversized', 'admin-token'].includes(event.target.id)) return;
   currentFit = null;
   $('download-model').disabled = true;
 });

@@ -239,6 +239,7 @@ class ModelManager:
         self._inventory_cached_at = 0.0
         self._runtime_cache: RuntimeEndpoint | None = None
         self._runtime_cached_at = 0.0
+        self._runtime_lock = asyncio.Lock()
         self.settings.model_cache_path.mkdir(parents=True, exist_ok=True)
         (self.settings.model_cache_path / ".partial").mkdir(exist_ok=True)
 
@@ -312,28 +313,36 @@ class ModelManager:
     async def runtime_endpoint(self) -> RuntimeEndpoint:
         if self._runtime_cache and time.monotonic() - self._runtime_cached_at < 1:
             return self._runtime_cache
-        base = self.settings.openai_api_base.rstrip("/")
-        models_url = f"{base}/models"
-        loaded: list[str] = []
-        status = "unreachable"
-        try:
-            async with httpx.AsyncClient(timeout=2) as client:
-                response = await client.get(models_url)
-                response.raise_for_status()
-                loaded = [str(item["id"]) for item in response.json().get("data", [])]
-                status = "ready"
-        except (httpx.HTTPError, ValueError, KeyError, TypeError):
-            pass
-        endpoint = RuntimeEndpoint(
-            base_url=base,
-            models_url=models_url,
-            chat_completions_url=f"{base}/chat/completions",
-            status=status,
-            loaded_model_ids=loaded,
-        )
-        self._runtime_cache = endpoint
-        self._runtime_cached_at = time.monotonic()
-        return endpoint
+        async with self._runtime_lock:
+            if self._runtime_cache and time.monotonic() - self._runtime_cached_at < 1:
+                return self._runtime_cache
+            base = self.settings.openai_api_base.rstrip("/")
+            models_url = f"{base}/models"
+            loaded: list[str] = []
+            status = "unreachable"
+            try:
+                headers = (
+                    {"Authorization": f"Bearer {self.settings.openai_api_key}"}
+                    if self.settings.openai_api_key
+                    else {}
+                )
+                async with httpx.AsyncClient(timeout=2, headers=headers) as client:
+                    response = await client.get(models_url)
+                    response.raise_for_status()
+                    loaded = [str(item["id"]) for item in response.json().get("data", [])]
+                    status = "ready"
+            except (httpx.HTTPError, ValueError, KeyError, TypeError):
+                pass
+            endpoint = RuntimeEndpoint(
+                base_url=base,
+                models_url=models_url,
+                chat_completions_url=f"{base}/chat/completions",
+                status=status,
+                loaded_model_ids=loaded,
+            )
+            self._runtime_cache = endpoint
+            self._runtime_cached_at = time.monotonic()
+            return endpoint
 
     async def local_models(self) -> list[LocalModel]:
         endpoint = await self.runtime_endpoint()
@@ -515,6 +524,7 @@ class ModelManager:
         message = str(error).strip() or error.__class__.__name__
         if self.settings.hf_token:
             message = message.replace(self.settings.hf_token, "[redacted]")
+        message = re.sub(r"(https?://[^\s?]+)\?[^\s]+", r"\1?[redacted]", message)
         return message[:1000]
 
 

@@ -37,7 +37,8 @@ curl "$OPENAI_BASE_URL/models"
 
 The control plane probes `<base-url>/models`, marks the endpoint ready when it responds, and merges the
 returned model IDs into the local model inventory. Chat completions use
-`<base-url>/chat/completions`.
+`<base-url>/chat/completions`. Set `SPARK_DEEPSEEK_OPENAI_API_KEY` when the runtime requires bearer
+authentication; the key is used for the server-side readiness probe and is never returned by the API.
 
 ## Model library and fit check
 
@@ -139,7 +140,8 @@ The chart provisions a shared model-cache PVC mounted read-write by the control 
 the vLLM head and workers. Set `models.persistence.existingClaim` when using an existing RWX volume and
 `models.hfTokenSecret` to the name of a secret whose `token` key contains a Hugging Face access token.
 `models.adminTokenSecret` can similarly protect model mutations with a separate bearer token.
-Set `runtime.openAIBaseUrl` to the URL clients can reach.
+Set `runtime.openAIBaseUrl` to the URL clients can reach and `runtime.apiKeySecret` when its model-list
+probe requires a bearer token.
 
 Set `runtime.cache.remoteUrl` to an LMCache-compatible remote backend when cache blocks should be
 reused across nodes. `runtime.cache.remoteSerde` selects its serialization format; local NVMe remains
@@ -183,6 +185,7 @@ All control-plane settings use the `SPARK_DEEPSEEK_` prefix:
 | `INGEST_TOKEN` | unset | Bearer token required for telemetry writes |
 | `CLUSTER_NAME` | `gb10-lab` | Dashboard cluster label |
 | `OPENAI_API_BASE` | `http://localhost:8000/v1` | OpenAI-compatible base URL shown in the UI |
+| `OPENAI_API_KEY` | unset | Bearer token for probing the runtime model endpoint |
 | `MODEL_CACHE_PATH` | `./models` | Managed Hugging Face model directory |
 | `HF_TOKEN` | unset | Access token for gated or private Hugging Face models |
 | `MODEL_ADMIN_TOKEN` | unset | Bearer token required for download and retry actions |

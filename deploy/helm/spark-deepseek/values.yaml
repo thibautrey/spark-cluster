@@ -49,6 +49,7 @@ runtime:
   pipelineParallelSize: 1
   gpuMemoryUtilization: 0.82
   openAIBaseUrl: http://spark-deepseek-openai:8000/v1
+  apiKeySecret: ""
   service:
     type: ClusterIP
     port: 8000
