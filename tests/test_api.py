@@ -26,6 +26,8 @@ def test_dashboard_and_live_snapshot(tmp_path):
         page = client.get("/")
         assert page.status_code == 200
         assert '<details class="launch-options" id="launch-options">' in page.text
+        assert '<div class="log-terminal empty" id="log-terminal">' in page.text
+        assert "Newest entries follow automatically" not in page.text
         response = client.get("/api/v1/snapshot")
         assert response.status_code == 200
         payload = response.json()

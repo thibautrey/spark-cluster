@@ -644,14 +644,18 @@ function renderLogLines() {
   const instance = $('log-instance').value;
   const level = $('log-level').value;
   const visible = logEntries.filter(entry => (!instance || entry.pod === instance) && (!level || entry.level === level));
+  const terminal = $('log-terminal');
   $('log-count').textContent = `${visible.length} line${visible.length === 1 ? '' : 's'}`;
+  $('pause-logs').disabled = logEntries.length === 0;
+  $('clear-logs').disabled = logEntries.length === 0;
+  terminal.classList.toggle('empty', visible.length === 0);
   if (!visible.length) {
-    $('log-terminal').innerHTML = '<div class="log-empty">No log matches the current filters.</div>';
+    terminal.innerHTML = `<div class="log-empty">${logEntries.length ? 'No matching logs' : 'No logs yet'}</div>`;
     return;
   }
-  $('log-terminal').innerHTML = visible.slice(-1000).map(entry => `
+  terminal.innerHTML = visible.slice(-1000).map(entry => `
     <div class="log-line ${entry.level}"><time>${new Date(entry.timestamp).toLocaleTimeString([], {hour12: false})}</time><span class="log-source" title="${escapeHtml(entry.pod)} / ${escapeHtml(entry.container)}">${escapeHtml(entry.pod)}</span><span class="log-level">${escapeHtml(entry.level)}</span><span class="log-message">${escapeHtml(entry.message)}</span></div>`).join('');
-  if (!logsPaused) $('log-terminal').scrollTop = $('log-terminal').scrollHeight;
+  if (!logsPaused) terminal.scrollTop = terminal.scrollHeight;
 }
 
 function updateLogInstances(instances) {
@@ -677,7 +681,10 @@ async function loadLogHistory() {
     updateLogInstances(instances);
     renderLogLines();
   } catch (error) {
+    $('log-terminal').classList.add('empty');
     $('log-terminal').innerHTML = `<div class="log-empty">${escapeHtml(error.message)}</div>`;
+    $('pause-logs').disabled = true;
+    $('clear-logs').disabled = true;
   }
 }
 

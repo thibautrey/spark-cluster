@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=hf-token-sheet-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=compact-logs-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -321,8 +321,8 @@
               <button id="clear-logs" type="button">Clear view</button>
             </div>
           </div>
-          <div class="log-terminal" id="log-terminal"><div class="log-empty">Waiting for runtime logs…</div></div>
-          <footer class="log-footer"><span><i></i>Live stream</span><span id="log-count">0 lines</span><span>Newest entries follow automatically</span></footer>
+          <div class="log-terminal empty" id="log-terminal"><div class="log-empty">No logs yet</div></div>
+          <footer class="log-footer"><span><i></i>Live stream</span><span id="log-count">0 lines</span></footer>
         </section>
       </main>
     </div>
