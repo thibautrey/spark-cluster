@@ -10,6 +10,33 @@ let catalogFits = new Map();
 let catalogFitRequest = 0;
 let catalogCapacityLoading = false;
 let catalogBaseStatus = '';
+let catalogSheetOpener = null;
+let catalogSheetCloseTimer = null;
+
+function openCatalogSheet(opener, title = 'Model details') {
+  const wasHidden = $('catalog-sheet').hidden;
+  clearTimeout(catalogSheetCloseTimer);
+  if (opener) catalogSheetOpener = opener;
+  $('catalog-sheet-title').textContent = title;
+  $('catalog-sheet').hidden = false;
+  document.body.classList.add('catalog-sheet-open');
+  requestAnimationFrame(() => {
+    $('catalog-sheet').classList.add('open');
+    if (wasHidden) $('catalog-sheet-close').focus({preventScroll: true});
+  });
+}
+
+function closeCatalogSheet() {
+  if ($('catalog-sheet').hidden) return;
+  ++detailRequest;
+  $('catalog-sheet').classList.remove('open');
+  document.body.classList.remove('catalog-sheet-open');
+  const opener = catalogSheetOpener;
+  catalogSheetCloseTimer = setTimeout(() => {
+    $('catalog-sheet').hidden = true;
+    if (opener?.isConnected) opener.focus({preventScroll: true});
+  }, 220);
+}
 
 function catalogState(id) {
   const job = catalogJobs.find(item => item.repo_id === id && !['failed', 'completed'].includes(item.status));
@@ -163,27 +190,29 @@ function resetModelFit() {
   $('fit-details').hidden = true;
 }
 
-async function inspectCatalogModel(repo, revision = 'main') {
+async function inspectCatalogModel(repo, revision = 'main', opener = null) {
   const request = ++detailRequest;
   catalogSelection = repo;
   $('repo-id').value = repo;
   $('revision').value = revision;
   resetModelFit();
   renderCatalogCards();
-  $('catalog-placeholder').hidden = true;
+  openCatalogSheet(opener, repo.split('/').pop());
   $('catalog-detail').hidden = false;
   $('model-form').hidden = true;
   $('manual-repo-label').hidden = true;
+  $('catalog-sheet-body').className = 'catalog-sheet-body is-loading';
   $('catalog-detail').innerHTML = '<div class="catalog-detail-head"><p>Inspecting repository files…</p></div>';
-  if (window.innerWidth <= 800) $('catalog-inspector').scrollIntoView({behavior: 'smooth', block: 'start'});
   try {
     const model = await api(`/api/v1/catalog/models/${repo.split('/').map(encodeURIComponent).join('/')}?revision=${encodeURIComponent(revision)}`);
     if (request !== detailRequest) return;
     const facts = [['Repository size', `${model.size_complete ? '' : 'At least '}${formatBytes(model.repository_bytes)}`], ['Parameters', model.parameters ? formatNumber(model.parameters) : 'Not reported'], ['Architecture', model.architecture || model.library || 'Not reported'], ['License', model.license || 'See model license']];
     $('catalog-detail').innerHTML = `${catalogImage(model, true)}<div class="catalog-detail-head"><div class="catalog-detail-identity"><span class="catalog-avatar">${escapeHtml(model.author[0].toUpperCase())}</span><div><p class="eyebrow">${escapeHtml(model.author)}</p><h3>${escapeHtml(model.id.split('/').pop())}</h3></div></div><div class="catalog-tags">${[model.task, model.library].filter(Boolean).map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div><div class="catalog-popularity"><span>↓ <b>${formatNumber(model.downloads)}</b><small>downloads</small></span><span>♡ <b>${formatNumber(model.likes)}</b><small>likes</small></span></div><dl class="catalog-facts">${facts.map(([title, value]) => `<div><dt>${title}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>${model.gated ? '<p class="catalog-access-note">License approval is required. Accept access on Hugging Face and configure the controller token.</p>' : ''}<a class="catalog-hf-link" href="https://huggingface.co/${model.id.split('/').map(encodeURIComponent).join('/')}" target="_blank" rel="noopener noreferrer">Open model card &amp; license <span>↗</span></a></div><details class="catalog-files"><summary><span>${model.files.length} repository files</span><small>Show file manifest</small></summary><div class="catalog-file-list">${model.files.map(file => `<div class="catalog-file"><span>${escapeHtml(file.name)}</span><span>${file.size === null ? 'Unknown size' : formatBytes(file.size)}</span></div>`).join('')}</div></details>`;
+    $('catalog-sheet-body').className = 'catalog-sheet-body';
     $('model-form').hidden = false;
   } catch (error) {
     if (request !== detailRequest) return;
+    $('catalog-sheet-body').className = 'catalog-sheet-body is-loading';
     $('catalog-detail').innerHTML = `<div class="catalog-detail-head"><h3>${escapeHtml(repo)}</h3><p>${escapeHtml(error.message)}</p><button id="catalog-detail-retry" type="button" class="secondary">Retry inspection</button></div>`;
     $('catalog-detail-retry').addEventListener('click', () => inspectCatalogModel(repo, revision));
   }
@@ -191,7 +220,7 @@ async function inspectCatalogModel(repo, revision = 'main') {
 
 $('catalog-grid').addEventListener('click', event => {
   const button = event.target.closest('[data-repo]');
-  if (button) inspectCatalogModel(button.dataset.repo);
+  if (button) inspectCatalogModel(button.dataset.repo, 'main', button);
 });
 $('catalog-query').addEventListener('input', () => {
   ++catalogRequest; // Invalidate requests immediately, including during debounce.
@@ -223,13 +252,20 @@ $('catalog-manual').addEventListener('click', () => {
   resetModelFit();
   $('repo-id').value = $('catalog-query').value.includes('/') ? $('catalog-query').value.trim() : '';
   $('revision').value = 'main';
-  $('catalog-placeholder').hidden = true;
   $('catalog-detail').hidden = true;
   $('model-form').hidden = false;
   $('manual-repo-label').hidden = false;
+  $('catalog-sheet-body').className = 'catalog-sheet-body manual-mode';
+  openCatalogSheet($('catalog-manual'), 'Add a Hugging Face repository');
   renderCatalogCards();
-  $('repo-id').focus();
+  requestAnimationFrame(() => $('repo-id').focus());
 });
+$('catalog-sheet-close').addEventListener('click', closeCatalogSheet);
+$('catalog-sheet-backdrop').addEventListener('click', closeCatalogSheet);
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !$('catalog-sheet').hidden) closeCatalogSheet();
+});
+window.addEventListener('hashchange', closeCatalogSheet);
 $('revision').addEventListener('change', () => {
   if (catalogSelection) inspectCatalogModel(catalogSelection, $('revision').value.trim() || 'main');
 });
