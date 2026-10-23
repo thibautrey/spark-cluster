@@ -454,4 +454,6 @@ def test_catalog_filters_are_hidden_until_requested(catalog):
     page = client.get("/").text
     assert 'id="catalog-filter-open"' in page
     assert 'id="catalog-filter-sheet" hidden' in page
+    assert '<details class="catalog-secondary" id="local-models-section">' in page
+    assert '<details class="catalog-secondary" id="download-history-section">' in page
     assert "catalog-ranking-help" not in page

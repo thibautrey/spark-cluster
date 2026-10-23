@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=filter-sheet-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=inventory-clean-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -227,10 +227,10 @@
               </div>
             </section>
           </div>
-          <div class="downloads-head"><p class="eyebrow">AVAILABLE ON CLUSTER</p></div>
-          <div class="model-inventory" id="local-models"><div class="empty-state"><b>No local model found</b><span>Choose a model above to get started.</span></div></div>
-          <div class="downloads-head"><p class="eyebrow">DOWNLOAD HISTORY</p><span>Completed transfers and jobs that need attention</span></div>
-          <div class="download-list" id="download-list"><div class="empty-downloads">No downloads yet.</div></div>
+          <div class="catalog-secondary-sections">
+            <details class="catalog-secondary" id="local-models-section"><summary><span>Downloaded models</span><small id="local-model-count">0</small></summary><div class="model-inventory" id="local-models"><div class="empty-state"><b>No local model found</b><span>Choose a model above to get started.</span></div></div></details>
+            <details class="catalog-secondary" id="download-history-section"><summary><span>History</span><small id="download-history-count">0</small></summary><div class="download-list" id="download-list"><div class="empty-downloads">No downloads yet.</div></div></details>
+          </div>
         </section>
 
         <section class="panel launch-panel" id="launch" data-route-view="launch">
@@ -326,7 +326,7 @@
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=model-copy-clean-v1"></script>
+    <script src="/assets/app.js?v=inventory-clean-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>

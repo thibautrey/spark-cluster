@@ -179,6 +179,7 @@ function renderEndpoint(endpoint) {
 
 function renderModels(models) {
   localModels = models;
+  $('local-model-count').textContent = models.length;
   updateLaunchModelOptions(models);
   if (!models.length) {
     $('local-models').innerHTML = '<div class="empty-state"><b>No local model found</b><span>Add one from Hugging Face.</span></div>';
@@ -303,6 +304,7 @@ function renderActiveDownloads(downloads) {
 function renderDownloads(downloads) {
   renderActiveDownloads(downloads);
   const history = downloads.filter(job => !activeDownloadStatuses.has(job.status));
+  $('download-history-count').textContent = history.length;
   if (!history.length) {
     $('download-list').innerHTML = '<div class="empty-downloads">Completed and failed transfers will appear here.</div>';
     return;
