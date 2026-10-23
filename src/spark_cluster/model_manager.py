@@ -1048,7 +1048,7 @@ class ModelManager:
         async with self._runtime_lock:
             if self._runtime_cache and time.monotonic() - self._runtime_cached_at < 1:
                 return self._runtime_cache
-            base = self.settings.openai_api_base.rstrip("/")
+            base = self.settings.direct_runtime_base_url
             models_url = f"{base}/models"
             loaded: list[str] = []
             status = "unreachable"

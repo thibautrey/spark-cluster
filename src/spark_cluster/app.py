@@ -277,7 +277,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/v1/setup/connect", dependencies=[Depends(require_model_token)])
     async def connect_cluster(request: ClusterConnectRequest):
-        return await cluster_connector.attach(request.address, request.port)
+        connection = await cluster_connector.attach(request.address, request.port)
+        settings.remote_cluster_url = connection["url"]
+        return connection
 
     @app.get("/api/v1/controller/verify", dependencies=[Depends(require_model_token)])
     async def verify_controller():
@@ -338,7 +340,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             detail=(
                 "Inference is never routed through the Spark Cluster controller. "
                 "Send OpenAI-compatible requests directly to "
-                f"{settings.openai_api_base.rstrip('/')}"
+                f"{settings.direct_runtime_base_url}"
             ),
         )
 

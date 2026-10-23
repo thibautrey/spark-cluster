@@ -1,4 +1,5 @@
 from pathlib import Path
+from urllib.parse import urlparse
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -23,6 +24,7 @@ class Settings(BaseSettings):
     runtime_pipeline_parallel: int = 1
     openai_api_base: str = "http://localhost:8000/v1"
     openai_api_key: str | None = None
+    runtime_node_port: int = 30000
     model_cache_path: Path = Path("./models")
     hf_token: str | None = None
     model_admin_token: str | None = None
@@ -63,3 +65,10 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [item.strip() for item in self.cors_origins.split(",") if item.strip()]
+
+    @property
+    def direct_runtime_base_url(self) -> str:
+        if self.remote_cluster_url:
+            parsed = urlparse(self.remote_cluster_url)
+            return f"{parsed.scheme}://{parsed.hostname}:{self.runtime_node_port}/v1"
+        return self.openai_api_base.rstrip("/")
