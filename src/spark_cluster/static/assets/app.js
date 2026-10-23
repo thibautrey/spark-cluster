@@ -79,11 +79,12 @@ function renderCache(tiers) {
 function renderMemory(nodes) {
   $('memory-grid').innerHTML = nodes.map(node => {
     const model = Math.round(node.memory.model_gib / 8);
-    const kv = Math.round(node.memory.kv_cache_gib / 3);
+    const kvKnown = node.memory.kv_cache_source !== 'unavailable';
+    const kv = kvKnown ? Math.round(node.memory.kv_cache_gib / 3) : 0;
     const runtime = Math.max(1, Math.round((node.memory.used_gib - node.memory.model_gib - node.memory.kv_cache_gib) / 3));
     const free = Math.max(1, 16 - model - kv - runtime);
     const blocks = (className, count) => Array(Math.max(0, count)).fill(`<i class="${className}"></i>`).join('');
-    return `<div><div class="memory-node-head"><b>${escapeHtml(node.hostname)}</b><span>${node.memory.used_gib.toFixed(0)} / ${node.memory.total_gib.toFixed(0)} GiB</span></div><div class="memory-block">${blocks('model', model)}${blocks('kv', kv)}${blocks('runtime', runtime)}${blocks('free', free)}</div><div class="memory-labels"><span><i class="m"></i>model</span><span><i class="k"></i>KV</span><span><i class="r"></i>runtime</span><span><i class="f"></i>free</span></div></div>`;
+    return `<div><div class="memory-node-head"><b>${escapeHtml(node.hostname)}</b><span>${node.memory.used_gib.toFixed(0)} / ${node.memory.total_gib.toFixed(0)} GiB</span></div><div class="memory-block">${blocks('model', model)}${blocks('kv', kv)}${blocks('runtime', runtime)}${blocks('free', free)}</div><div class="memory-labels"><span><i class="m"></i>model</span><span title="${kvKnown ? `${node.memory.kv_cache_source} KV allocation` : 'Runtime does not expose KV allocation'}"><i class="k"></i>${kvKnown ? 'KV' : 'KV unavailable'}</span><span><i class="r"></i>runtime</span><span><i class="f"></i>free</span></div></div>`;
   }).join('');
 }
 
@@ -255,7 +256,7 @@ function renderLaunches(launches) {
   const current = launches.find(job => !['ready', 'failed'].includes(job.status)) || launches[0];
   const activeIndex = launchStages.findIndex(([status]) => status === current.status);
   $('launch-status').innerHTML = `
-    <div class="launch-job-head"><div><h3>${escapeHtml(current.request.served_model_name)}</h3><p>${escapeHtml(current.request.model_id)} · TP ${current.request.tensor_parallel} × PP ${current.request.pipeline_parallel} · ${Math.round(current.request.context_length / 1024)}k</p></div><span class="launch-progress-value">${current.progress.toFixed(0)}%</span></div>
+    <div class="launch-job-head"><div><h3>${escapeHtml(current.request.served_model_name)}</h3><p>${escapeHtml(current.request.model_id)} · ${escapeHtml(current.execution_plan?.engine_name || current.request.engine_id)} · TP ${current.request.tensor_parallel} × PP ${current.request.pipeline_parallel} · ${Math.round(current.request.context_length / 1024)}k</p></div><span class="launch-progress-value">${current.progress.toFixed(0)}%</span></div>
     <div class="launch-progress-bar"><i style="width:${current.progress}%"></i></div>
     <div class="launch-steps">${launchStages.map(([status, label], index) => `<div class="launch-step ${index < activeIndex || current.status === 'ready' ? 'done' : index === activeIndex ? 'active' : ''}"><i>${index < activeIndex || current.status === 'ready' ? '✓' : index + 1}</i><span>${label}</span><span>${status === current.status ? escapeHtml(current.message) : ''}</span></div>`).join('')}</div>
     ${current.error ? `<div class="launch-error">${escapeHtml(current.error)}</div>` : ''}`;
@@ -277,6 +278,17 @@ function launchPayload() {
     kv_cache_dtype: launchPerformance?.kv_cache_dtype || 'auto',
     max_num_seqs: launchPerformance?.max_num_seqs || Number($('launch-concurrency').value),
     max_num_batched_tokens: launchPerformance?.max_num_batched_tokens || 8192,
+    engine_id: $('launch-engine').value,
+    speculative_method: $('launch-speculative').value,
+    speculative_tokens: Number($('launch-speculative-tokens').value),
+    expert_parallel: $('launch-expert-parallel').checked,
+    all2all_backend: $('launch-all2all').value,
+    expert_load_balancing: $('launch-eplb').checked,
+    redundant_experts: Number($('launch-redundant-experts').value),
+    cuda_graphs: $('launch-cuda-graphs').checked,
+    chunked_prefill: $('launch-chunked-prefill').checked,
+    cache_cpu_gib: Number($('launch-cache-cpu').value),
+    cache_disk_gib: Number($('launch-cache-disk').value),
   };
 }
 
@@ -302,10 +314,18 @@ async function loadPerformancePlan(apply = true) {
       $('tensor-parallel').value = plan.tensor_parallel;
       $('pipeline-parallel').value = plan.pipeline_parallel;
       $('gpu-memory-utilization').value = plan.gpu_memory_utilization;
+      $('launch-engine').value = plan.engine_id;
+      $('launch-speculative').value = plan.speculative_method;
+      $('launch-speculative-tokens').value = plan.speculative_tokens;
+      $('launch-expert-parallel').checked = plan.expert_parallel;
+      $('launch-eplb').checked = plan.expert_load_balancing;
+      $('launch-all2all').value = plan.all2all_backend;
+      $('launch-cache-cpu').value = plan.cache_cpu_gib;
+      $('launch-cache-disk').value = plan.cache_disk_gib;
     }
     const evidence = plan.evidence.map(item => `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)} ↗</a>`).join(' · ');
     const warnings = plan.warnings.length ? `<p>${plan.warnings.map(item => escapeHtml(item)).join(' ')}</p>` : '';
-    $('performance-plan').innerHTML = `<span>↗</span><div><b>${escapeHtml(plan.profile)}</b><small>${escapeHtml(plan.engine)} · ${escapeHtml(plan.collective_backend)} · TP ${plan.tensor_parallel} · ${plan.kv_cache_dtype === 'fp8_e4m3' ? 'FP8 KV' : 'automatic KV'} · ${plan.max_num_seqs} sequences</small><p>${escapeHtml(plan.engine_guidance)} ${escapeHtml(plan.topology_guidance)}</p>${warnings}<small>${evidence}</small></div>`;
+    $('performance-plan').innerHTML = `<span>${plan.engine_executable ? '↗' : '!'}</span><div><b>${escapeHtml(plan.profile)}</b><small>${escapeHtml(plan.engine)} · ${escapeHtml(plan.collective_backend)} · TP ${plan.tensor_parallel} · ${plan.kv_cache_dtype === 'fp8_e4m3' ? 'FP8 KV' : 'automatic KV'} · ${plan.max_num_seqs} sequences · ${escapeHtml(plan.speculative_method.toUpperCase())}</small><p>${escapeHtml(plan.engine_guidance)} ${escapeHtml(plan.topology_guidance)}</p>${warnings}<small>${evidence}</small></div>`;
   } catch (error) {
     launchPerformance = null;
     $('performance-plan').innerHTML = `<span>!</span><div><b>Performance plan unavailable</b><small>${escapeHtml(error.message)}</small></div>`;
@@ -416,7 +436,7 @@ async function pollRuntimeInstall() {
     const job = await api(`/api/v1/runtime-management/install/${runtimeInstallJob.id}`, {headers: launchAuthHeaders()});
     renderRuntimeInstallJob(job);
     if (job.status === 'completed') {
-      const report = await api('/api/v1/runtime-management/readiness', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({model_id: pendingLaunchPayload.model_id})});
+      const report = await api('/api/v1/runtime-management/readiness', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({model_id: pendingLaunchPayload.model_id, engine_id: pendingLaunchPayload.engine_id})});
       renderRuntimeReadiness(report);
       return;
     }
@@ -444,7 +464,7 @@ async function installRuntimeOnNodes() {
   button.disabled = true;
   button.textContent = 'Starting installation…';
   try {
-    runtimeInstallJob = await api('/api/v1/runtime-management/install', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({model_id: pendingLaunchPayload.model_id})});
+    runtimeInstallJob = await api('/api/v1/runtime-management/install', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({model_id: pendingLaunchPayload.model_id, engine_id: pendingLaunchPayload.engine_id})});
     renderRuntimeInstallJob(runtimeInstallJob);
     runtimeInstallTimer = setTimeout(pollRuntimeInstall, 500);
   } catch (error) {
@@ -581,6 +601,99 @@ async function refreshLibrary() {
   } finally {
     await downloadsRequest;
     libraryRefreshRunning = false;
+  }
+}
+
+function metricValue(value, suffix = '') {
+  return value === null || value === undefined ? '—' : `${Number(value).toFixed(1)}${suffix}`;
+}
+
+function renderTelemetry(telemetry) {
+  $('telemetry-state').textContent = telemetry.available ? '● measured live' : '○ runtime unavailable';
+  $('telemetry-state').className = `pill ${telemetry.available ? 'ready' : 'unreachable'}`;
+  const values = [
+    ['TTFT p50 / p95', `${metricValue(telemetry.ttft_p50_ms, ' ms')} / ${metricValue(telemetry.ttft_p95_ms, ' ms')}`],
+    ['Inter-token p50 / p95', `${metricValue(telemetry.inter_token_p50_ms, ' ms')} / ${metricValue(telemetry.inter_token_p95_ms, ' ms')}`],
+    ['Prefill / decode', `${metricValue(telemetry.prefill_tokens_per_second, ' t/s')} / ${metricValue(telemetry.decode_tokens_per_second, ' t/s')}`],
+    ['Speculative acceptance', telemetry.speculative_acceptance_rate == null ? '—' : `${(telemetry.speculative_acceptance_rate * 100).toFixed(1)}%`],
+    ['Measured KV occupancy', telemetry.gpu_kv_cache_usage == null ? '—' : `${(telemetry.gpu_kv_cache_usage * 100).toFixed(1)}%`],
+    ['LMCache hits / misses', `${telemetry.cache_hits ?? '—'} / ${telemetry.cache_misses ?? '—'}`],
+    ['NCCL p95', metricValue(telemetry.nccl_collective_p95_ms, ' ms')],
+    ['Expert imbalance', metricValue(telemetry.expert_imbalance)],
+  ];
+  $('telemetry-grid').innerHTML = values.map(([label, value]) => `<article><small>${label}</small><b>${value}</b></article>`).join('');
+}
+
+function renderBenchmarks(results) {
+  $('benchmark-results').innerHTML = results.length ? results.map(result => `
+    <article><div><b>${escapeHtml(result.model_id)}</b><small>${escapeHtml(result.engine_id)} · ${escapeHtml(result.topology)} · ${result.concurrency} concurrent · ${escapeHtml(result.cache_state)}</small></div><span><b>${metricValue(result.output_tokens_per_second, ' t/s')}</b><small>output</small></span><span><b>${metricValue(result.ttft_p95_ms, ' ms')}</b><small>TTFT p95</small></span><span class="${result.error ? 'failed' : 'ready'}">${result.error ? escapeHtml(result.error) : `${result.successful_requests} measured`}</span></article>`).join('') : '<div class="empty-state">No benchmark recorded yet.</div>';
+}
+
+function renderCachePrefixes(records) {
+  $('cache-prefix-records').innerHTML = records.length ? records.map(record => `
+    <article><div><b>${escapeHtml(record.model_id)}</b><small>${formatNumber(record.prompt_tokens)} tokens · priority ${record.priority} · ${record.prewarm_count} prewarm(s)</small></div><span class="${escapeHtml(record.state)}">${escapeHtml(record.state)}</span><small>${record.last_ttft_ms == null ? 'TTFT unavailable' : `${record.last_ttft_ms.toFixed(1)} ms`}${record.last_cache_hit_delta == null ? '' : ` · +${record.last_cache_hit_delta} cache hits`}</small></article>`).join('') : '<div class="empty-state">No tracked prefixes yet.</div>';
+}
+
+async function refreshOptimizationLab() {
+  const [telemetry, benchmarks, prefixes] = await Promise.all([
+    api('/api/v1/telemetry'),
+    api('/api/v1/optimization/benchmarks?limit=12'),
+    api('/api/v1/cache/prefixes?limit=20'),
+  ]);
+  renderTelemetry(telemetry);
+  renderBenchmarks(benchmarks);
+  renderCachePrefixes(prefixes);
+}
+
+async function runBenchmark() {
+  const button = $('run-benchmark');
+  const modelId = $('launch-model').value;
+  if (!modelId) {
+    button.textContent = 'Select a launched model first';
+    return;
+  }
+  button.disabled = true;
+  button.textContent = 'Benchmarking…';
+  try {
+    await api('/api/v1/optimization/benchmarks', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({
+      model_id: modelId,
+      prompt: $('benchmark-prompt').value,
+      max_tokens: Number($('benchmark-tokens').value),
+      repetitions: Number($('benchmark-repetitions').value),
+      concurrency: Number($('benchmark-concurrency').value),
+      cache_state: 'cold',
+      objective: $('launch-workload').value,
+    })});
+    await refreshOptimizationLab();
+  } catch (error) {
+    button.textContent = error.message;
+  } finally {
+    button.disabled = false;
+    if (button.textContent === 'Benchmarking…') button.textContent = 'Run measured benchmark';
+  }
+}
+
+async function prewarmPrefix() {
+  const button = $('cache-prewarm');
+  button.disabled = true;
+  button.textContent = 'Prewarming…';
+  try {
+    const modelId = $('cache-model-id').value.trim();
+    await api('/api/v1/cache/prefixes/prewarm', {method: 'POST', headers: authHeaders($('cache-admin-token').value), body: JSON.stringify({
+      model_id: modelId,
+      tokenizer_id: $('cache-tokenizer-id').value.trim() || modelId,
+      prompt: $('cache-prefix-prompt').value,
+      engine_id: $('launch-engine').value === 'auto' ? 'vllm' : $('launch-engine').value,
+      priority: Number($('cache-prefix-priority').value),
+      engine_config: {context_length: Number($('launch-context').value), kv_cache_dtype: launchPerformance?.kv_cache_dtype || 'auto'},
+    })});
+    $('cache-prefix-prompt').value = '';
+    await refreshOptimizationLab();
+  } catch (error) {
+    button.textContent = error.message;
+  } finally {
+    button.disabled = false;
+    if (button.textContent === 'Prewarming…') button.textContent = 'Prewarm prefix';
   }
 }
 
@@ -830,11 +943,15 @@ document.addEventListener('keydown', event => {
 
 $('launch-model').addEventListener('change', async () => {
   const model = localModels.find(item => item.id === $('launch-model').value);
-  if (model) $('served-model-name').value = model.id.split('/').pop().toLowerCase();
+  if (model) {
+    $('served-model-name').value = model.id.split('/').pop().toLowerCase();
+    $('cache-model-id').value = model.id;
+    $('cache-tokenizer-id').value = model.id;
+  }
   await loadPerformancePlan(true);
   checkLaunchFit();
 });
-['served-model-name', 'launch-context', 'launch-bits', 'tensor-parallel', 'pipeline-parallel', 'gpu-memory-utilization', 'launch-concurrency'].forEach(id => {
+['served-model-name', 'launch-context', 'launch-bits', 'tensor-parallel', 'pipeline-parallel', 'gpu-memory-utilization', 'launch-concurrency', 'launch-engine', 'launch-speculative', 'launch-speculative-tokens', 'launch-expert-parallel', 'launch-eplb', 'launch-all2all', 'launch-redundant-experts', 'launch-cuda-graphs', 'launch-chunked-prefill', 'launch-cache-cpu', 'launch-cache-disk'].forEach(id => {
   $(id).addEventListener('change', checkLaunchFit);
 });
 $('launch-workload').addEventListener('change', async () => {
@@ -851,7 +968,7 @@ $('launch-form').addEventListener('submit', async event => {
   $('launch-model-button').textContent = 'Checking runtimes…';
   const payload = launchPayload();
   try {
-    const report = await api('/api/v1/runtime-management/readiness', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({model_id: payload.model_id})});
+    const report = await api('/api/v1/runtime-management/readiness', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({model_id: payload.model_id, engine_id: payload.engine_id})});
     if (!report.ready) {
       pendingLaunchPayload = payload;
       openRuntimeReadinessSheet(report, $('launch-model-button'));
@@ -914,9 +1031,13 @@ $('clear-logs').addEventListener('click', () => {
   logEntries = [];
   renderLogLines();
 });
+$('run-benchmark').addEventListener('click', runBenchmark);
+$('cache-prewarm').addEventListener('click', prewarmPrefix);
 
 connect();
 connectLogs();
 loadLogHistory();
 refreshLibrary();
+refreshOptimizationLab().catch(() => {});
 setInterval(refreshLibrary, 2000);
+setInterval(() => refreshOptimizationLab().catch(() => {}), 5000);

@@ -32,6 +32,7 @@ from .catalog import (
     ModelBrowser,
 )
 from .cluster_control import (
+    EngineNotExecutable,
     InvalidParallelism,
     ModelNotManaged,
     RuntimeDeploymentService,
@@ -47,11 +48,16 @@ from .model_manager import (
 )
 from .model_relay import ModelRelay
 from .models import (
+    BenchmarkRequest,
+    BenchmarkResult,
+    CachePrefixRecord,
+    CachePrefixRequest,
     CapacityPlan,
     CapacityRequest,
     ClusterSnapshot,
     ControllerModelImportRequest,
     DownloadJob,
+    InferenceTelemetry,
     LocalModel,
     ModelDownloadRequest,
     ModelFitPlan,
@@ -69,6 +75,7 @@ from .models import (
     RuntimeTerminalRequest,
     RuntimeTerminalTicket,
 )
+from .optimization_lab import OptimizationLab
 from .performance import PerformancePlan, PerformancePlanRequest, build_performance_plan
 from .prometheus import render_metrics
 from .remote_cluster import (
@@ -83,6 +90,7 @@ from .runtime_prerequisites import RuntimePrerequisiteService
 from .setup_models import ClusterConnectRequest, DiscoveryRequest, SetupRequest
 from .simulator import ClusterSimulator
 from .store import SnapshotStore
+from .telemetry import InferenceTelemetryService
 
 
 class Runtime:
@@ -139,6 +147,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     setup_service = ClusterSetupService(settings, runtime.store)
     runtime_prerequisites = RuntimePrerequisiteService(settings, runtime.store, setup_service)
+    telemetry_service = InferenceTelemetryService(settings, runtime.store)
+    optimization_lab = OptimizationLab(settings, runtime.store, telemetry_service)
     cluster_connector = RemoteClusterConnector(settings)
 
     async def activate_cluster(job) -> None:
@@ -184,12 +194,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await runtime.start()
         await model_manager.start()
         await log_service.start()
+        await telemetry_service.start()
         await deployment_service.start()
         await setup_service.start()
         yield
         await setup_service.stop()
         await runtime_prerequisites.stop()
         await deployment_service.stop()
+        await telemetry_service.stop()
         await log_service.stop()
         await model_manager.stop()
         browser.close()
@@ -204,6 +216,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.deployment_service = deployment_service
     app.state.setup_service = setup_service
     app.state.runtime_prerequisites = runtime_prerequisites
+    app.state.telemetry_service = telemetry_service
+    app.state.optimization_lab = optimization_lab
     app.state.settings = settings
     app.state.cluster_connector = cluster_connector
     app.add_middleware(RemoteClusterProxyMiddleware, settings=settings)
@@ -379,7 +393,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             configured = next((job for job in setup_jobs if job.status == "ready"), None)
             if configured:
                 request = request.model_copy(update={"topology": configured.request.topology})
-        return build_performance_plan(request, available_nodes)
+        return build_performance_plan(request, available_nodes, settings)
+
+    @app.get("/api/v1/telemetry", response_model=InferenceTelemetry)
+    async def inference_telemetry() -> InferenceTelemetry:
+        return telemetry_service.latest
+
+    @app.get("/api/v1/telemetry/history", response_model=list[InferenceTelemetry])
+    async def inference_telemetry_history(
+        limit: int = Query(default=120, ge=1, le=5000),
+    ) -> list[InferenceTelemetry]:
+        return await asyncio.to_thread(runtime.store.telemetry_history, limit)
+
+    @app.post(
+        "/api/v1/optimization/benchmarks",
+        response_model=BenchmarkResult,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def run_benchmark(request: BenchmarkRequest) -> BenchmarkResult:
+        try:
+            return await optimization_lab.benchmark(request)
+        except (httpx.HTTPError, ValueError) as error:
+            raise HTTPException(status_code=502, detail="Runtime benchmark failed") from error
+
+    @app.get("/api/v1/optimization/benchmarks", response_model=list[BenchmarkResult])
+    async def benchmarks(limit: int = Query(default=50, ge=1, le=500)):
+        return await asyncio.to_thread(runtime.store.list_benchmarks, limit)
+
+    @app.post(
+        "/api/v1/cache/prefixes/prewarm",
+        response_model=CachePrefixRecord,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def prewarm_prefix(request: CachePrefixRequest) -> CachePrefixRecord:
+        return await optimization_lab.prewarm(request)
+
+    @app.get("/api/v1/cache/prefixes", response_model=list[CachePrefixRecord])
+    async def cache_prefixes(limit: int = Query(default=100, ge=1, le=500)):
+        return await asyncio.to_thread(runtime.store.list_cache_prefixes, limit)
 
     @app.get("/api/v1/runtime", response_model=RuntimeEndpoint)
     async def runtime_endpoint() -> RuntimeEndpoint:
@@ -679,6 +730,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ) from error
         except InvalidParallelism as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+        except EngineNotExecutable as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @app.post(
         "/api/v1/launches/{job_id}/retry",
@@ -697,7 +750,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dependencies=[Depends(require_model_token)],
     )
     async def runtime_readiness(request: RuntimeReadinessRequest) -> RuntimeReadiness:
-        return await runtime_prerequisites.inspect(request.model_id)
+        return await runtime_prerequisites.inspect(request.model_id, request.engine_id)
 
     @app.post(
         "/api/v1/runtime-management/install",
@@ -707,7 +760,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     async def install_runtime(request: RuntimeReadinessRequest) -> RuntimeInstallJob:
         try:
-            return await runtime_prerequisites.install(request.model_id)
+            return await runtime_prerequisites.install(request.model_id, request.engine_id)
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
@@ -737,7 +790,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def metrics() -> str:
         if runtime.latest is None:
             return ""
-        return render_metrics(runtime.latest)
+        return render_metrics(runtime.latest, telemetry_service.latest)
 
     @app.websocket("/api/v1/stream")
     async def stream(websocket: WebSocket) -> None:

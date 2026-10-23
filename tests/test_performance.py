@@ -11,10 +11,15 @@ def test_deepseek_v41_plan_uses_tensorfold_dual_rail_findings():
         ),
         available_nodes=4,
     )
-    assert plan.engine == "TensorFold specialized lane"
+    assert plan.engine_id == "vllm"
+    assert plan.engine_executable is True
+    assert "TensorFold available" in plan.engine
     assert plan.tensor_parallel == 4
-    assert plan.context_length == 1_048_576
+    assert plan.context_length == 262_144
+    assert 1_048_576 in plan.context_options
     assert plan.max_num_seqs == 16
+    assert plan.speculative_method == "mtp"
+    assert any("DSpark" in warning for warning in plan.warnings)
     assert plan.collective_backend == "NCCL ring over RoCEv2"
     assert any("both RoCE rails" in item.finding for item in plan.evidence)
     assert any("Engram" in warning for warning in plan.warnings)

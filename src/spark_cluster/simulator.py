@@ -33,6 +33,8 @@ class ClusterSimulator:
                         used_gib=round(max(0, used), 1),
                         model_gib=68.4,
                         kv_cache_gib=round(10 + index + wave * 2, 1),
+                        accelerator_used_gib=round(max(0, used), 1),
+                        kv_cache_source="estimated",
                     ),
                     gpu_utilization=round(max(0, min(100, utilization)), 1),
                     temperature_c=round(57 + utilization * 0.18 + self.random.uniform(-1, 1), 1),

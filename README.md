@@ -80,6 +80,14 @@ The setup flow is deliberately sequential:
 
 For direct links, a green result requires the expected point-to-point subnet, sufficient negotiated speed, successful interface-bound peer checks, and a neighbor MAC matching the remote fabric interface. Carrier alone stays amber. See the [cluster setup guide](docs/cluster-setup.md) for access, networking, supported layouts, recovery, and security boundaries.
 
+### Measured optimization lab
+
+The controller now turns runtime recommendations into executable, capability-checked launch plans.
+It supports vLLM speculation and MoE controls, adaptive LMCache sizing, real runtime metrics,
+repeatable streaming benchmarks, and privacy-preserving prefix prewarming. TensorFold and DeepInfer
+stay blocked until their GB10 command and kernel contracts are validated. See the
+[optimization lab guide](docs/optimization-lab.md) for the exact capabilities and measurement gates.
+
 ### Performance-aware setup and launch
 
 The topology assistant follows NVIDIA's current multi-Spark results. A four-node switchless ring is a

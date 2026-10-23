@@ -404,8 +404,5 @@ def test_packaged_chart_matches_development_chart():
 
     source = Path(__file__).parents[1] / "deploy/helm/spark-cluster"
     packaged = Path(__file__).parents[1] / "src/spark_cluster/chart"
-    source_files = {path.relative_to(source) for path in source.rglob("*") if path.is_file()}
-    packaged_files = {path.relative_to(packaged) for path in packaged.rglob("*") if path.is_file()}
-    assert source_files == packaged_files
-    for relative in source_files:
-        assert source.joinpath(relative).read_bytes() == packaged.joinpath(relative).read_bytes()
+    assert source.is_symlink()
+    assert source.resolve() == packaged.resolve()

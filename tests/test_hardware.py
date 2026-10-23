@@ -234,3 +234,14 @@ def test_three_sparks_with_one_shared_port_each_cannot_form_direct_triangle():
     topology = build_hardware_topology(plan, facts)
     assert topology.verdict != "pass"
     assert all(link.status != "pass" for link in topology.links)
+
+
+def test_agent_does_not_report_total_accelerator_memory_as_kv_cache(monkeypatch):
+    from spark_cluster.agent import collect_node
+
+    values = {"SC_PAGE_SIZE": 4096, "SC_PHYS_PAGES": 1_000_000, "SC_AVPHYS_PAGES": 500_000}
+    monkeypatch.setattr("spark_cluster.agent.os.sysconf", values.__getitem__)
+    monkeypatch.setattr("spark_cluster.agent.socket.gethostbyname", lambda _: "127.0.0.1")
+    node = collect_node("test-node")
+    assert node.memory.kv_cache_gib == 0
+    assert node.memory.kv_cache_source == "unavailable"

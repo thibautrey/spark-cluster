@@ -18,6 +18,7 @@ from .models import (
     RuntimeReadiness,
     RuntimeTerminalTicket,
 )
+from .runtime_engines import capabilities, recommended_engine
 from .setup_models import SetupNode
 from .store import SnapshotStore
 
@@ -61,19 +62,16 @@ class RuntimePrerequisiteService:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
-    def spec_for(self, model_id: str) -> RuntimeSpec:
+    def spec_for(self, model_id: str, engine_id: str = "auto") -> RuntimeSpec:
         model = model_id.lower()
-        if "deepseek-v4.1" in model or "deepseek_v4.1" in model:
-            return RuntimeSpec(
-                "tensorfold",
-                "TensorFold specialized lane",
-                self.settings.runtime_tensorfold_image,
-            )
         if "gguf" in model:
             return RuntimeSpec(
                 "llama-cpp", "llama.cpp CUDA server", self.settings.runtime_llama_cpp_image
             )
-        return RuntimeSpec("vllm", "vLLM for NVIDIA GB10", self.settings.runtime_vllm_image)
+        if engine_id == "auto":
+            engine_id, _ = recommended_engine(model_id, self.settings)
+        engine = capabilities(self.settings)[engine_id]
+        return RuntimeSpec(engine.id, engine.name, engine.image if engine.executable else None)
 
     def nodes(self) -> list[SetupNode]:
         for job in self.store.list_setup_jobs():
@@ -81,8 +79,8 @@ class RuntimePrerequisiteService:
                 return job.request.nodes
         return []
 
-    async def inspect(self, model_id: str) -> RuntimeReadiness:
-        spec = self.spec_for(model_id)
+    async def inspect(self, model_id: str, engine_id: str = "auto") -> RuntimeReadiness:
+        spec = self.spec_for(model_id, engine_id)
         nodes = self.nodes()
         if not nodes:
             return RuntimeReadiness(
@@ -171,8 +169,8 @@ class RuntimePrerequisiteService:
             message="Runtime image is not present on this node",
         )
 
-    async def install(self, model_id: str) -> RuntimeInstallJob:
-        spec = self.spec_for(model_id)
+    async def install(self, model_id: str, engine_id: str = "auto") -> RuntimeInstallJob:
+        spec = self.spec_for(model_id, engine_id)
         if not spec.image:
             raise ValueError("Configure a pinned image before installing this specialized runtime")
         nodes = self.nodes()

@@ -108,6 +108,18 @@
           <article class="panel cache-panel" id="cache" data-route-view="cache">
             <div class="panel-head"><div><p class="eyebrow">MULTI-TIER</p><h2>KV cache</h2></div><span class="pill persistent">● persistent</span></div>
             <div id="cache-tiers" class="cache-tiers"></div>
+            <section class="cache-lifecycle">
+              <div><p class="eyebrow">PREFIX LIFECYCLE</p><h3>Prewarm and verify reusable context</h3><p>Raw prompts are sent only to your runtime and are never stored by the controller.</p></div>
+              <div class="cache-prewarm-form">
+                <label>Model id<input id="cache-model-id" placeholder="owner/model" /></label>
+                <label>Tokenizer id<input id="cache-tokenizer-id" placeholder="owner/model" /></label>
+                <label class="wide">Reusable prefix<textarea id="cache-prefix-prompt" rows="5" placeholder="System prompt or repository context…"></textarea></label>
+                <label>Priority<input id="cache-prefix-priority" type="number" min="0" max="100" value="50" /></label>
+                <label>Admin token <span class="optional">optional</span><input id="cache-admin-token" type="password" autocomplete="off" /></label>
+                <button class="primary" id="cache-prewarm" type="button">Prewarm prefix</button>
+              </div>
+              <div id="cache-prefix-records" class="cache-prefix-records"><div class="empty-state">No tracked prefixes yet.</div></div>
+            </section>
           </article>
         </section>
 
@@ -226,6 +238,20 @@
                 <label>Optimization goal<select id="launch-workload"><option value="balanced">Balanced</option><option value="latency">Lowest latency</option><option value="throughput">Maximum throughput</option><option value="long-context">Long context</option></select></label>
                 <label>Concurrent sequences<input id="launch-concurrency" type="number" min="1" max="1024" value="1" /></label>
               </div>
+              <details class="runtime-advanced">
+                <summary>Advanced runtime optimization</summary>
+                <div class="form-row">
+                  <label>Inference engine<select id="launch-engine"><option value="auto">Automatic runnable engine</option><option value="vllm">vLLM</option><option value="sglang">SGLang</option><option value="tensorfold">TensorFold</option><option value="deepinfer">DeepInfer experimental</option></select></label>
+                  <label>Speculative decoding<select id="launch-speculative"><option value="auto">Automatic</option><option value="off">Off / baseline</option><option value="mtp">MTP</option><option value="dspark">DSpark</option><option value="eagle3">EAGLE3</option><option value="dflash">DFlash</option></select></label>
+                </div>
+                <div class="form-row three">
+                  <label>Draft tokens<input id="launch-speculative-tokens" type="number" min="0" max="5" value="0" /></label>
+                  <label>All-to-all<select id="launch-all2all"><option value="auto">Automatic</option><option value="allgather_reducescatter">Ring-safe allgather</option><option value="deepep_low_latency">DeepEP low latency</option><option value="deepep_high_throughput">DeepEP throughput</option><option value="naive">Naive</option></select></label>
+                  <label>Redundant experts<input id="launch-redundant-experts" type="number" min="0" max="32" value="0" /></label>
+                </div>
+                <div class="runtime-switches"><label><input id="launch-expert-parallel" type="checkbox" /> Expert parallel</label><label><input id="launch-eplb" type="checkbox" /> Expert load balancing</label><label><input id="launch-cuda-graphs" type="checkbox" checked /> CUDA graphs</label><label><input id="launch-chunked-prefill" type="checkbox" checked /> Chunked prefill</label></div>
+                <div class="form-row"><label>CPU cache GiB<input id="launch-cache-cpu" type="number" min="0" max="512" value="32" /></label><label>NVMe cache GiB<input id="launch-cache-disk" type="number" min="0" max="16384" value="1536" /></label></div>
+              </details>
               <div class="performance-plan" id="performance-plan"><span>◎</span><div><b>Automatic performance plan</b><small>Select a model to apply model, workload, and fabric-aware runtime settings.</small></div></div>
               <label>Admin token <span class="optional">optional</span><input id="launch-admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label>
               <div class="fit-result neutral" id="launch-fit"><span class="fit-symbol">?</span><div><b>Select a model</b><small>The launch is revalidated against current cluster capacity.</small></div></div>
@@ -236,6 +262,15 @@
             </div>
           </div>
           <div class="launch-history" id="launch-history"></div>
+          <section class="optimization-lab">
+            <div class="optimization-lab-head"><div><p class="eyebrow">MEASURED OPTIMIZATION</p><h3>Runtime telemetry and repeatable benchmark</h3></div><span class="pill" id="telemetry-state">awaiting metrics</span></div>
+            <div class="telemetry-grid" id="telemetry-grid"></div>
+            <div class="benchmark-layout">
+              <label>Benchmark prompt<textarea id="benchmark-prompt" rows="4">Explain how a distributed KV cache avoids repeated prefill work.</textarea></label>
+              <div><label>Output tokens<input id="benchmark-tokens" type="number" min="1" max="8192" value="128" /></label><label>Repetitions<input id="benchmark-repetitions" type="number" min="1" max="20" value="3" /></label><label>Concurrency<input id="benchmark-concurrency" type="number" min="1" max="64" value="1" /></label><button class="secondary" id="run-benchmark" type="button">Run measured benchmark</button></div>
+            </div>
+            <div id="benchmark-results" class="benchmark-results"><div class="empty-state">No benchmark recorded yet.</div></div>
+          </section>
           <div class="bottom-sheet runtime-sheet" id="runtime-sheet" hidden>
             <button class="bottom-sheet-backdrop" id="runtime-sheet-backdrop" type="button" tabindex="-1" aria-label="Close runtime readiness"></button>
             <section class="bottom-sheet-panel runtime-sheet-panel" role="dialog" aria-modal="true" aria-labelledby="runtime-sheet-title">
@@ -278,7 +313,7 @@
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=runtime-readiness-v1"></script>
+    <script src="/assets/app.js?v=optimization-lab-v1"></script>
     <script src="/assets/catalog.js?v=spark-ranking-v1"></script>
     <script src="/assets/setup.js"></script>
   </body>

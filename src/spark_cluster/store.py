@@ -4,7 +4,16 @@ import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from .models import ClusterSnapshot, DownloadJob, ModelLaunchJob, RuntimeInstallJob, RuntimeLog
+from .models import (
+    BenchmarkResult,
+    CachePrefixRecord,
+    ClusterSnapshot,
+    DownloadJob,
+    InferenceTelemetry,
+    ModelLaunchJob,
+    RuntimeInstallJob,
+    RuntimeLog,
+)
 from .setup_models import SetupJob
 
 
@@ -36,6 +45,17 @@ class SnapshotStore:
         self._connection.execute(
             "CREATE TABLE IF NOT EXISTS runtime_install_jobs "
             "(id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+        )
+        self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS inference_telemetry "
+            "(timestamp TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+        )
+        self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS optimization_benchmarks "
+            "(id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+        )
+        self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS cache_prefixes (id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
         )
         self._connection.commit()
 
@@ -243,6 +263,75 @@ class SnapshotStore:
                 (limit,),
             ).fetchall()
         return [RuntimeInstallJob.model_validate_json(row[0]) for row in rows]
+
+    def save_telemetry(self, telemetry: InferenceTelemetry) -> None:
+        with self._lock:
+            self._connection.execute(
+                "INSERT OR REPLACE INTO inference_telemetry(timestamp, payload) VALUES (?, ?)",
+                (telemetry.sampled_at.isoformat(), telemetry.model_dump_json()),
+            )
+            self._connection.execute(
+                "DELETE FROM inference_telemetry WHERE timestamp NOT IN "
+                "(SELECT timestamp FROM inference_telemetry ORDER BY timestamp DESC LIMIT 10000)"
+            )
+            self._connection.commit()
+
+    def latest_telemetry(self) -> InferenceTelemetry | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT payload FROM inference_telemetry ORDER BY timestamp DESC LIMIT 1"
+            ).fetchone()
+        return InferenceTelemetry.model_validate_json(row[0]) if row else None
+
+    def telemetry_history(self, limit: int = 600) -> list[InferenceTelemetry]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT payload FROM inference_telemetry ORDER BY timestamp DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [InferenceTelemetry.model_validate_json(row[0]) for row in reversed(rows)]
+
+    def save_benchmark(self, result: BenchmarkResult) -> None:
+        with self._lock:
+            self._connection.execute(
+                "INSERT OR REPLACE INTO optimization_benchmarks(id, payload) VALUES (?, ?)",
+                (result.id, result.model_dump_json()),
+            )
+            self._connection.commit()
+
+    def list_benchmarks(self, limit: int = 100) -> list[BenchmarkResult]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT payload FROM optimization_benchmarks "
+                "ORDER BY json_extract(payload, '$.created_at') DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [BenchmarkResult.model_validate_json(row[0]) for row in rows]
+
+    def save_cache_prefix(self, record: CachePrefixRecord) -> None:
+        with self._lock:
+            self._connection.execute(
+                "INSERT OR REPLACE INTO cache_prefixes(id, payload) VALUES (?, ?)",
+                (record.id, record.model_dump_json()),
+            )
+            self._connection.commit()
+
+    def get_cache_prefix(self, record_id: str) -> CachePrefixRecord | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT payload FROM cache_prefixes WHERE id = ?", (record_id,)
+            ).fetchone()
+        return CachePrefixRecord.model_validate_json(row[0]) if row else None
+
+    def list_cache_prefixes(self, limit: int = 100) -> list[CachePrefixRecord]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT payload FROM cache_prefixes "
+                "ORDER BY json_extract(payload, '$.priority') DESC, "
+                "json_extract(payload, '$.updated_at') DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [CachePrefixRecord.model_validate_json(row[0]) for row in rows]
 
     def close(self) -> None:
         with self._lock:

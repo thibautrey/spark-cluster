@@ -4,6 +4,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .config import Settings
+from .runtime_engines import capabilities, recommended_engine
+
 
 class PerformancePlanRequest(BaseModel):
     model_id: str = Field(min_length=1, max_length=200)
@@ -24,6 +27,8 @@ class PerformancePlan(BaseModel):
     model_family: str
     profile: str
     engine: str
+    engine_id: str = "vllm"
+    engine_executable: bool = True
     recommended_nodes: int
     tensor_parallel: int
     pipeline_parallel: int = 1
@@ -38,6 +43,14 @@ class PerformancePlan(BaseModel):
     automatic_settings: list[str]
     warnings: list[str]
     evidence: list[PerformanceEvidence]
+    speculative_method: str = "off"
+    speculative_tokens: int = 0
+    expert_parallel: bool = False
+    all2all_backend: str = "auto"
+    expert_load_balancing: bool = False
+    cache_cpu_gib: int = 32
+    cache_disk_gib: int = 1536
+    context_options: list[int] = Field(default_factory=list)
 
 
 NVIDIA_SCALE = "https://developer.nvidia.com/blog/running-frontier-class-ai-models-across-8-nvidia-dgx-spark-nodes/"
@@ -77,8 +90,9 @@ def _topology(nodes: int, requested: str) -> tuple[str, str]:
 
 
 def build_performance_plan(
-    request: PerformancePlanRequest, available_nodes: int
+    request: PerformancePlanRequest, available_nodes: int, settings: Settings | None = None
 ) -> PerformancePlan:
+    settings = settings or Settings()
     model = request.model_id.lower()
     nodes = max(1, request.node_count or available_nodes or 1)
     collective, topology_guidance = _topology(nodes, request.topology)
@@ -93,7 +107,15 @@ def build_performance_plan(
         )
     ]
     warnings: list[str] = []
-    settings = [
+    engine_id, engine_notes = recommended_engine(request.model_id, settings)
+    warnings.extend(engine_notes)
+    engine_capability = capabilities(settings)[engine_id]
+    speculative_method = "off"
+    speculative_tokens = 0
+    expert_parallel = False
+    all2all_backend = "auto"
+    expert_load_balancing = False
+    automatic_settings = [
         "Force NCCL onto the RoCE/IB transport without hard-coding a reboot-volatile GID index.",
         "Bound scheduler concurrency and batched tokens instead of using broad runtime defaults.",
         "Keep CUDA graphs enabled; select a compatibility profile only when the model image "
@@ -103,6 +125,7 @@ def build_performance_plan(
     if "glm-5.3" in model or "glm5.3" in model:
         profile = "GLM 5.3 Flash · NVFP4/FP8 KV"
         engine = "vLLM SM121 optimized image"
+        engine_id = "vllm"
         recommended_nodes = 4 if nodes >= 4 else 2 if nodes >= 2 else 1
         tensor_parallel = recommended_nodes
         context = max(request.context_length, 262_144)
@@ -114,6 +137,13 @@ def build_performance_plan(
             "Use clean compressed-tensors NVFP4 weights and an SM121 vLLM image. Native MTP3 "
             "is the validated balanced speculative path; DFlash2 depends on the workload "
             "and license."
+        )
+        speculative_method = "mtp"
+        speculative_tokens = 3
+        expert_parallel = True
+        expert_load_balancing = request.workload == "throughput"
+        all2all_backend = (
+            "allgather_reducescatter" if request.topology in {"auto", "ring"} else "auto"
         )
         warnings.extend(
             [
@@ -137,18 +167,31 @@ def build_performance_plan(
         )
     elif "deepseek-v4.1" in model or "deepseek_v4.1" in model:
         profile = "DeepSeek V4.1 Flash · long-context"
-        engine = "TensorFold specialized lane"
+        engine = "vLLM executable baseline; TensorFold available after adapter validation"
         recommended_nodes = 4 if nodes >= 4 else 2 if nodes >= 2 else 1
         tensor_parallel = recommended_nodes
-        context = max(request.context_length, 1_048_576)
+        context = request.context_length
         gpu = 0.83
         kv_dtype = "auto"
         max_seqs = max(request.concurrent_sequences, 16 if recommended_nodes >= 4 else 8)
         batch_tokens = 8192
         engine_guidance = (
-            "TensorFold with EXL3 is the measured high-decode lane. Keep vLLM as the broader "
-            "compatibility lane and validate tools, vision, chat templates, and long-prompt "
-            "retrieval."
+            "Launch the runnable vLLM compatibility lane. TensorFold with EXL3 remains a "
+            "measured specialized option, but is not selected until its image and command "
+            "contract are validated on every GB10 node."
+        )
+        available_speculation = capabilities(settings)["vllm"].speculative_methods
+        speculative_method = "dspark" if "dspark" in available_speculation else "mtp"
+        speculative_tokens = 3
+        if speculative_method != "dspark":
+            warnings.append(
+                "DSpark is not declared by the pinned vLLM capability profile; use MTP as "
+                "the executable baseline and enable DSpark only with a validated image."
+            )
+        expert_parallel = request.workload == "throughput"
+        expert_load_balancing = expert_parallel
+        all2all_backend = (
+            "allgather_reducescatter" if request.topology in {"auto", "ring"} else "auto"
         )
         warnings.extend(
             [
@@ -182,6 +225,12 @@ def build_performance_plan(
             "Use the model vendor's GB10-compatible vLLM image and validate one warm request "
             "before load testing."
         )
+        if any(marker in model for marker in ("moe", "a3b", "a2b", "mixtral")):
+            expert_parallel = request.workload == "throughput" and nodes > 1
+            expert_load_balancing = expert_parallel
+            all2all_backend = (
+                "allgather_reducescatter" if request.topology in {"auto", "ring"} else "auto"
+            )
 
     if request.workload == "latency":
         max_seqs = max(1, request.concurrent_sequences)
@@ -193,10 +242,22 @@ def build_performance_plan(
         max_seqs = max(max_seqs, request.concurrent_sequences, 8)
         batch_tokens = max(batch_tokens, 16_384)
 
+    cache_cpu_gib = 48 if request.workload == "long-context" else 32
+    cache_disk_gib = (
+        3072
+        if request.workload == "long-context"
+        else 2048
+        if request.workload == "throughput"
+        else 1536
+    )
+    engine_capability = capabilities(settings)[engine_id]
+
     return PerformancePlan(
         model_family=request.model_id,
         profile=profile,
         engine=engine,
+        engine_id=engine_id,
+        engine_executable=engine_capability.executable and bool(engine_capability.image),
         recommended_nodes=recommended_nodes,
         tensor_parallel=tensor_parallel,
         context_length=context,
@@ -207,7 +268,15 @@ def build_performance_plan(
         collective_backend=collective,
         topology_guidance=topology_guidance,
         engine_guidance=engine_guidance,
-        automatic_settings=settings,
+        automatic_settings=automatic_settings,
         warnings=warnings,
         evidence=evidence,
+        speculative_method=speculative_method,
+        speculative_tokens=speculative_tokens,
+        expert_parallel=expert_parallel,
+        all2all_backend=all2all_backend,
+        expert_load_balancing=expert_load_balancing,
+        cache_cpu_gib=cache_cpu_gib,
+        cache_disk_gib=cache_disk_gib,
+        context_options=[16_384, 65_536, 262_144, 524_288, 1_048_576],
     )

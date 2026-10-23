@@ -1,7 +1,7 @@
 from collections.abc import Iterable
 
 
-def render_metrics(snapshot) -> str:
+def render_metrics(snapshot, telemetry=None) -> str:
     lines = [
         "# HELP spark_cluster_cache_hit_ratio Effective multi-tier KV cache hit ratio.",
         "# TYPE spark_cluster_cache_hit_ratio gauge",
@@ -12,7 +12,25 @@ def render_metrics(snapshot) -> str:
     ]
     lines.extend(_node_metrics(snapshot.nodes))
     lines.extend(_cache_metrics(snapshot.cache_tiers))
+    if telemetry and telemetry.available:
+        measured = {
+            "spark_cluster_runtime_ttft_p50_seconds": _seconds(telemetry.ttft_p50_ms),
+            "spark_cluster_runtime_ttft_p95_seconds": _seconds(telemetry.ttft_p95_ms),
+            "spark_cluster_runtime_inter_token_p50_seconds": _seconds(telemetry.inter_token_p50_ms),
+            "spark_cluster_runtime_inter_token_p95_seconds": _seconds(telemetry.inter_token_p95_ms),
+            "spark_cluster_runtime_decode_tokens_per_second": telemetry.decode_tokens_per_second,
+            "spark_cluster_runtime_prefill_tokens_per_second": telemetry.prefill_tokens_per_second,
+            "spark_cluster_runtime_speculative_acceptance_ratio": (
+                telemetry.speculative_acceptance_rate
+            ),
+            "spark_cluster_runtime_gpu_kv_cache_usage_ratio": telemetry.gpu_kv_cache_usage,
+        }
+        lines.extend(f"{name} {value}" for name, value in measured.items() if value is not None)
     return "\n".join(lines) + "\n"
+
+
+def _seconds(milliseconds: float | None) -> float | None:
+    return milliseconds / 1000 if milliseconds is not None else None
 
 
 def _node_metrics(nodes: Iterable) -> list[str]:

@@ -146,7 +146,11 @@ async def test_kubernetes_launch_patches_runtime_resources_and_waits_for_readine
         await service.queue.join()
         completed = store.get_launch(job.id)
         assert completed.status == "ready"
-        assert kubernetes.statefulset_patch[1] == {"spec": {"replicas": 3}}
+        worker_spec = kubernetes.statefulset_patch[1]["spec"]
+        assert worker_spec["replicas"] == 3
+        assert worker_spec["template"]["spec"]["containers"][0]["image"].startswith(
+            "nvcr.io/nvidia/vllm:"
+        )
         containers = kubernetes.deployment_patch[1]["spec"]["template"]["spec"]["containers"]
         environment = {item["name"]: item["value"] for item in containers[0]["env"]}
         assert environment["MODEL_ID"] == "/models/acme/model"

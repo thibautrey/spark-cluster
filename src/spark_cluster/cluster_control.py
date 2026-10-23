@@ -20,6 +20,7 @@ from .models import (
     ModelLaunchRequest,
     RuntimeLog,
 )
+from .runtime_engines import build_execution_plan
 from .store import SnapshotStore
 
 
@@ -341,11 +342,15 @@ class RuntimeDeploymentService:
         requested_nodes = request.tensor_parallel * request.pipeline_parallel
         if requested_nodes < fit.minimum_nodes or requested_nodes > fit.cluster_nodes:
             raise InvalidParallelism(requested_nodes, fit.minimum_nodes, fit.cluster_nodes)
+        execution_plan = build_execution_plan(request, local.path, self.settings)
+        if not execution_plan.executable:
+            raise EngineNotExecutable(execution_plan.engine_name, execution_plan.blockers)
         job = ModelLaunchJob(
             id=uuid4().hex,
             request=request,
             model_path=local.path,
             fit=fit,
+            execution_plan=execution_plan,
         )
         await asyncio.to_thread(self.store.save_launch, job)
         await self.queue.put(job.id)
@@ -405,10 +410,11 @@ class RuntimeDeploymentService:
             )
 
     async def _run_demo(self, job: ModelLaunchJob) -> None:
+        engine = job.execution_plan.engine_name if job.execution_plan else "runtime"
         stages = (
             ("validating", 12, "Validated model manifest and memory plan"),
             ("scaling-workers", 35, "Scaled Ray workers for requested parallelism"),
-            ("starting-runtime", 65, "Started vLLM head with the selected model"),
+            ("starting-runtime", 65, f"Started {engine} head with the selected model"),
             ("waiting-ready", 88, "Waiting for OpenAI-compatible health endpoint"),
             ("ready", 100, "Model is ready to serve"),
         )
@@ -418,28 +424,45 @@ class RuntimeDeploymentService:
 
     async def _run_kubernetes(self, job: ModelLaunchJob) -> None:
         request = job.request
+        plan = job.execution_plan
+        if not plan or not plan.executable:
+            raise RuntimeError("Launch has no executable inference-engine plan")
         workers = max(0, request.tensor_parallel * request.pipeline_parallel - 1)
         await self._update(
             job, "scaling-workers", 25, f"Scaling runtime to {workers + 1} GB10 instances"
         )
         await self.kubernetes.patch_statefulset(
-            self.settings.runtime_worker_statefulset, {"spec": {"replicas": workers}}
-        )
-        await self._update(job, "starting-runtime", 55, "Applying model configuration to vLLM head")
-        environment = [
-            {"name": "MODEL_ID", "value": job.model_path},
-            {"name": "SERVED_MODEL_NAME", "value": request.served_model_name},
-            {"name": "MAX_MODEL_LEN", "value": str(request.context_length)},
-            {"name": "TENSOR_PARALLEL_SIZE", "value": str(request.tensor_parallel)},
-            {"name": "PIPELINE_PARALLEL_SIZE", "value": str(request.pipeline_parallel)},
-            {"name": "GPU_MEMORY_UTILIZATION", "value": str(request.gpu_memory_utilization)},
-            {"name": "KV_CACHE_DTYPE", "value": request.kv_cache_dtype},
-            {"name": "MAX_NUM_SEQS", "value": str(request.max_num_seqs)},
+            self.settings.runtime_worker_statefulset,
             {
-                "name": "MAX_NUM_BATCHED_TOKENS",
-                "value": str(request.max_num_batched_tokens),
+                "spec": {
+                    "replicas": workers,
+                    "template": {
+                        "spec": {
+                            "containers": [
+                                {
+                                    "name": "ray-worker",
+                                    "image": plan.image,
+                                    "env": [
+                                        {
+                                            "name": "CACHE_CPU_GIB",
+                                            "value": plan.environment["CACHE_CPU_GIB"],
+                                        },
+                                        {
+                                            "name": "CACHE_DISK_GIB",
+                                            "value": plan.environment["CACHE_DISK_GIB"],
+                                        },
+                                    ],
+                                }
+                            ]
+                        }
+                    },
+                }
             },
-        ]
+        )
+        await self._update(
+            job, "starting-runtime", 55, f"Applying {plan.engine_name} execution plan"
+        )
+        environment = [{"name": name, "value": value} for name, value in plan.environment.items()]
         await self.kubernetes.patch_deployment(
             self.settings.runtime_head_deployment,
             {
@@ -451,7 +474,11 @@ class RuntimeDeploymentService:
                                 "spark-cluster.io/launched-at": datetime.now(UTC).isoformat()
                             }
                         },
-                        "spec": {"containers": [{"name": "engine", "env": environment}]},
+                        "spec": {
+                            "containers": [
+                                {"name": "engine", "image": plan.image, "env": environment}
+                            ]
+                        },
                     },
                 }
             },
@@ -468,10 +495,29 @@ class RuntimeDeploymentService:
             ready_workers = int(worker_resource.get("status", {}).get("readyReplicas", 0) or 0)
             ready_head = int(head_resource.get("status", {}).get("availableReplicas", 0) or 0)
             if ready_workers >= workers and ready_head >= 1:
+                if request.enforce_rank_order:
+                    await self._validate_rank_order(request.rank_order)
                 await self._update(job, "ready", 100, "Model is ready to serve")
                 return
             await asyncio.sleep(3)
         raise TimeoutError("Runtime rollout did not become ready within 15 minutes")
+
+    async def _validate_rank_order(self, expected: list[str]) -> None:
+        pods = await self.kubernetes.runtime_pods()
+        scheduled = sorted(
+            (
+                item.get("metadata", {}).get("name", ""),
+                item.get("spec", {}).get("nodeName", ""),
+            )
+            for item in pods
+        )
+        actual = [node for _, node in scheduled if node]
+        if actual != expected:
+            raise RuntimeError(
+                "Runtime rank placement differs from the validated fabric order: "
+                f"expected {expected}, scheduled {actual}. Reconcile node labels or disable "
+                "strict placement after reviewing the topology."
+            )
 
     async def _update(
         self, job: ModelLaunchJob, status: str, progress: float, message: str
@@ -498,3 +544,9 @@ class InvalidParallelism(Exception):
             f"Requested parallelism uses {requested} nodes; this model needs at least {minimum} "
             f"and the cluster currently exposes {available}"
         )
+
+
+class EngineNotExecutable(Exception):
+    def __init__(self, engine: str, blockers: list[str]):
+        message = "; ".join(blockers) or "No executable adapter is available"
+        super().__init__(f"{engine} cannot be launched: {message}")

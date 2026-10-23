@@ -34,7 +34,11 @@ def collect_node(node_id: str | None = None, role: str = "worker") -> NodeSnapsh
         role=role,  # type: ignore[arg-type]
         address=socket.gethostbyname(hostname),
         memory=MemoryStats(
-            total_gib=round(total, 2), used_gib=round(used, 2), kv_cache_gib=round(gpu_used, 2)
+            total_gib=round(total, 2),
+            used_gib=round(used, 2),
+            accelerator_used_gib=round(gpu_used, 2),
+            kv_cache_gib=0,
+            kv_cache_source="unavailable",
         ),
         gpu_utilization=gpu_utilization,
         temperature_c=temperature,

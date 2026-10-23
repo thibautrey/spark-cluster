@@ -55,25 +55,57 @@ spec:
           command: [bash, -lc]
           args:
             - |
+              set -euo pipefail
+              if [[ "$ENGINE_ID" == "sglang" ]]; then
+                exec python -m sglang.launch_server \
+                  --model-path "$MODEL_ID" --served-model-name "$SERVED_MODEL_NAME" \
+                  --tp "$TENSOR_PARALLEL_SIZE" --context-length "$MAX_MODEL_LEN" \
+                  --mem-fraction-static "$GPU_MEMORY_UTILIZATION" --host 0.0.0.0 --port 8000
+              fi
+              if [[ "$ENGINE_ID" != "vllm" ]]; then
+                echo "No executable adapter for ENGINE_ID=$ENGINE_ID" >&2
+                exit 64
+              fi
+              cat > /tmp/lmcache.yaml <<EOF
+              chunk_size: 256
+              local_cpu: true
+              max_local_cpu_size: $CACHE_CPU_GIB
+              local_disk: "file:///var/lib/lmcache"
+              max_local_disk_size: $CACHE_DISK_GIB
+              save_decode_cache: true
+              enable_blending: true
+              EOF
               ray start --head --node-ip-address="$NODE_IP" --port=6379 --dashboard-host=0.0.0.0
-              exec python -m vllm.entrypoints.openai.api_server \
-                --model "$MODEL_ID" \
-                --served-model-name "$SERVED_MODEL_NAME" \
-                --distributed-executor-backend ray \
-                --tensor-parallel-size "$TENSOR_PARALLEL_SIZE" \
-                --pipeline-parallel-size "$PIPELINE_PARALLEL_SIZE" \
-                --max-model-len "$MAX_MODEL_LEN" \
-                --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" \
-                --kv-cache-dtype "$KV_CACHE_DTYPE" \
-                --max-num-seqs "$MAX_NUM_SEQS" \
-                --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS" \
-                --enable-prefix-caching \
-                --kv-transfer-config '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"}' \
+              args=(
+                --model "$MODEL_ID" --served-model-name "$SERVED_MODEL_NAME"
+                --distributed-executor-backend ray
+                --tensor-parallel-size "$TENSOR_PARALLEL_SIZE"
+                --pipeline-parallel-size "$PIPELINE_PARALLEL_SIZE"
+                --max-model-len "$MAX_MODEL_LEN"
+                --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION"
+                --kv-cache-dtype "$KV_CACHE_DTYPE"
+                --max-num-seqs "$MAX_NUM_SEQS"
+                --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS"
+                --enable-prefix-caching
+                --kv-transfer-config '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"}'
                 --host 0.0.0.0 --port 8000
+              )
+              [[ -n "$SPECULATIVE_CONFIG" ]] && args+=(--speculative-config "$SPECULATIVE_CONFIG")
+              [[ "$CUDA_GRAPHS" == "1" ]] || args+=(--enforce-eager)
+              [[ "$CHUNKED_PREFILL" == "1" ]] && args+=(--enable-chunked-prefill)
+              if [[ "$EXPERT_PARALLEL" == "1" ]]; then
+                args+=(--enable-expert-parallel)
+                [[ "$ALL2ALL_BACKEND" == "auto" ]] || args+=(--all2all-backend "$ALL2ALL_BACKEND")
+              fi
+              if [[ "$EXPERT_LOAD_BALANCING" == "1" ]]; then
+                args+=(--enable-eplb --eplb-config "{\"num_redundant_experts\":$REDUNDANT_EXPERTS}")
+              fi
+              exec python -m vllm.entrypoints.openai.api_server "${args[@]}"
           env:
             - { name: NODE_IP, valueFrom: { fieldRef: { fieldPath: status.hostIP } } }
             - { name: VLLM_USE_V1, value: "1" }
-            - { name: LMCACHE_CONFIG_FILE, value: /etc/lmcache/lmcache.yaml }
+            - { name: LMCACHE_CONFIG_FILE, value: /tmp/lmcache.yaml }
+            - { name: ENGINE_ID, value: vllm }
             - { name: MODEL_ID, value: {{ .Values.runtime.model | quote }} }
             - { name: SERVED_MODEL_NAME, value: {{ .Values.runtime.servedModelName | quote }} }
             - { name: TENSOR_PARALLEL_SIZE, value: {{ .Values.runtime.tensorParallelSize | quote }} }
@@ -83,6 +115,15 @@ spec:
             - { name: KV_CACHE_DTYPE, value: {{ .Values.runtime.kvCacheDtype | quote }} }
             - { name: MAX_NUM_SEQS, value: {{ .Values.runtime.maxNumSeqs | quote }} }
             - { name: MAX_NUM_BATCHED_TOKENS, value: {{ .Values.runtime.maxNumBatchedTokens | quote }} }
+            - { name: SPECULATIVE_CONFIG, value: "" }
+            - { name: CUDA_GRAPHS, value: "1" }
+            - { name: CHUNKED_PREFILL, value: "1" }
+            - { name: EXPERT_PARALLEL, value: "0" }
+            - { name: ALL2ALL_BACKEND, value: auto }
+            - { name: EXPERT_LOAD_BALANCING, value: "0" }
+            - { name: REDUNDANT_EXPERTS, value: "0" }
+            - { name: CACHE_CPU_GIB, value: {{ .Values.runtime.cache.cpuGiB | quote }} }
+            - { name: CACHE_DISK_GIB, value: {{ .Values.runtime.cache.diskGiB | quote }} }
             - { name: NCCL_NET, value: IB }
             - { name: NCCL_IB_DISABLE, value: "0" }
             - { name: NCCL_IB_ROCE_VERSION_NUM, value: "2" }
@@ -141,11 +182,26 @@ spec:
           image: "{{ .Values.runtime.image.repository }}:{{ .Values.runtime.image.tag }}"
           imagePullPolicy: {{ .Values.runtime.image.pullPolicy }}
           command: [bash, -lc]
-          args: ["until (echo > /dev/tcp/spark-cluster-ray-head/6379) 2>/dev/null; do sleep 2; done; exec ray start --node-ip-address=$NODE_IP --address=spark-cluster-ray-head:6379 --block"]
+          args:
+            - |
+              set -euo pipefail
+              cat > /tmp/lmcache.yaml <<EOF
+              chunk_size: 256
+              local_cpu: true
+              max_local_cpu_size: $CACHE_CPU_GIB
+              local_disk: "file:///var/lib/lmcache"
+              max_local_disk_size: $CACHE_DISK_GIB
+              save_decode_cache: true
+              enable_blending: true
+              EOF
+              until (echo > /dev/tcp/spark-cluster-ray-head/6379) 2>/dev/null; do sleep 2; done
+              exec ray start --node-ip-address="$NODE_IP" --address=spark-cluster-ray-head:6379 --block
           env:
             - { name: NODE_IP, valueFrom: { fieldRef: { fieldPath: status.hostIP } } }
             - { name: VLLM_USE_V1, value: "1" }
-            - { name: LMCACHE_CONFIG_FILE, value: /etc/lmcache/lmcache.yaml }
+            - { name: LMCACHE_CONFIG_FILE, value: /tmp/lmcache.yaml }
+            - { name: CACHE_CPU_GIB, value: {{ .Values.runtime.cache.cpuGiB | quote }} }
+            - { name: CACHE_DISK_GIB, value: {{ .Values.runtime.cache.diskGiB | quote }} }
             - { name: NCCL_NET, value: IB }
             - { name: NCCL_IB_DISABLE, value: "0" }
             - { name: NCCL_IB_ROCE_VERSION_NUM, value: "2" }
