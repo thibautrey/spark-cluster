@@ -1,6 +1,7 @@
 """Read-only probe executed over authenticated SSH on a candidate Spark."""
 
 import glob
+import ipaddress
 import json
 import os
 import platform
@@ -9,6 +10,8 @@ import socket
 import subprocess
 import time
 from pathlib import Path
+
+PROBE_PEERS = globals().get("PROBE_PEERS", [])
 
 
 def command(*args):
@@ -46,9 +49,45 @@ def rdma_details(interface: str):
     return devices
 
 
+def peer_checks(interface, peers):
+    """Send bounded interface-bound pings only to selected peers on this fabric subnet."""
+    results = []
+    if not interface["carrier"] or not interface["rdma"]:
+        return results
+    networks = [
+        ipaddress.ip_network(f"{item['local']}/{item['prefixlen']}", strict=False)
+        for item in interface["address_info"]
+    ]
+    for address in peers[:8]:
+        try:
+            target = ipaddress.IPv4Address(address)
+        except ipaddress.AddressValueError:
+            continue
+        if address in interface["addresses"] or not any(target in net for net in networks):
+            continue
+        try:
+            reachable = (
+                subprocess.run(
+                    ["ping", "-n", "-I", interface["name"], "-c", "1", "-W", "1", address],
+                    capture_output=True,
+                    timeout=2,
+                ).returncode
+                == 0
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            reachable = False
+        results.append({"address": address, "reachable": reachable})
+    return results
+
+
 if __name__ == "__main__":
     interfaces = []
-    for item in json.loads(command("ip", "-j", "-4", "addr") or "[]"):
+    addresses = {
+        item["ifname"]: item.get("addr_info", [])
+        for item in json.loads(command("ip", "-j", "-4", "addr") or "[]")
+    }
+    for item in json.loads(command("ip", "-j", "link") or "[]"):
+        item["addr_info"] = addresses.get(item["ifname"], [])
         path = Path("/sys/class/net") / item["ifname"]
         try:
             speed = int((path / "speed").read_text().strip())
@@ -87,6 +126,11 @@ if __name__ == "__main__":
                 ),
             }
         )
+        if globals().get("PROBE_PEERS"):
+            interfaces[-1]["peer_checks"] = peer_checks(interfaces[-1], PROBE_PEERS)
+            interfaces[-1]["neighbors"] = json.loads(
+                command("ip", "-j", "neigh", "show", "dev", item["ifname"]) or "[]"
+            )
     memory = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines())
     marker = Path("/var/lib/spark-deepseek/cluster-name")
     role = Path("/var/lib/spark-deepseek/cluster-role")

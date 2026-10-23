@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .config import Settings
-from .hardware import build_hardware_topology
+from .hardware import MIN_LINK_GBPS, build_hardware_topology
 from .setup_models import (
     DiscoveryRequest,
     SetupCheck,
@@ -438,7 +438,7 @@ class ClusterSetupService:
                     addresses = [
                         address
                         for iface in data["interfaces"]
-                        if iface["up"] and iface["speed_mbps"] >= 200000
+                        if iface["up"] and iface["speed_mbps"] >= MIN_LINK_GBPS * 1000
                         for address in iface["addresses"]
                     ]
                     addresses = [address for address in addresses if _is_lan(address)]
@@ -449,7 +449,7 @@ class ClusterSetupService:
                     iface
                     for iface in data["interfaces"]
                     if iface["up"]
-                    and iface["speed_mbps"] >= 200000
+                    and iface["speed_mbps"] >= MIN_LINK_GBPS * 1000
                     and selected in iface["addresses"]
                 ]
                 check(
@@ -497,7 +497,7 @@ class ClusterSetupService:
         if not any(check.status == "error" for check in checks) and len(request.nodes) > 1:
             for node in request.nodes:
                 peers = [peer.fabric_address for peer in request.nodes if peer != node]
-                command = "\n".join(
+                command = "set -e\n" + "\n".join(
                     f"ping -c 2 -W 2 {shlex.quote(peer)} >/dev/null" for peer in peers
                 )
                 try:
@@ -520,6 +520,35 @@ class ClusterSetupService:
                             remedy="Check Sync routes, QSFP cabling, switch ports and ICMP policy.",
                         )
                     )
+        if len(request.nodes) > 1:
+            # Refresh neighbor evidence after bounded fabric-only pings. Never trust a subnet
+            # match alone as proof that the expected peer is on the other end of a link.
+            peers = sorted(
+                {
+                    address
+                    for data in facts.values()
+                    for interface in data.get("interfaces", [])
+                    if interface.get("rdma")
+                    for address in interface.get("addresses", [])
+                    if _is_lan(address)
+                }
+            )
+            if peers:
+
+                async def refresh(node):
+                    if node.address not in facts:
+                        return
+                    try:
+                        script = f"PROBE_PEERS = {peers!r}\n" + probe
+                        facts[node.address] = json.loads(
+                            await self.transport.run(
+                                node, "python3 - <<'PROBE'\n" + script + "\nPROBE\n", timeout=45
+                            )
+                        )
+                    except (SetupFailure, OSError, ValueError):
+                        pass  # Original facts remain useful; missing evidence stays amber.
+
+                await asyncio.gather(*(refresh(node) for node in request.nodes))
         self.last_hardware_topology = build_hardware_topology(request, facts)
         if self.last_hardware_topology.verdict in {"error", "warning"}:
             checks.append(

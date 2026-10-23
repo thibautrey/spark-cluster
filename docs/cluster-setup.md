@@ -90,9 +90,12 @@ After selecting head and worker roles, the dashboard immediately draws the expec
 
 Select **Inspect cables** after verifying SSH fingerprints. The read-only probe maps each Linux network
 interface to its PCI device and `mlx5`/RDMA device, then reads carrier state, negotiated speed, MTU,
-MAC address, IP prefix, RDMA port state and neighbor table. Pairwise point-to-point subnets identify
-direct cables. Switch layouts require one active link from every selected node. Links at or above the
-documented 184 Gbit/s lower bound appear green; slower carrier appears amber; missing expected links
+MAC address, IP prefix, RDMA port state and neighbor table. A bounded second pass sends interface-bound
+pings to selected peers on each fabric subnet and checks their neighbor MAC against the expected
+remote interface. Direct layouts also require point-to-point /30 or /31 subnets; a subnet match alone
+stays amber. Switch layouts require one active link from every selected node with verified peers.
+Links with verified peers at or above the documented 184 Gbit/s lower bound appear green; slower or
+unverified carrier appears amber; missing expected links
 appear red and block installation.
 
 The result names the affected Sparks and the detected interface or available ConnectX-7 port. The
@@ -100,6 +103,12 @@ diagram then gives a numbered instruction such as connecting one node's port to 
 to the switch. Reseat the cable, wait for the port LEDs, and run inspection again. The assistant does
 not infer a healthy cable from interface presence alone, and the complete preflight repeats the same
 physical-topology gate before any installation changes.
+
+The illustrated guide distinguishes RJ45 management Ethernet from the wide QSFP fabric connectors.
+Port drawings are schematic; Linux interface names do not establish left/right physical position.
+Carrier and verified peer connectivity do not reveal the exact physical cable path or switch chassis.
+An unreachable machine may be powered off, disconnected, or blocked by a network policy; the dashboard
+does not claim to distinguish those conditions without telemetry.
 
 ## What installation does
 

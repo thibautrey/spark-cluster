@@ -37,14 +37,32 @@ def interface(name, address, prefix=30, *, carrier=True, speed=200_000):
     }
 
 
-def facts_for(plan, interfaces):
+def facts_for(plan, interfaces, *, verified=True):
+    for index, ports in enumerate(interfaces):
+        for number, port in enumerate(ports):
+            port["mac_address"] = f"02:00:00:00:{index:02x}:{number:02x}"
+    if verified:
+        for ports in interfaces:
+            for port in ports:
+                peers = [peer for group in interfaces for peer in group if peer is not port]
+                port["peer_checks"] = [
+                    {"address": peer["addresses"][0], "reachable": True} for peer in peers
+                ]
+                port["neighbors"] = [
+                    {
+                        "dst": peer["addresses"][0],
+                        "lladdr": peer["mac_address"],
+                        "state": ["REACHABLE"],
+                    }
+                    for peer in peers
+                ]
     return {
         node.address: {"hostname": f"spark-{index + 1}", "interfaces": interfaces[index]}
         for index, node in enumerate(plan.nodes)
     }
 
 
-def test_two_spark_direct_cable_is_detected_from_shared_subnet():
+def test_two_spark_direct_cable_requires_verified_peer_interfaces():
     plan = request(2, "direct")
     topology = build_hardware_topology(
         plan,
@@ -155,3 +173,35 @@ def test_single_spark_requires_no_fabric_cable():
     assert topology.verdict == "pass"
     assert topology.expected_cables == topology.detected_cables == 0
     assert "no cluster fabric cable" in topology.summary.lower()
+
+
+def test_shared_subnet_alone_cannot_verify_cabling():
+    plan = request(2, "direct")
+    facts = facts_for(
+        plan, [[interface("enp1", "10.10.1.1")], [interface("enp1", "10.10.1.2")]], verified=False
+    )
+    assert build_hardware_topology(plan, facts).verdict == "warning"
+
+
+def test_wrong_peer_mac_and_failed_ping_cannot_verify_cabling():
+    plan = request(2, "direct")
+    for bad_mac in (True, False):
+        facts = facts_for(
+            plan, [[interface("enp1", "10.10.1.1")], [interface("enp1", "10.10.1.2")]]
+        )
+        port = facts[plan.nodes[0].address]["interfaces"][0]
+        if bad_mac:
+            port["neighbors"][0]["lladdr"] = "02:ff:ff:ff:ff:ff"
+        else:
+            port["peer_checks"][0]["reachable"] = False
+        assert build_hardware_topology(plan, facts).verdict == "warning"
+
+
+def test_three_sparks_with_one_shared_port_each_cannot_form_direct_triangle():
+    plan = request(3, "direct")
+    facts = facts_for(
+        plan, [[interface("enp1", f"10.10.1.{index + 1}", prefix=24)] for index in range(3)]
+    )
+    topology = build_hardware_topology(plan, facts)
+    assert topology.verdict != "pass"
+    assert all(link.status != "pass" for link in topology.links)

@@ -81,6 +81,22 @@ def _suggested_port(node: HardwareNode) -> str:
     return available or (node.ports[0].name if node.ports else "ConnectX-7 QSFP port")
 
 
+def _peer_verified(port: FabricPort, peer: FabricPort, facts: dict[str, Any]) -> bool:
+    raw = next((item for item in facts.get("interfaces", []) if item.get("name") == port.name), {})
+    if not peer.mac_address or not peer.rdma:
+        return False
+    reachable = {
+        item.get("address") for item in raw.get("peer_checks", []) if item.get("reachable")
+    }
+    return any(
+        neighbor.get("dst") in peer.addresses
+        and neighbor.get("dst") in reachable
+        and str(neighbor.get("lladdr", "")).lower() == peer.mac_address.lower()
+        and not {"FAILED", "INCOMPLETE", "STALE"}.intersection(neighbor.get("state", []))
+        for neighbor in raw.get("neighbors", [])
+    )
+
+
 def _direct_link(
     left: HardwareNode,
     right: HardwareNode,
@@ -97,7 +113,12 @@ def _direct_link(
             common = _networks(left_port, left_facts) & _networks(right_port, right_facts)
             if common:
                 speed = min(left_port.speed_gbps, right_port.speed_gbps)
-                status = "pass" if speed >= MIN_LINK_GBPS else "warning"
+                verified = (
+                    any(network.prefixlen >= 30 for network in common)
+                    and _peer_verified(left_port, right_port, left_facts)
+                    and _peer_verified(right_port, left_port, right_facts)
+                )
+                status = "pass" if speed >= MIN_LINK_GBPS and verified else "warning"
                 return FabricLink(
                     source=left.address,
                     target=right.address,
@@ -106,15 +127,22 @@ def _direct_link(
                     speed_gbps=speed,
                     status=status,
                     message=(
-                        f"Direct cable detected at {speed} Gbit/s"
+                        f"Peer interfaces verified at {speed} Gbit/s"
                         if status == "pass"
                         else f"Cable detected but negotiated only {speed} Gbit/s"
+                        if speed < MIN_LINK_GBPS
+                        else "Carrier is present, but the expected peer ports are not verified"
                     ),
                 )
-    if node_count == 2:
+    if node_count >= 2:
         left_up = next((port for port in left.ports if port.carrier), None)
         right_up = next((port for port in right.ports if port.carrier), None)
-        if left_up and right_up:
+        if (
+            left_up
+            and right_up
+            and sum(port.carrier for port in left.ports) >= node_count - 1
+            and sum(port.carrier for port in right.ports) >= node_count - 1
+        ):
             speed = min(left_up.speed_gbps, right_up.speed_gbps)
             return FabricLink(
                 source=left.address,
@@ -123,7 +151,7 @@ def _direct_link(
                 target_port=right_up.name,
                 speed_gbps=speed,
                 status="warning",
-                message="Both ports have carrier, but their point-to-point subnet is not aligned",
+                message="Carrier is present; configure point-to-point networking in NVIDIA Sync",
             )
     return FabricLink(
         source=left.address,
@@ -235,6 +263,32 @@ def build_hardware_topology(
                         link.message = (
                             "Port carrier is present, but a common switched subnet is not verified"
                         )
+            else:
+                for node, link in zip(nodes, links, strict=True):
+                    port = next(
+                        (port for port in node.ports if port.name == link.source_port), None
+                    )
+                    verified = port is not None and all(
+                        any(
+                            _peer_verified(port, peer_port, facts.get(node.address, {}))
+                            for peer_port in peer.ports
+                            if peer_port.carrier
+                        )
+                        for peer in nodes
+                        if peer.address != node.address
+                    )
+                    if link.status == "pass" and not verified:
+                        link.status = "warning"
+                        link.message = (
+                            "Link is up; fabric reachability to every Spark is unverified"
+                        )
+
+    for node in nodes:
+        related = [link for link in links if node.address in {link.source, link.target}]
+        if any(link.status == "error" for link in related):
+            node.status = "error"
+        elif any(link.status == "warning" for link in related):
+            node.status = "warning"
 
     expected = (
         0
@@ -271,7 +325,10 @@ def build_hardware_topology(
                 status="warning",
                 title="Link needs attention",
                 detail=(
-                    f"{link.message}. Reseat the cable and verify Ethernet mode and switch speed."
+                    f"{labels.get(link.source, link.source)} → "
+                    f"{labels.get(link.target, link.target)}: {link.message}. "
+                    "Check the highlighted ports, run NVIDIA Sync Cluster Assistant, "
+                    "then inspect again."
                 ),
             )
         )
@@ -293,7 +350,7 @@ def build_hardware_topology(
         summary = f"All {expected} cables have carrier, but one or more links need attention."
     else:
         verdict = "pass"
-        summary = f"All {expected} expected cables are detected at the required speed."
+        summary = f"All {expected} expected links have verified peers and the required speed."
         instructions.append(
             HardwareInstruction(
                 status="pass",

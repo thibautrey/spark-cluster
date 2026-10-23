@@ -102,10 +102,10 @@ function renderHardwareTopology(topology) {
   const device = node => {
     const [x,y] = positions[node.address];
     const ports = node.ports.length ? node.ports.map(port => `<span class="hardware-port ${port.status}"><i></i>${escapeHtml(port.name)}${port.speed_gbps ? ` · ${port.speed_gbps}G` : ''}</span>`).join('') : '<span class="hardware-port connected"><i></i>Management only</span>';
-    const status = node.status === 'pass' ? 'Fabric ready' : node.status === 'warning' ? 'Link needs attention' : node.status === 'error' ? 'Cable not detected' : 'Waiting for inspection';
+    const status = node.status === 'pass' ? 'Peer links verified' : node.status === 'warning' ? 'Link needs attention' : node.status === 'error' ? 'Cable not detected' : 'Waiting for inspection';
     return `<article class="hardware-device ${node.status}" style="left:${x}%;top:${y}%"><div class="hardware-device-head"><span class="hardware-device-icon">${node.role === 'head' ? 'H' : 'W'}</span><div><b>${escapeHtml(node.hostname)}</b><small>${escapeHtml(node.address)}</small></div></div><div class="hardware-ports">${ports}</div><div class="hardware-device-status">${status}</div></article>`;
   };
-  const switchDevice = topology.topology === 'switch' ? `<article class="hardware-device switch ${topology.verdict}" style="left:50%;top:51%"><div class="hardware-device-icon">⇄</div><b>ConnectX-7 switch</b><small>one cable per Spark</small></article>` : '';
+  const switchDevice = topology.topology === 'switch' ? `<article class="hardware-device switch ${topology.verdict}" style="left:50%;top:51%"><div class="hardware-device-icon">⇄</div><b>Ethernet switch</b><small>200G · one link per Spark</small></article>` : '';
   $('hardware-canvas').innerHTML = `<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${topology.links.map(line).join('')}</svg>${topology.nodes.map(device).join('')}${switchDevice}`;
   $('hardware-summary').textContent = topology.summary;
   $('hardware-verdict').className = `pill ${topology.verdict}`;
