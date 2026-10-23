@@ -224,8 +224,10 @@ def test_spark_discovery_ranks_deduplicates_and_paginates_cached_shortlist(catal
         return httpx.Response(200, json=models)
 
     browser.transport = httpx.MockTransport(handle)
-    url = ("/api/v1/catalog/models?query=Qwen&task=text-generation"
-           "&library=safetensors&access=open&limit=1")
+    url = (
+        "/api/v1/catalog/models?query=Qwen&task=text-generation"
+        "&library=safetensors&access=open&limit=1"
+    )
     first = client.get(url)
     assert first.status_code == 200
     page = first.json()
@@ -242,12 +244,19 @@ def test_spark_discovery_ranks_deduplicates_and_paginates_cached_shortlist(catal
     assert len(requests) == 4
     # A new browser instance reuses both classification and ordering from SQLite.
     from spark_cluster.catalog import ModelBrowser
+
     reopened = ModelBrowser(browser.settings)
-    assert reopened.persistent_cache.get_metadata(
-        "spark-ranking:" + cursor.split(":")[1]
-    )[0]["models"][0]["spark"]["tier"] == "spark-targeted"
+    assert (
+        reopened.persistent_cache.get_metadata("spark-ranking:" + cursor.split(":")[1])[0][
+            "models"
+        ][0]["spark"]["tier"]
+        == "spark-targeted"
+    )
     reopened.close()
-    assert client.get(url.replace("query=Qwen", "query=Other") + "&cursor=" + cursor).status_code == 422
+    assert (
+        client.get(url.replace("query=Qwen", "query=Other") + "&cursor=" + cursor).status_code
+        == 422
+    )
     assert client.get(url + "&cursor=" + cursor.rsplit(":", 1)[0] + ":999").status_code == 422
 
 
@@ -268,15 +277,23 @@ def test_spark_discovery_supplement_failure_keeps_regular_results(catalog):
 
 def test_explicit_sort_preserves_hub_order_while_adding_badges(catalog):
     client, browser, requests = catalog
-    browser.transport = httpx.MockTransport(lambda request: (
-        requests.append(request) or httpx.Response(200, json=[
-            {"id": "popular/baseline"}, {"id": "acme/model-NVFP4"},
-        ])
-    ))
+    browser.transport = httpx.MockTransport(
+        lambda request: (
+            requests.append(request)
+            or httpx.Response(
+                200,
+                json=[
+                    {"id": "popular/baseline"},
+                    {"id": "acme/model-NVFP4"},
+                ],
+            )
+        )
+    )
     response = client.get("/api/v1/catalog/models?sort=downloads")
     assert response.status_code == 200
     assert [model["id"] for model in response.json()["models"]] == [
-        "popular/baseline", "acme/model-NVFP4",
+        "popular/baseline",
+        "acme/model-NVFP4",
     ]
     assert response.json()["models"][1]["spark"]["score"] > 0
     assert len(requests) == 1

@@ -205,8 +205,13 @@ class ModelBrowser:
         return CatalogPage(models=[summary(item) for item in data], cursor=next_cursor)
 
     async def _spark_search(
-        self, query: str, task: str, library: str, access: str,
-        limit: int, cursor: str | None,
+        self,
+        query: str,
+        task: str,
+        library: str,
+        access: str,
+        limit: int,
+        cursor: str | None,
     ) -> CatalogPage:
         # Cache the entire ranked shortlist, not individual pages, so pagination is
         # stable and classification is reused across controller restarts.
@@ -232,8 +237,13 @@ class ModelBrowser:
             # A bounded union discovers relevant low-precision checkpoints even
             # when they do not make the first trending page. Every upstream query
             # carries the same task, format and access constraints.
-            base = {"search": query, "sort": "trendingScore", "direction": "-1",
-                    "limit": "48", "full": "true"}
+            base = {
+                "search": query,
+                "sort": "trendingScore",
+                "direction": "-1",
+                "limit": "48",
+                "full": "true",
+            }
             if task:
                 base["pipeline_tag"] = task
             if library:
