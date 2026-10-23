@@ -124,30 +124,51 @@
 
         <section class="panel models-panel" id="models">
           <div class="panel-head">
-            <div><p class="eyebrow">MODEL LIBRARY</p><h2>Local models</h2></div>
+            <div><p class="eyebrow">MODEL LIBRARY</p><h2>Model library</h2></div>
             <span class="pill" id="model-count">0 models</span>
           </div>
-          <div class="models-layout">
-            <div class="model-inventory" id="local-models">
-              <div class="empty-state"><b>No local model found</b><span>Add one from Hugging Face.</span></div>
+          <div class="catalog-intro"><div><h3>Find your next model</h3><p>Explore Hugging Face, check capacity, and download once to your controller.</p></div><span class="catalog-route">HUB <i>→</i> CONTROLLER <i>→</i> CLUSTER</span></div>
+          <div class="catalog-toolbar">
+            <label class="catalog-search"><span>⌕</span><input id="catalog-query" type="search" aria-label="Search Hugging Face models" placeholder="Search models, authors, or paste a repository ID…" autocomplete="off" /></label>
+            <label>Sort by<select id="catalog-sort"><option value="trendingScore">Trending</option><option value="downloads">Most downloaded</option><option value="likes">Most liked</option><option value="lastModified">Recently updated</option></select></label>
+          </div>
+          <div class="catalog-filters">
+            <label>Task<select id="catalog-task"><option value="text-generation">Text generation</option><option value="">All tasks</option><option value="image-text-to-text">Vision &amp; language</option><option value="feature-extraction">Embeddings</option><option value="text-to-image">Text to image</option><option value="automatic-speech-recognition">Speech recognition</option></select></label>
+            <label>Format / library<select id="catalog-library"><option value="">All formats</option><option value="transformers">Transformers</option><option value="safetensors">Safetensors</option><option value="gguf">GGUF</option><option value="diffusers">Diffusers</option></select></label>
+            <label>Access<select id="catalog-access"><option value="">All models</option><option value="open">Open access</option><option value="gated">License approval</option></select></label>
+            <button id="catalog-reset" type="button" class="secondary">Reset filters</button>
+            <button id="catalog-manual" type="button" class="secondary">Use repository ID</button>
+          </div>
+          <div class="catalog-workspace">
+            <div class="catalog-results">
+              <div class="catalog-status"><span id="catalog-status" role="status" aria-live="polite">Loading models…</span><button id="catalog-retry" type="button" class="secondary" hidden>Retry</button></div>
+              <div id="catalog-grid" class="catalog-grid" aria-busy="true"></div>
+              <button id="catalog-more" type="button" class="secondary" hidden>Load more models</button>
             </div>
-            <form class="model-form" id="model-form">
+            <aside class="catalog-inspector" id="catalog-inspector" aria-label="Selected model">
+              <div id="catalog-placeholder" class="catalog-placeholder"><span>◇</span><h3>Explore. Inspect. Download.</h3><p>Select a model to see its files and storage needs, then check whether it fits your cluster.</p><small>One internet download. LAN delivery to your Sparks.</small></div>
+              <div id="catalog-detail" hidden></div>
+            <form class="model-form" id="model-form" hidden>
               <div class="form-title"><span>＋</span><div><b>Download once, distribute over LAN</b><small>The controller downloads from Hugging Face; the cluster copies from the controller into shared storage.</small></div></div>
-              <label>Model ID<input id="repo-id" name="repo_id" placeholder="deepseek-ai/DeepSeek-R1" required /></label>
+              <label id="manual-repo-label" hidden>Repository ID<input id="repo-id" name="repo_id" placeholder="organization/model-name" required /></label>
               <div class="form-row">
                 <label>Revision<input id="revision" name="revision" value="main" /></label>
                 <label>Weight bits<select id="weight-bits" name="bits"><option value="4">4-bit</option><option value="8">8-bit</option><option value="16">BF16 / FP16</option></select></label>
               </div>
               <div class="form-row">
-                <label>Context<select id="context-length" name="context"><option value="131072">128k</option><option value="262144">256k</option><option value="524288" selected>512k</option></select></label>
+                <label>Context<select id="context-length" name="context"><option value="8192">8k</option><option value="32768" selected>32k</option><option value="131072">128k</option><option value="262144">256k</option><option value="524288">512k</option></select></label>
                 <label>Concurrency<input id="concurrency" name="concurrency" type="number" min="1" max="1024" value="1" /></label>
               </div>
               <div class="fit-result neutral" id="fit-result"><span class="fit-symbol">?</span><div><b>Run a fit check</b><small>Weights, KV cache, runtime overhead, nodes and storage.</small></div></div>
+              <p class="catalog-note">Weight bits estimate memory only; downloads keep the repository’s original precision. Full repository download, including all weight variants. Runtime compatibility depends on model architecture and format.</p>
               <label class="override"><input id="allow-oversized" type="checkbox" /> Allow download when the model does not fit</label>
               <label>Admin token <span class="optional">optional</span><input id="admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label>
               <div class="form-actions"><button class="secondary" id="check-fit" type="button">Check fit</button><button class="primary" id="download-model" type="submit" disabled>Download once</button></div>
             </form>
+            </aside>
           </div>
+          <div class="downloads-head"><p class="eyebrow">AVAILABLE ON CLUSTER</p></div>
+          <div class="model-inventory" id="local-models"><div class="empty-state"><b>No local model found</b><span>Choose a model above to get started.</span></div></div>
           <div class="downloads-head"><p class="eyebrow">DOWNLOADS & LAN DELIVERY</p><span>Internet → controller → shared cluster storage · automatic resume</span></div>
           <div class="download-list" id="download-list"><div class="empty-downloads">No downloads yet.</div></div>
         </section>
@@ -197,6 +218,7 @@
       </main>
     </div>
     <script src="/assets/app.js"></script>
+    <script src="/assets/catalog.js"></script>
     <script src="/assets/setup.js"></script>
   </body>
 </html>

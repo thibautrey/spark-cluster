@@ -4,7 +4,9 @@ import shutil
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
+import httpx
 from fastapi import (
     Depends,
     FastAPI,
@@ -20,6 +22,7 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from .capacity import calculate_capacity
+from .catalog import CatalogDetail, CatalogPage, CatalogSort, ModelBrowser
 from .cluster_control import (
     InvalidParallelism,
     ModelNotManaged,
@@ -112,6 +115,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     runtime = Runtime(settings)
     model_relay = ModelRelay(settings, runtime.store)
     model_manager = ModelManager(settings, runtime.store, runtime, model_relay)
+    browser = ModelBrowser(settings.hf_token)
     log_service = RuntimeLogService(settings, runtime.store)
     deployment_service = RuntimeDeploymentService(
         settings, runtime.store, model_manager, log_service
@@ -167,6 +171,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title=settings.title, version="0.1.0", lifespan=lifespan)
     app.state.runtime = runtime
     app.state.model_manager = model_manager
+    app.state.model_browser = browser
     app.state.model_relay = model_relay
     app.state.log_service = log_service
     app.state.deployment_service = deployment_service
@@ -337,6 +342,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/runtime", response_model=RuntimeEndpoint)
     async def runtime_endpoint() -> RuntimeEndpoint:
         return await model_manager.runtime_endpoint()
+
+    async def catalog_result(operation):
+        try:
+            return await operation
+        except ValueError as error:
+            raise HTTPException(
+                status_code=422, detail="Invalid model repository or metadata"
+            ) from error
+        except httpx.HTTPStatusError as error:
+            status = error.response.status_code
+            message = {
+                401: "Authentication required. Set SPARK_CLUSTER_HF_TOKEN on the controller.",
+                403: (
+                    "Accept the model license on Hugging Face and configure "
+                    "SPARK_CLUSTER_HF_TOKEN on the controller."
+                ),
+                404: "Model or revision not found.",
+                429: "Hugging Face rate limit reached. Please try again shortly.",
+            }.get(status, "Hugging Face is unavailable. Please retry.")
+            raise HTTPException(
+                status_code=status if status in (401, 403, 404, 429) else 502, detail=message
+            ) from error
+        except (httpx.HTTPError, KeyError, TypeError) as error:
+            raise HTTPException(
+                status_code=502, detail="Cannot reach the Hugging Face catalog. Retry shortly."
+            ) from error
+
+    @app.get("/api/v1/catalog/models", response_model=CatalogPage)
+    async def catalog_models(
+        query: str = Query("", max_length=200),
+        sort: CatalogSort = "trendingScore",
+        task: str = Query("", max_length=80),
+        library: str = Query("", max_length=80),
+        access: Literal["", "open", "gated"] = "",
+        limit: int = Query(24, ge=1, le=48),
+        cursor: str | None = Query(None, max_length=4000),
+    ) -> CatalogPage:
+        return await catalog_result(
+            browser.search(query, sort, task, library, access, limit, cursor)
+        )
+
+    @app.get("/api/v1/catalog/models/{repo_id:path}", response_model=CatalogDetail)
+    async def catalog_model(repo_id: str, revision: str = Query("main", max_length=200)):
+        return await catalog_result(browser.detail(repo_id, revision))
 
     @app.get("/api/v1/models", response_model=list[LocalModel])
     async def local_models() -> list[LocalModel]:

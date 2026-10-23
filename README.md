@@ -248,3 +248,24 @@ The frontend is dependency-free HTML, CSS, and JavaScript served by FastAPI. No 
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
+
+## Browse models from the controller
+
+Discover models directly in Spark Cluster with a native Hugging Face browser inspired by
+[HFDesk](https://github.com/bashrusakh/hfdesk). Search by model or author, browse trending,
+most downloaded, most liked, or recently updated repositories, and filter by task, format,
+and access requirements. Select a model to inspect its architecture, license, parameter count,
+repository size, and file list before downloading.
+
+Check capacity with your chosen context, concurrency, and weight precision, then download once
+on the controller and distribute over the LAN using the existing resumable delivery pipeline.
+Cards show download and local availability states. Repository-ID entry remains available as an
+advanced fallback. Discovery runs on the controller even before a cluster is connected.
+
+Downloads include the **entire repository**, including alternative weight files. Weight bits in
+the capacity planner estimate memory; they do not convert or quantize downloaded weights.
+Available formats and tasks in the catalog do not guarantee compatibility with the configured
+vLLM runtime. Review the model card and license before running a model. For gated repositories,
+accept access on Hugging Face and configure `SPARK_CLUSTER_HF_TOKEN` on the controller; the
+credential is never sent to the browser. Catalog requests have bounded page sizes, a short cache,
+and request timeouts.

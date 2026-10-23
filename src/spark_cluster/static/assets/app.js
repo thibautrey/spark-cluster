@@ -1,6 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const throughputHistory = [];
 let currentFit = null;
+let fitRequestVersion = 0;
 let localModels = [];
 let launchFit = null;
 let logEntries = [];
@@ -298,6 +299,7 @@ async function refreshLibrary() {
     renderEndpoint(state.runtime);
     renderModels(state.models);
     renderDownloads(downloads);
+    document.dispatchEvent(new CustomEvent('library-updated', {detail: downloads}));
     renderLaunches(state.launches);
     $('launch-mode').textContent = state.runtime_control_mode;
   } catch (error) {
@@ -341,18 +343,23 @@ async function checkFit() {
     renderFitError('Enter a Hugging Face model id.');
     return null;
   }
+  const version = ++fitRequestVersion;
+  const payload = JSON.stringify(fitPayload());
   $('check-fit').disabled = true;
   $('check-fit').textContent = 'Inspecting…';
   try {
-    const plan = await api('/api/v1/models/fit', {method: 'POST', body: JSON.stringify(fitPayload())});
+    const plan = await api('/api/v1/models/fit', {method: 'POST', body: payload});
+    if (version !== fitRequestVersion || payload !== JSON.stringify(fitPayload())) return null;
     renderFit(plan);
     return plan;
   } catch (error) {
-    renderFitError(error.message);
+    if (version === fitRequestVersion) renderFitError(error.message);
     return null;
   } finally {
-    $('check-fit').disabled = false;
-    $('check-fit').textContent = 'Check fit';
+    if (version === fitRequestVersion) {
+      $('check-fit').disabled = false;
+      $('check-fit').textContent = 'Check fit';
+    }
   }
 }
 
@@ -367,8 +374,12 @@ $('allow-oversized').addEventListener('change', () => {
 });
 $('model-form').addEventListener('input', event => {
   if (['allow-oversized', 'admin-token'].includes(event.target.id)) return;
+  ++fitRequestVersion;
   currentFit = null;
+  $('check-fit').disabled = false;
+  $('check-fit').textContent = 'Check fit';
   $('download-model').disabled = true;
+  $('download-model').textContent = 'Download once';
 });
 $('model-form').addEventListener('submit', async event => {
   event.preventDefault();
