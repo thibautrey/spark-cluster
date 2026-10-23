@@ -386,7 +386,7 @@ function renderFit(plan) {
   ];
   const requirements = plan.requirements.length ? `<div class="fit-guidance"><b>Required</b>${plan.requirements.map(item => `<p>• ${escapeHtml(item)}</p>`).join('')}</div>` : '';
   const tradeoffs = plan.tradeoffs.length ? `<div class="fit-guidance"><b>Tradeoffs · ${escapeHtml(plan.performance_impact)} impact</b>${plan.tradeoffs.map(item => `<p>• ${escapeHtml(item)}</p>`).join('')}</div>` : '';
-  const notes = plan.notes.length ? `<div class="fit-guidance muted"><b>Planner notes</b>${plan.notes.map(item => `<p>• ${escapeHtml(item)}</p>`).join('')}</div>` : '';
+  const notes = plan.notes.length ? `<div class="fit-guidance planner-notes"><b>Planner notes</b>${plan.notes.map(item => `<p>• ${escapeHtml(item)}</p>`).join('')}</div>` : '';
   detail.innerHTML = `<div class="fit-strategy"><span>${escapeHtml(plan.placement_strategy.replaceAll('-', ' '))}</span><small>${plan.memory_fits ? 'Estimated memory fit' : plan.runtime_fits ? 'Estimated hybrid fit' : 'No validated runtime fit'} · ${plan.storage_fits ? `${plan.storage_available_gib.toFixed(0)} GiB storage free` : 'repository exceeds free storage'}${plan.ssd_required_gib_per_node ? ` · ${plan.ssd_required_gib_per_node.toFixed(1)} GiB local SSD per node` : ''}</small></div><div class="fit-metrics">${metrics.map(([label, value]) => `<span><small>${label}</small><b>${value}</b></span>`).join('')}</div>${requirements}${tradeoffs}${notes}`;
   detail.hidden = false;
   $('download-model').disabled = !plan.download_fits;
