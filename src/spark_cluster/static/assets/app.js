@@ -356,10 +356,11 @@ function renderActiveDownloads(downloads) {
     const currentBytes = distributing ? job.transferred_bytes : job.downloaded_bytes;
     const rate = paused ? 0 : downloadRate(job);
     const remaining = Math.max(0, job.total_bytes - currentBytes);
+    const timing = paused ? '' : rate ? `<span>${formatBytes(rate)}/s</span><span>${formatDuration(remaining / rate)} remaining</span>` : '<span>Calculating speed…</span>';
     return `<article class="active-download-card ${paused ? 'paused' : ''}">
       <div class="active-download-identity"><span class="active-download-icon">↓</span><div><p>${escapeHtml(downloadPhaseLabel(job))}</p><h4>${escapeHtml(job.repo_id)}</h4></div></div>
       <div class="active-download-progress"><div><i style="width:${progress}%"></i></div><b>${progress.toFixed(2)}%</b></div>
-      <div class="active-download-footer"><div class="active-download-summary"><span><b>${formatBytes(currentBytes)}</b> of ${formatBytes(job.total_bytes)}</span>${paused ? '' : `<span>${rate ? `${formatBytes(rate)}/s` : 'Measuring speed…'}</span><span>${rate ? `${formatDuration(remaining / rate)} remaining` : 'Estimating time…'}</span>`}</div><div class="active-download-actions"><button class="download-control" type="button" data-download-action="${paused ? 'resume' : 'pause'}" data-job-id="${escapeHtml(job.id)}" data-repo-id="${escapeHtml(job.repo_id)}">${paused ? 'Resume' : 'Pause'}</button><button class="download-control danger" type="button" data-download-action="cancel" data-job-id="${escapeHtml(job.id)}" data-repo-id="${escapeHtml(job.repo_id)}">Cancel</button></div></div>
+      <div class="active-download-footer"><div class="active-download-summary"><span><b>${formatBytes(currentBytes)}</b> of ${formatBytes(job.total_bytes)}</span>${timing}</div><div class="active-download-actions"><button class="download-control" type="button" data-download-action="${paused ? 'resume' : 'pause'}" data-job-id="${escapeHtml(job.id)}" data-repo-id="${escapeHtml(job.repo_id)}">${paused ? 'Resume' : 'Pause'}</button><button class="download-control danger" type="button" data-download-action="cancel" data-job-id="${escapeHtml(job.id)}" data-repo-id="${escapeHtml(job.repo_id)}">Cancel</button></div></div>
     </article>`;
   }).join('');
 }

@@ -355,6 +355,9 @@ body[data-route="api"] .api-panel{display:grid!important;grid-template-columns:r
 /* One truthful stream badge replaces the decorative live label and timestamp. */
 .live.connecting{color:#93a0b0;border-color:#394453;background:#151c27}.live.connecting i{background:#8491a3}.live.reconnecting{color:var(--amber);border-color:#5b4b25;background:#251e0f}.live.reconnecting i{background:var(--amber)}
 
+/* The model catalog starts with its controls; navigation already identifies the screen. */
+body[data-route="models"] main>header>div:first-child{display:none}
+
 /* Overview cards show the metric once and keep only data-driven visuals. */
 .metric{min-height:126px}.metric strong{margin-top:14px}#throughput-spark{bottom:6px;height:40px}.ring{top:45px;width:56px;height:56px}.ring:after{width:42px;height:42px}.bar{top:94px}
 
