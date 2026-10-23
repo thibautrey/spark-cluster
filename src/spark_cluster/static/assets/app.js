@@ -180,7 +180,6 @@ function renderEndpoint(endpoint) {
 function renderModels(models) {
   localModels = models;
   updateLaunchModelOptions(models);
-  $('model-count').textContent = `${models.length} model${models.length === 1 ? '' : 's'}`;
   if (!models.length) {
     $('local-models').innerHTML = '<div class="empty-state"><b>No local model found</b><span>Add one from Hugging Face.</span></div>';
     return;
