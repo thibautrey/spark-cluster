@@ -64,9 +64,15 @@ class RuntimePrerequisiteService:
     def spec_for(self, model_id: str) -> RuntimeSpec:
         model = model_id.lower()
         if "deepseek-v4.1" in model or "deepseek_v4.1" in model:
-            return RuntimeSpec("tensorfold", "TensorFold specialized lane", self.settings.runtime_tensorfold_image)
+            return RuntimeSpec(
+                "tensorfold",
+                "TensorFold specialized lane",
+                self.settings.runtime_tensorfold_image,
+            )
         if "gguf" in model:
-            return RuntimeSpec("llama-cpp", "llama.cpp CUDA server", self.settings.runtime_llama_cpp_image)
+            return RuntimeSpec(
+                "llama-cpp", "llama.cpp CUDA server", self.settings.runtime_llama_cpp_image
+            )
         return RuntimeSpec("vllm", "vLLM for NVIDIA GB10", self.settings.runtime_vllm_image)
 
     def nodes(self) -> list[SetupNode]:
@@ -121,7 +127,8 @@ class RuntimePrerequisiteService:
             "sudo -n k3s ctr images list -q 2>/dev/null || true; "
             "elif command -v crictl >/dev/null 2>&1; then "
             "sudo -n crictl images 2>/dev/null | awk 'NR > 1 {print $1 \":\" $2}'; "
-            "elif command -v docker >/dev/null 2>&1; then docker image ls --format '{{.Repository}}:{{.Tag}}'; "
+            "elif command -v docker >/dev/null 2>&1; then "
+            "docker image ls --format '{{.Repository}}:{{.Tag}}'; "
             "fi\n"
         )
         try:
@@ -204,7 +211,8 @@ class RuntimePrerequisiteService:
                 script = (
                     "set -eu\n"
                     f"image={shlex.quote(spec.image or '')}\n"
-                    "if command -v k3s >/dev/null 2>&1; then sudo -n k3s ctr images pull \"$image\"; "
+                    "if command -v k3s >/dev/null 2>&1; then "
+                    "sudo -n k3s ctr images pull \"$image\"; "
                     "elif command -v crictl >/dev/null 2>&1; then sudo -n crictl pull \"$image\"; "
                     "elif command -v docker >/dev/null 2>&1; then docker pull \"$image\"; "
                     "else echo 'No supported container runtime found' >&2; exit 1; fi\n"

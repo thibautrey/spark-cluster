@@ -781,7 +781,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         async def send_output() -> None:
             while terminal.stdout and (chunk := await terminal.stdout.read(4096)):
-                await websocket.send_json({"type": "output", "data": chunk.decode(errors="replace")})
+                await websocket.send_json(
+                    {"type": "output", "data": chunk.decode(errors="replace")}
+                )
 
         async def receive_input() -> None:
             while True:

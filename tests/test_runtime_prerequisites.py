@@ -6,7 +6,6 @@ from spark_cluster.runtime_prerequisites import RuntimePrerequisiteService
 from spark_cluster.setup_models import SetupJob, SetupNode, SetupRequest
 from spark_cluster.store import SnapshotStore
 
-
 FINGERPRINT = "SHA256:" + "A" * 43
 
 

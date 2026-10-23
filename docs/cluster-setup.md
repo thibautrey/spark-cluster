@@ -212,6 +212,10 @@ All setup endpoints use the model administration bearer token in live mode.
 | `POST /api/v1/downloads/{id}/resume` | Resume a paused transfer from partial files |
 | `POST /api/v1/downloads/{id}/cancel` | Cancel and delete partial files on controller and cluster storage |
 | `DELETE /api/v1/model-management/models/{repo}` | Delete a managed model from controller and shared cluster storage |
+| `POST /api/v1/runtime-management/readiness` | Inspect the pinned runtime image on every managed node |
+| `POST /api/v1/runtime-management/install` | Pull the required runtime image on missing or outdated nodes |
+| `GET /api/v1/runtime-management/install/{id}` | Read per-node installation progress and logs |
+| `POST /api/v1/runtime-management/terminal-ticket` | Create a single-use ticket for a trusted-node WebTTY |
 | `GET /api/v1/controller/downloads/{id}/manifest` | Retrieve the signed model file manifest |
 | `GET /api/v1/controller/downloads/{id}/files/{path}` | Resume an authenticated model file transfer |
 | `GET /api/v1/controller/verify` | HMAC-authenticated bridge identity check |

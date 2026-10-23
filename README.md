@@ -174,11 +174,15 @@ Jobs, attempts, internet progress, LAN delivery progress, fit results, and error
 A launch performs these steps:
 
 1. validates that the selected managed model still fits the current cluster;
-2. scales the Ray worker StatefulSet for the requested parallelism;
-3. applies model path, served name, context, quantization, and memory target;
-4. recreates the vLLM head so the previous process releases its GPU;
-5. waits for workers and the vLLM readiness endpoint;
-6. persists progress and exposes retryable failures in the dashboard.
+2. checks the pinned runtime image and installed version on every SSH-managed node;
+3. offers one-click installation or update when a node is missing the required runtime;
+4. scales the Ray worker StatefulSet for the requested parallelism;
+5. applies model path, served name, context, quantization, and memory target;
+6. recreates the vLLM head so the previous process releases its GPU;
+7. waits for workers and the vLLM readiness endpoint;
+8. persists progress and exposes retryable failures in the dashboard.
+
+The readiness sheet keeps the default workflow visual and concise. Its optional power-user view shows installation logs for every node and opens a real interactive SSH terminal through a single-use, 60-second WebSocket ticket. Terminal access is restricted to the nodes and pinned host keys saved by the setup wizard.
 
 ## OpenAI-compatible endpoint
 
@@ -261,6 +265,10 @@ The complete setup-specific reference is in [docs/cluster-setup.md](docs/cluster
 | `GET /api/v1/logs` | Persisted, filterable runtime logs. |
 | `WS /api/v1/logs/stream` | Live runtime log stream. |
 | `POST /api/v1/launches` | Validate and launch a managed model. |
+| `POST /api/v1/runtime-management/readiness` | Inspect required runtime versions across managed nodes. |
+| `POST /api/v1/runtime-management/install` | Install or update the pinned runtime image on every node. |
+| `GET /api/v1/runtime-management/install/{id}` | Read per-node installation state and logs. |
+| `POST /api/v1/runtime-management/terminal-ticket` | Issue a short-lived ticket for a trusted-node WebTTY. |
 | `POST /api/v1/setup/discover` | Bounded LAN discovery. |
 | `POST /api/v1/setup/hardware` | Read-only fabric and cable inspection. |
 | `POST /api/v1/setup/jobs` | Persisted cluster installation workflow. |
