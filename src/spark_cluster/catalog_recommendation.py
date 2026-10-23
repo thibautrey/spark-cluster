@@ -48,7 +48,10 @@ REPORTS = {
 }
 REVIEWED = date(2026, 10, 23)
 EXPERIMENTAL = {
-    "Baekpica/DeepSeek-V4.1-Flash-1017-VQ-GGUF": "Publisher warns of experimental ~1.6-bit expert weights, reasoning loops and degraded output."
+    "Baekpica/DeepSeek-V4.1-Flash-1017-VQ-GGUF": (
+        "Publisher warns of experimental ~1.6-bit expert weights, "
+        "reasoning loops and degraded output."
+    )
 }
 # Namespace is an identity hint only when it matches the model family. It is never
 # evidence of Spark support or model quality.
