@@ -168,7 +168,7 @@ $('setup-new').addEventListener('click', () => { setupJob = null; setupSelection
 loadSetup(true).catch(error => {
   if (error.message === 'Invalid model administration token') {
     $('setup-mode').textContent = 'ADMIN TOKEN REQUIRED';
-    $('setup-access').textContent = 'Cluster data is available. Enter the administration token to view or change controller setup.';
+    $('setup-access').textContent = 'Enter the administration token to view or change controller setup. Cluster metrics will appear after a bridge is attached.';
     return;
   }
   setupError(error.message);
