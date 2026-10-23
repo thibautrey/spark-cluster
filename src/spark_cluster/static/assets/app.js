@@ -408,9 +408,10 @@ async function loadPerformancePlan(apply = true) {
   const modelId = $('launch-model').value;
   if (!modelId) {
     launchPerformance = null;
-    $('performance-plan').innerHTML = '<span>◎</span><div><b>Automatic performance plan</b><small>Select a model to apply model, workload, and fabric-aware runtime settings.</small></div>';
+    $('performance-plan').hidden = true;
     return;
   }
+  $('performance-plan').hidden = false;
   $('performance-plan').innerHTML = '<span>…</span><div><b>Calculating performance plan</b><small>Matching the model, workload, node count, and fabric.</small></div>';
   try {
     const plan = await api('/api/v1/performance/plan', {method: 'POST', body: JSON.stringify({
@@ -453,10 +454,10 @@ async function checkLaunchFit() {
   if (!$('launch-model').value) {
     launchFit = null;
     $('launch-model-button').disabled = true;
-    $('launch-fit').className = 'fit-result neutral';
-    $('launch-fit').innerHTML = '<span class="fit-symbol">?</span><div><b>Select a model</b><small>The launch is revalidated against current cluster capacity.</small></div>';
+    $('launch-fit').hidden = true;
     return;
   }
+  $('launch-fit').hidden = false;
   const payload = launchPayload();
   try {
     launchFit = await api('/api/v1/models/fit-local', {method: 'POST', body: JSON.stringify({repo_id: payload.model_id, bits_per_weight: payload.bits_per_weight, context_length: payload.context_length, concurrent_sequences: payload.concurrent_sequences, kv_cache_dtype: payload.kv_cache_dtype})});
@@ -742,7 +743,6 @@ async function refreshLibrary() {
       $('api-status').className = 'pill unreachable';
     }),
     api('/api/v1/launches').then(renderLaunches),
-    api('/healthz').then(state => { $('launch-mode').textContent = state.runtime_control_mode; }),
   ];
   await Promise.allSettled(requests);
   libraryRefreshRunning = false;

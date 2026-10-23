@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=clean-copy-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=launch-empty-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -234,7 +234,6 @@
         </section>
 
         <section class="panel launch-panel" id="launch" data-route-view="launch">
-          <div class="view-toolbar"><span class="pill" id="launch-mode">detecting mode</span></div>
           <div class="launch-layout">
             <form class="launch-form" id="launch-form">
               <label>Local model<select id="launch-model" required><option value="">Loading models…</option></select></label>
@@ -267,8 +266,8 @@
               </details>
               <label>Admin token <span class="optional">optional</span><input id="launch-admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label>
               </div></details>
-              <div class="performance-plan" id="performance-plan"><span>◎</span><div><b>Automatic performance plan</b><small>Select a model to apply model, workload, and fabric-aware runtime settings.</small></div></div>
-              <div class="fit-result neutral" id="launch-fit"><span class="fit-symbol">?</span><div><b>Select a model</b><small>The launch is revalidated against current cluster capacity.</small></div></div>
+              <div class="performance-plan" id="performance-plan" hidden></div>
+              <div class="fit-result neutral" id="launch-fit" hidden></div>
               <button class="primary launch-button" id="launch-model-button" type="submit" disabled>Launch on cluster</button>
             </form>
             <div class="launch-status" id="launch-status">
@@ -326,7 +325,7 @@
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=hf-token-sheet-v1"></script>
+    <script src="/assets/app.js?v=launch-empty-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>
