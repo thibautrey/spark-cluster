@@ -399,3 +399,29 @@ def test_fp8_kv_halves_cache_estimate_without_converting_weights(tmp_path):
     )
     assert bf16.kv_cache_gib == pytest.approx(fp8.kv_cache_gib * 2, abs=0.02)
     assert bf16.weights_gib == fp8.weights_gib
+
+
+def test_gguf_artifacts_take_priority_over_base_model_tags(tmp_path):
+    from spark_cluster.model_manager import _quantization
+
+    assert _quantization(
+        metadata(
+            files=(("model-Q4_K_M.gguf", GIB),),
+            tags=("fp8", "base_model:acme/fp8"),
+        )
+    ) == ("GGUF Q4", 4)
+
+
+def test_cached_repository_does_not_need_double_disk_space(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "spark_cluster.model_manager.shutil.disk_usage", lambda _: SimpleNamespace(free=GIB // 2)
+    )
+    plan = build_fit_plan(
+        ModelFitRequest(repo_id="acme/model"),
+        metadata(),
+        ClusterSimulator("test").snapshot(),
+        Settings(model_cache_path=tmp_path),
+        cached_repository_bytes=GIB,
+    )
+    assert plan.runtime_storage_fits
+    assert plan.fits

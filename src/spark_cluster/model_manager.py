@@ -231,6 +231,19 @@ def _quantization(metadata: RepositoryMetadata) -> tuple[str, float | None]:
     quant = quant if isinstance(quant, dict) else {}
     method = str(quant.get("quant_method") or quant.get("format") or "").lower()
 
+    gguf_files = [name for name, _ in metadata.files if name.lower().endswith(".gguf")]
+    if gguf_files and not any(
+        name.lower().endswith((".safetensors", ".bin")) for name, _ in metadata.files
+    ):
+        matches = {
+            int(value)
+            for name in gguf_files
+            for value in re.findall(r"[-_.]q([2-8])", name.lower())
+        }
+        if len(matches) == 1:
+            bits = float(next(iter(matches)))
+            return f"GGUF Q{int(bits)}", bits
+        return (f"GGUF repository ({len(gguf_files)} variants)", None)
     if method == "exl3" or "exl3" in combined:
         bits = float(quant.get("avg_bits") or 0) or None
         if bits is None:
@@ -244,17 +257,6 @@ def _quantization(metadata: RepositoryMetadata) -> tuple[str, float | None]:
         return ("GPTQ" if "gptq" in combined else "AWQ"), bits
     if "fp8" in combined or method == "fp8":
         return "FP8", 8
-    gguf_files = [name for name, _ in metadata.files if name.lower().endswith(".gguf")]
-    if gguf_files:
-        matches = {
-            int(value)
-            for name in gguf_files
-            for value in re.findall(r"[-_.]q([2-8])", name.lower())
-        }
-        if len(matches) == 1:
-            bits = float(next(iter(matches)))
-            return f"GGUF Q{int(bits)}", bits
-        return (f"GGUF repository ({len(gguf_files)} variants)", None)
     if any(token in combined for token in ("int4", "4-bit", "4bit", "fp4")):
         return "4-bit quantized", 4
     if any(token in combined for token in ("int8", "8-bit", "8bit")):
@@ -763,13 +765,14 @@ class ModelManager:
             )
 
         metadata = await asyncio.to_thread(local_metadata)
+        cached_bytes = await asyncio.to_thread(directory_size, model_path)
         return await asyncio.to_thread(
             build_fit_plan,
             request,
             metadata,
             self.runtime.latest,
             self.settings,
-            directory_size(model_path),
+            cached_bytes,
         )
 
     async def managed_model(self, model_id: str) -> LocalModel | None:
