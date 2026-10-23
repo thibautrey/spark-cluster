@@ -19,7 +19,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from .capacity import calculate_capacity
@@ -495,6 +495,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await catalog_result(
             browser.search(query, sort, task, library, access, limit, cursor)
         )
+
+    @app.get("/api/v1/catalog/profiles/{author}/avatar", include_in_schema=False)
+    async def catalog_profile_avatar(author: str):
+        try:
+            url = await browser.author_avatar_url(author)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except httpx.HTTPError as error:
+            raise HTTPException(
+                status_code=502, detail="Cannot load this profile avatar."
+            ) from error
+        return RedirectResponse(url=url, status_code=307)
 
     @app.post("/api/v1/catalog/fit", response_model=CatalogFitBatchResponse)
     async def catalog_fit(request: CatalogFitBatchRequest) -> CatalogFitBatchResponse:

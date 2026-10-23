@@ -52,6 +52,25 @@ function catalogMonogram(model) {
   return (initials || model.author[0] || 'HF').toUpperCase();
 }
 
+function catalogAvatar(model) {
+  const profileUrl = `/api/v1/catalog/profiles/${encodeURIComponent(model.author)}/avatar`;
+  const source = model.icon_url || profileUrl;
+  const label = model.icon_url ? `Model icon for ${model.id}` : `Hugging Face profile avatar for ${model.author}`;
+  return `<span class="catalog-avatar"><span aria-hidden="true">${escapeHtml(catalogMonogram(model))}</span><img src="${escapeHtml(source)}" data-profile-avatar="${escapeHtml(profileUrl)}" data-using-profile="${model.icon_url ? 'false' : 'true'}" alt="${escapeHtml(label)}" loading="lazy" referrerpolicy="no-referrer"></span>`;
+}
+
+function activateCatalogAvatars(root) {
+  root.querySelectorAll('.catalog-avatar img').forEach(image => image.addEventListener('error', () => {
+    if (image.dataset.usingProfile === 'false') {
+      image.dataset.usingProfile = 'true';
+      image.alt = 'Hugging Face profile avatar';
+      image.src = image.dataset.profileAvatar;
+    } else {
+      image.hidden = true;
+    }
+  }));
+}
+
 function catalogImage(model, detail = false) {
   return `<span class="catalog-media ${detail ? 'catalog-detail-media' : ''}">
     <span class="catalog-image-fallback" aria-hidden="true"><i>${escapeHtml(catalogMonogram(model))}</i><small>Hugging Face model</small></span>
@@ -122,7 +141,7 @@ function renderCatalogCards() {
     <button type="button" class="catalog-card ${catalogSelection === model.id ? 'selected' : ''}" data-repo="${escapeHtml(model.id)}" aria-pressed="${catalogSelection === model.id}">
       ${catalogImage(model)}
       <span class="catalog-card-content">
-        <span class="catalog-card-head"><span class="catalog-avatar">${escapeHtml(model.author[0].toUpperCase())}</span><span class="catalog-author">${escapeHtml(model.author)}</span><span class="catalog-card-arrow">↗</span></span>
+        <span class="catalog-card-head">${catalogAvatar(model)}<span class="catalog-author">${escapeHtml(model.author)}</span><span class="catalog-card-arrow">↗</span></span>
         <b class="catalog-card-title">${escapeHtml(model.id.split('/').pop())}</b>
         <span class="catalog-tags">${[model.task, model.library, model.parameters ? `${formatNumber(model.parameters)} params` : null].filter(Boolean).slice(0, 3).map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</span>
         ${recommendationBadge(model)}
@@ -131,6 +150,7 @@ function renderCatalogCards() {
         <span class="catalog-card-foot"><span title="Downloads">↓ ${formatNumber(model.downloads)}</span><span title="Likes">♡ ${formatNumber(model.likes)}</span>${model.updated ? `<span class="catalog-updated">${escapeHtml(new Date(model.updated).toLocaleDateString())}</span>` : ''}</span>
       </span>
     </button>`).join('') : `<div class="catalog-empty">${selectedCapacity() ? `No analyzed model fits ${selectedCapacity()} Spark${selectedCapacity() === 1 ? '' : 's'} at this context.<br>Try more machines, a shorter context, or load more models.` : 'No loaded models match these filters.<br>Load more models, change Selection, or reset the filters.'}</div>`;
+  activateCatalogAvatars($('catalog-grid'));
 }
 
 async function applyCapacityFilter() {
@@ -249,8 +269,9 @@ async function inspectCatalogModel(repo, revision = 'main', opener = null) {
     const model = await api(`/api/v1/catalog/models/${repo.split('/').map(encodeURIComponent).join('/')}?revision=${encodeURIComponent(revision)}`);
     if (request !== detailRequest) return;
     const facts = [['Repository size', `${model.size_complete ? '' : 'At least '}${formatBytes(model.repository_bytes)}`], ['Parameters', model.parameters ? formatNumber(model.parameters) : 'Not reported'], ['Architecture', model.architecture || model.library || 'Not reported'], ['License', model.license || 'See model license']];
-    $('catalog-detail').innerHTML = `${catalogImage(model, true)}<div class="catalog-detail-head"><div class="catalog-detail-identity"><span class="catalog-avatar">${escapeHtml(model.author[0].toUpperCase())}</span><div><p class="eyebrow">${escapeHtml(model.author)}</p><h3>${escapeHtml(model.id.split('/').pop())}</h3></div></div><div class="catalog-tags">${[model.task, model.library].filter(Boolean).map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div><div class="catalog-popularity"><span>↓ <b>${formatNumber(model.downloads)}</b><small>downloads</small></span><span>♡ <b>${formatNumber(model.likes)}</b><small>likes</small></span></div>${recommendationBadge(model, true)}${sparkBadge(model, true)}<dl class="catalog-facts">${facts.map(([title, value]) => `<div><dt>${title}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>${model.gated ? '<p class="catalog-access-note">License approval is required. Accept access on Hugging Face and configure the controller token.</p>' : ''}<a class="catalog-hf-link" href="https://huggingface.co/${model.id.split('/').map(encodeURIComponent).join('/')}" target="_blank" rel="noopener noreferrer">Open model card &amp; license <span>↗</span></a></div><details class="catalog-files"><summary><span>${model.files.length} repository files</span><small>Show file manifest</small></summary><div class="catalog-file-list">${model.files.map(file => `<div class="catalog-file"><span>${escapeHtml(file.name)}</span><span>${file.size === null ? 'Unknown size' : formatBytes(file.size)}</span></div>`).join('')}</div></details>`;
+    $('catalog-detail').innerHTML = `${catalogImage(model, true)}<div class="catalog-detail-head"><div class="catalog-detail-identity">${catalogAvatar(model)}<div><p class="eyebrow">${escapeHtml(model.author)}</p><h3>${escapeHtml(model.id.split('/').pop())}</h3></div></div><div class="catalog-tags">${[model.task, model.library].filter(Boolean).map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div><div class="catalog-popularity"><span>↓ <b>${formatNumber(model.downloads)}</b><small>downloads</small></span><span>♡ <b>${formatNumber(model.likes)}</b><small>likes</small></span></div>${recommendationBadge(model, true)}${sparkBadge(model, true)}<dl class="catalog-facts">${facts.map(([title, value]) => `<div><dt>${title}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>${model.gated ? '<p class="catalog-access-note">License approval is required. Accept access on Hugging Face and configure the controller token.</p>' : ''}<a class="catalog-hf-link" href="https://huggingface.co/${model.id.split('/').map(encodeURIComponent).join('/')}" target="_blank" rel="noopener noreferrer">Open model card &amp; license <span>↗</span></a></div><details class="catalog-files"><summary><span>${model.files.length} repository files</span><small>Show file manifest</small></summary><div class="catalog-file-list">${model.files.map(file => `<div class="catalog-file"><span>${escapeHtml(file.name)}</span><span>${file.size === null ? 'Unknown size' : formatBytes(file.size)}</span></div>`).join('')}</div></details>`;
     $('catalog-sheet-body').className = 'catalog-sheet-body';
+    activateCatalogAvatars($('catalog-detail'));
     $('model-form').hidden = false;
   } catch (error) {
     if (request !== detailRequest) return;

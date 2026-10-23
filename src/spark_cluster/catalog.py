@@ -44,6 +44,7 @@ class CatalogModel(BaseModel):
     updated: str | None = None
     parameters: int | None = None
     thumbnail_url: str
+    icon_url: str | None = None
     commit: str | None = None
     spark: SparkOptimization = Field(default_factory=SparkOptimization)
     recommendation: Recommendation = Field(default_factory=Recommendation)
@@ -110,6 +111,36 @@ class CatalogFitBatchResponse(BaseModel):
     cache: dict[str, int]
 
 
+MODEL_ICON_NAMES = tuple(
+    f"{name}.{extension}"
+    for name in ("model-icon", "icon", "avatar", "thumbnail", "logo")
+    for extension in ("png", "jpg", "jpeg", "webp", "svg")
+)
+
+
+def model_icon_url(data: dict, repo_id: str) -> str | None:
+    files = {
+        item.get("rfilename", "").casefold(): item.get("rfilename", "")
+        for item in (data.get("siblings") or [])
+    }
+    for wanted in MODEL_ICON_NAMES:
+        # Prefer explicit root icons, then an exact filename under assets/images.
+        path = files.get(wanted)
+        if not path:
+            path = next(
+                (original for lowered, original in files.items() if lowered.endswith("/" + wanted)),
+                None,
+            )
+        if path:
+            revision = data.get("sha") or "main"
+            encoded_path = "/".join(quote(part, safe="") for part in path.split("/"))
+            return (
+                f"https://huggingface.co/{quote(repo_id, safe='/')}/resolve/"
+                f"{quote(revision, safe='')}/{encoded_path}"
+            )
+    return None
+
+
 def summary(data: dict) -> CatalogModel:
     repo_id = data.get("id") or data["modelId"]
     spark = classify_spark(data)
@@ -131,6 +162,7 @@ def summary(data: dict) -> CatalogModel:
             "https://cdn-thumbnails.huggingface.co/social-thumbnails/models/"
             f"{quote(repo_id, safe='/')}.png"
         ),
+        icon_url=model_icon_url(data, repo_id),
     )
 
 
@@ -310,6 +342,32 @@ class ModelBrowser:
             cursor=f"spark-v1:{digest}:{end}" if end < len(models) else None,
             ranking_note=snapshot["note"],
         )
+
+    async def author_avatar_url(self, author: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}", author):
+            raise ValueError("Invalid Hugging Face profile")
+        key = f"profile-avatar:{author.casefold()}"
+        cached = await asyncio.to_thread(self.persistent_cache.get_metadata, key)
+        if cached:
+            return cached[0]["url"]
+        endpoints = (
+            f"/api/organizations/{quote(author, safe='')}/overview",
+            f"/api/users/{quote(author, safe='')}/overview",
+        )
+        for path in endpoints:
+            try:
+                data, _ = await self.fetch(path, {})
+            except httpx.HTTPStatusError as error:
+                if error.response.status_code == 404:
+                    continue
+                raise
+            url = data.get("avatarUrl") if isinstance(data, dict) else None
+            if isinstance(url, str) and url.startswith("https://cdn-avatars.huggingface.co/"):
+                await asyncio.to_thread(
+                    self.persistent_cache.set_metadata, key, {"url": url}, None, 86400
+                )
+                return url
+        return f"https://huggingface.co/avatars/{quote(author, safe='')}.svg"
 
     async def detail(self, repo_id: str, revision: str) -> CatalogDetail:
         safe_repo_parts(repo_id)

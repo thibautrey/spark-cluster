@@ -320,3 +320,74 @@ def test_spark_ranking_cache_version_and_cursor_expiry(catalog, monkeypatch):
     response = client.get("/api/v1/catalog/models", params={"cursor": f"spark-v1:{key}:1"})
     assert response.status_code == 422
     assert len(requests) == before
+
+
+def test_model_icon_prefers_explicit_repository_asset():
+    from spark_cluster.catalog import summary
+
+    model = summary(
+        {
+            "id": "acme/model with space",
+            "sha": "commit123",
+            "siblings": [
+                {"rfilename": "assets/model-icon.png"},
+                {"rfilename": "assets/screenshot.png"},
+            ],
+        }
+    )
+    assert model.icon_url == (
+        "https://huggingface.co/acme/model%20with%20space/resolve/commit123/assets/model-icon.png"
+    )
+    assert (
+        summary(
+            {"id": "acme/no-icon", "siblings": [{"rfilename": "assets/screenshot.png"}]}
+        ).icon_url
+        is None
+    )
+
+
+def test_profile_avatar_redirects_to_hugging_face_avatar_and_is_cached(catalog):
+    client, browser, requests = catalog
+
+    def handle(request):
+        requests.append(request)
+        assert request.url.path == "/api/organizations/bg-digitalservices/overview"
+        return httpx.Response(
+            200,
+            json={"avatarUrl": "https://cdn-avatars.huggingface.co/v1/production/avatar.png"},
+        )
+
+    browser.transport = httpx.MockTransport(handle)
+    url = "/api/v1/catalog/profiles/bg-digitalservices/avatar"
+    response = client.get(url, follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == (
+        "https://cdn-avatars.huggingface.co/v1/production/avatar.png"
+    )
+    assert (
+        client.get(url, follow_redirects=False).headers["location"] == response.headers["location"]
+    )
+    assert len(requests) == 1
+    assert client.get("/api/v1/catalog/profiles/bad!name/avatar").status_code == 422
+
+
+def test_user_avatar_falls_back_after_organization_lookup(catalog):
+    client, browser, requests = catalog
+
+    def handle(request):
+        requests.append(request.url.path)
+        if request.url.path.startswith("/api/organizations/"):
+            return httpx.Response(404)
+        return httpx.Response(
+            200,
+            json={"avatarUrl": "https://cdn-avatars.huggingface.co/user.jpeg"},
+        )
+
+    browser.transport = httpx.MockTransport(handle)
+    response = client.get("/api/v1/catalog/profiles/TheBloke/avatar", follow_redirects=False)
+    assert response.status_code == 307
+    assert response.headers["location"] == "https://cdn-avatars.huggingface.co/user.jpeg"
+    assert requests == [
+        "/api/organizations/TheBloke/overview",
+        "/api/users/TheBloke/overview",
+    ]
