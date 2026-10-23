@@ -45,8 +45,11 @@ class SetupFailure(Exception):
 async def process(args: list[str], data: bytes | None = None, timeout: float = 30) -> bytes:
     """Bound output and kill process groups on cancellation or timeouts."""
     proc = await asyncio.create_subprocess_exec(
-        *args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL, start_new_session=True,
+        *args,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+        start_new_session=True,
     )
 
     async def communicate():
@@ -122,13 +125,29 @@ class SSHTransport:
 
     async def run(self, node: SetupNode, script: str, timeout: float = 60) -> str:
         args = [
-            "ssh", "-F", str(self.settings.setup_ssh_config or "/dev/null"),
-            "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
-            "-o", f"UserKnownHostsFile={self.known_hosts}",
-            "-o", "GlobalKnownHostsFile=/dev/null", "-o", "ConnectTimeout=5",
-            "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3",
-            "-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no",
-            "-o", "HostKeyAlgorithms=ssh-ed25519",
+            "ssh",
+            "-F",
+            str(self.settings.setup_ssh_config or "/dev/null"),
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=yes",
+            "-o",
+            f"UserKnownHostsFile={self.known_hosts}",
+            "-o",
+            "GlobalKnownHostsFile=/dev/null",
+            "-o",
+            "ConnectTimeout=5",
+            "-o",
+            "ServerAliveInterval=10",
+            "-o",
+            "ServerAliveCountMax=3",
+            "-o",
+            "ClearAllForwardings=yes",
+            "-o",
+            "ForwardAgent=no",
+            "-o",
+            "HostKeyAlgorithms=ssh-ed25519",
         ]
         if self.settings.setup_ssh_identity:
             args += ["-i", str(self.settings.setup_ssh_identity), "-o", "IdentitiesOnly=yes"]
@@ -138,9 +157,12 @@ class SSHTransport:
     async def upload(self, node: SetupNode, archive: bytes) -> None:
         # Archive is generated exclusively from the packaged chart; no user paths.
         encoded = base64.b64encode(archive).decode()
-        await self.run(node, "mkdir -p /tmp/spark-deepseek-chart\n"
-                       f"echo {shlex.quote(encoded)} | base64 -d | "
-                       "tar xz -C /tmp/spark-deepseek-chart\n")
+        await self.run(
+            node,
+            "sudo -n install -d -m 700 /var/lib/spark-deepseek/bootstrap\n"
+            f"echo {shlex.quote(encoded)} | base64 -d | "
+            "sudo -n tar xz -C /var/lib/spark-deepseek/bootstrap\n",
+        )
 
 
 class ClusterSetupService:
@@ -187,7 +209,8 @@ class ClusterSetupService:
 
     async def state(self):
         return {
-            "mode": self.mode, "enabled": self.enabled,
+            "mode": self.mode,
+            "enabled": self.enabled,
             "sync_guide": SYNC_GUIDE,
             "jobs": self.store.list_setup_jobs(),
             "requirements": [
@@ -207,11 +230,20 @@ class ClusterSetupService:
 
     async def _discover(self, request: DiscoveryRequest):
         if self.mode == "demo":
-            return {"nodes": [{
-                "address": f"192.168.50.{10 + index}", "hostname": f"spark-{index + 1:02}",
-                "source": "demo", "fingerprint": "SHA256:" + "A" * 43,
-                "gpu": "Unverified until preflight", "ssh": True,
-            } for index in range(4)], "notes": ["Demo discovery — no network traffic sent."]}
+            return {
+                "nodes": [
+                    {
+                        "address": f"192.168.50.{10 + index}",
+                        "hostname": f"spark-{index + 1:02}",
+                        "source": "demo",
+                        "fingerprint": "SHA256:" + "A" * 43,
+                        "gpu": "Unverified until preflight",
+                        "ssh": True,
+                    }
+                    for index in range(4)
+                ],
+                "notes": ["Demo discovery — no network traffic sent."],
+            }
         candidates = {address: (address, "manual") for address in request.addresses}
         notes = []
         try:
@@ -224,7 +256,8 @@ class ClusterSetupService:
                 names.add((service_type, name))
 
             browser = AsyncServiceBrowser(
-                zeroconf.zeroconf, ["_ssh._tcp.local.", "_workstation._tcp.local."],
+                zeroconf.zeroconf,
+                ["_ssh._tcp.local.", "_workstation._tcp.local."],
                 handlers=[found],
             )
             try:
@@ -235,7 +268,8 @@ class ClusterSetupService:
                         for address in info.parsed_addresses():
                             with contextlib.suppress(ValueError):
                                 candidates[private_address(address)] = (
-                                    info.server.rstrip("."), "mDNS"
+                                    info.server.rstrip("."),
+                                    "mDNS",
                                 )
             finally:
                 await browser.async_cancel()
@@ -257,16 +291,25 @@ class ClusterSetupService:
                     await writer.wait_closed()
                     _, host_fingerprint = await self.transport.host_key(address)
                     return {
-                        "address": address, "hostname": metadata[0], "source": metadata[1],
-                        "ssh": True, "fingerprint": host_fingerprint,
+                        "address": address,
+                        "hostname": metadata[0],
+                        "source": metadata[1],
+                        "ssh": True,
+                        "fingerprint": host_fingerprint,
                         "gpu": "Unverified until preflight",
                     }
                 except (OSError, TimeoutError, SetupFailure):
                     return None
+
         nodes = await asyncio.gather(*(inspect(ip, meta) for ip, meta in candidates.items()))
-        return {"nodes": [node for node in nodes if node], "notes": notes + [
-            "SSH discovery does not prove GB10 compatibility. Verify fingerprints on the devices."
-        ]}
+        return {
+            "nodes": [node for node in nodes if node],
+            "notes": notes
+            + [
+                "SSH discovery does not prove GB10 compatibility. "
+                "Verify fingerprints on the devices."
+            ],
+        }
 
     async def preflight(self, request: SetupRequest) -> list[SetupCheck]:
         self.require_enabled()
@@ -276,104 +319,201 @@ class ClusterSetupService:
 
     async def _preflight(self, request: SetupRequest) -> list[SetupCheck]:
         if self.mode == "demo":
-            return [SetupCheck(node=node.address, code="demo", status="pass",
-                               message="Simulated GB10, fabric, SSH and storage checks")
-                    for node in request.nodes]
+            return [
+                SetupCheck(
+                    node=node.address,
+                    code="demo",
+                    status="pass",
+                    message="Simulated GB10, fabric, SSH and storage checks",
+                )
+                for node in request.nodes
+            ]
         await self.transport.trust(request.nodes)
         checks = []
         facts = {}
         probe = Path(__file__).with_name("setup_probe.py").read_text()
         for node in request.nodes:
             try:
-                data = json.loads(await self.transport.run(node, "python3 - <<'PROBE'\n"
-                                                          + probe + "\nPROBE\n"))
+                data = json.loads(
+                    await self.transport.run(node, "python3 - <<'PROBE'\n" + probe + "\nPROBE\n")
+                )
                 facts[node.address] = data
             except (SetupFailure, OSError, ValueError):
-                checks.append(SetupCheck(
-                    node=node.address, code="ssh", status="error",
-                    message="SSH key authentication or Python probe failed",
-                    remedy="Verify the host fingerprint and SSH key. Install Python 3 on DGX OS.",
-                ))
+                checks.append(
+                    SetupCheck(
+                        node=node.address,
+                        code="ssh",
+                        status="error",
+                        message="SSH key authentication or Python probe failed",
+                        remedy="Verify the host fingerprint and SSH key. "
+                        "Install Python 3 on DGX OS.",
+                    )
+                )
                 continue
-            def check(code, passed, message, remedy, automatic=False, warning=False):
-                checks.append(SetupCheck(
-                    node=node.address, code=code,
-                    status="pass" if passed else "warning" if warning or automatic else "error",
-                    message=message, remedy="" if passed else remedy, automatic=automatic and not passed,
-                ))
-            check("gb10", "GB10" in data["gpu"] and data["architecture"] == "aarch64",
-                  f"{data['gpu'] or 'GPU unavailable'} · {data['architecture']}",
-                  "Use a DGX Spark / GB10 running current DGX OS and a working NVIDIA driver.")
-            check("memory", data["memory_gib"] >= 100,
-                  f"{data['memory_gib']:.0f} GiB unified memory", "Use a 128 GiB GB10 system.")
-            check("disk", data["disk_gib"] >= 50,
-                  f"{data['disk_gib']:.0f} GiB free on /var/lib",
-                  "Free at least 50 GiB for base services; models need additional space.")
-            check("sudo", data["sudo"], "Noninteractive sudo access",
-                  "Configure a bootstrap account with sudo -n access, then retry. No passwords are stored.")
-            check("toolkit", data["toolkit"], "NVIDIA container runtime",
-                  "Install nvidia-container-toolkit from the DGX OS package repositories.", True)
-            check("ownership", not data["k3s"] or (data["managed_cluster"] == request.name
-                  and data.get("managed_role") == node.role),
-                  "Cluster ownership", "An existing unmanaged k3s installation was found. "
-                  "Use dedicated nodes or administer that cluster separately.")
-            check("clock", abs(time.time() - data["clock"]) < 60,
-                  "System clock is synchronized", "Enable NTP and correct the system clock.")
+
+            def check(
+                code, passed, message, remedy, automatic=False, warning=False, address=node.address
+            ):
+                checks.append(
+                    SetupCheck(
+                        node=address,
+                        code=code,
+                        status="pass" if passed else "warning" if warning or automatic else "error",
+                        message=message,
+                        remedy="" if passed else remedy,
+                        automatic=automatic and not passed,
+                    )
+                )
+
+            check(
+                "gb10",
+                "GB10" in data["gpu"] and data["architecture"] == "aarch64",
+                f"{data['gpu'] or 'GPU unavailable'} · {data['architecture']}",
+                "Use a DGX Spark / GB10 running current DGX OS and a working NVIDIA driver.",
+            )
+            check(
+                "memory",
+                data["memory_gib"] >= 100,
+                f"{data['memory_gib']:.0f} GiB unified memory",
+                "Use a 128 GiB GB10 system.",
+            )
+            check(
+                "disk",
+                data["disk_gib"] >= 50,
+                f"{data['disk_gib']:.0f} GiB free on /var/lib",
+                "Free at least 50 GiB for base services; models need additional space.",
+            )
+            check(
+                "sudo",
+                data["sudo"],
+                "Noninteractive sudo access",
+                "Configure a bootstrap account with sudo -n access, then retry. "
+                "No passwords are stored.",
+            )
+            check(
+                "toolkit",
+                data["toolkit"],
+                "NVIDIA container runtime",
+                "Install nvidia-container-toolkit from the DGX OS package repositories.",
+                True,
+            )
+            check(
+                "ownership",
+                not data["k3s"]
+                or (
+                    data["managed_cluster"] == request.name
+                    and data.get("managed_role") == node.role
+                ),
+                "Cluster ownership",
+                "An existing unmanaged k3s installation was found. "
+                "Use dedicated nodes or administer that cluster separately.",
+            )
+            check(
+                "clock",
+                abs(time.time() - data["clock"]) < 60,
+                "System clock is synchronized",
+                "Enable NTP and correct the system clock.",
+            )
             if len(request.nodes) > 1:
                 if not node.fabric_address:
-                    addresses = [address for iface in data["interfaces"]
-                                 if iface["up"] and iface["speed_mbps"] >= 200000
-                                 for address in iface["addresses"]]
+                    addresses = [
+                        address
+                        for iface in data["interfaces"]
+                        if iface["up"] and iface["speed_mbps"] >= 200000
+                        for address in iface["addresses"]
+                    ]
                     addresses = [address for address in addresses if _is_lan(address)]
                     if len(addresses) == 1:
                         node.fabric_address = addresses[0]
                 selected = node.fabric_address
-                active = [iface for iface in data["interfaces"] if iface["up"] and
-                          iface["speed_mbps"] >= 200000 and selected in iface["addresses"]]
-                check("fabric", bool(selected and active and data["rdma"]),
-                      "ConnectX-7 address, 200 Gbit/s link and RDMA device",
-                      "Run NVIDIA Sync > Settings > Cluster Assistant, connect supported QSFP cables, "
-                      "then enter each node's configured fabric IPv4 address.")
+                active = [
+                    iface
+                    for iface in data["interfaces"]
+                    if iface["up"]
+                    and iface["speed_mbps"] >= 200000
+                    and selected in iface["addresses"]
+                ]
+                check(
+                    "fabric",
+                    bool(selected and active and data["rdma"]),
+                    "ConnectX-7 address, 200 Gbit/s link and RDMA device",
+                    "Run NVIDIA Sync > Settings > Cluster Assistant, "
+                    "connect supported QSFP cables, "
+                    "then enter each node's configured fabric IPv4 address.",
+                )
         hostnames = [data["hostname"] for data in facts.values()]
         if len(hostnames) != len(set(hostnames)):
-            checks.append(SetupCheck(node="cluster", code="hostname", status="error",
-                                     message="Duplicate hostnames", remedy="Rename nodes uniquely."))
+            checks.append(
+                SetupCheck(
+                    node="cluster",
+                    code="hostname",
+                    status="error",
+                    message="Duplicate hostnames",
+                    remedy="Rename nodes uniquely.",
+                )
+            )
         releases = {data["dgx_release"] for data in facts.values() if data.get("dgx_release")}
         if len(releases) > 1:
-            checks.append(SetupCheck(
-                node="cluster", code="os-release", status="error", message="DGX OS releases differ",
-                remedy="Update every node to the same current DGX OS release in DGX Dashboard.",
-            ))
+            checks.append(
+                SetupCheck(
+                    node="cluster",
+                    code="os-release",
+                    status="error",
+                    message="DGX OS releases differ",
+                    remedy="Update every node to the same current DGX OS release in DGX Dashboard.",
+                )
+            )
         drivers = {data["driver"] for data in facts.values()}
         if len(drivers) > 1:
-            checks.append(SetupCheck(
-                node="cluster", code="driver", status="error", message="NVIDIA drivers differ",
-                remedy="Update all nodes to the same DGX OS / driver release using DGX Dashboard.",
-            ))
+            checks.append(
+                SetupCheck(
+                    node="cluster",
+                    code="driver",
+                    status="error",
+                    message="NVIDIA drivers differ",
+                    remedy="Update all nodes to the same DGX OS / driver release "
+                    "using DGX Dashboard.",
+                )
+            )
         if not any(check.status == "error" for check in checks) and len(request.nodes) > 1:
             for node in request.nodes:
                 peers = [peer.fabric_address for peer in request.nodes if peer != node]
-                command = "\n".join(f"ping -I {shlex.quote(node.fabric_address)} -c 2 -W 2 "
-                                    f"{shlex.quote(peer)} >/dev/null" for peer in peers)
+                command = "\n".join(
+                    f"ping -I {shlex.quote(node.fabric_address)} -c 2 -W 2 "
+                    f"{shlex.quote(peer)} >/dev/null"
+                    for peer in peers
+                )
                 try:
                     await self.transport.run(node, command, timeout=30)
-                    checks.append(SetupCheck(node=node.address, code="fabric-reachability",
-                                             status="pass", message="All peer fabric addresses reachable"))
+                    checks.append(
+                        SetupCheck(
+                            node=node.address,
+                            code="fabric-reachability",
+                            status="pass",
+                            message="All peer fabric addresses reachable",
+                        )
+                    )
                 except SetupFailure:
-                    checks.append(SetupCheck(
-                        node=node.address, code="fabric-reachability", status="error",
-                        message="A peer fabric address is unreachable",
-                        remedy="Check Sync routes, QSFP cabling, switch ports and ICMP policy.",
-                    ))
+                    checks.append(
+                        SetupCheck(
+                            node=node.address,
+                            code="fabric-reachability",
+                            status="error",
+                            message="A peer fabric address is unreachable",
+                            remedy="Check Sync routes, QSFP cabling, switch ports and ICMP policy.",
+                        )
+                    )
         return checks
 
     async def launch(self, request: SetupRequest) -> SetupJob:
         self.require_enabled()
         async with self.lock:
             self._no_active_job()
-            job = SetupJob(request=request, mode=self.mode, steps=[
-                SetupStep(id=key, label=label) for key, label in STEPS
-            ])
+            job = SetupJob(
+                request=request,
+                mode=self.mode,
+                steps=[SetupStep(id=key, label=label) for key, label in STEPS],
+            )
             self.save(job)
             self.tasks[job.id] = asyncio.create_task(self._run(job))
             return job.model_copy(deep=True)
@@ -390,7 +530,9 @@ class ClusterSetupService:
                 raise KeyError(job_id)
             self._no_active_job()
             if job.mode != self.mode or job.status not in {"blocked", "failed"}:
-                raise SetupFailure("Only an interrupted or failed setup in the same mode can resume")
+                raise SetupFailure(
+                    "Only an interrupted or failed setup in the same mode can resume"
+                )
             # Reconcile every idempotent step; never trust persisted completion as live evidence.
             for step in job.steps:
                 step.status = "pending"
@@ -400,8 +542,9 @@ class ClusterSetupService:
             return job.model_copy(deep=True)
 
     def log(self, job, message, node="cluster"):
-        job.logs.append({"timestamp": datetime.now(UTC).isoformat(),
-                         "node": node, "message": message})
+        job.logs.append(
+            {"timestamp": datetime.now(UTC).isoformat(), "node": node, "message": message}
+        )
         job.logs = job.logs[-500:]
         self.save(job)
 
@@ -427,8 +570,7 @@ class ClusterSetupService:
                 self.save(job)
             job.status = "ready"
             head = next(node for node in job.request.nodes if node.role == "head")
-            job.dashboard_url = ("#models" if self.mode == "demo" else
-                                 f"http://{head.address}:30080")
+            job.dashboard_url = "#models" if self.mode == "demo" else f"http://{head.address}:30080"
             self.log(job, "Cluster services are ready. Add a model to validate inference and NCCL.")
         except asyncio.CancelledError:
             job.status = "blocked"
@@ -443,27 +585,36 @@ class ClusterSetupService:
             if current:
                 current.status = "failed"
             # Transport output is never persisted; it may include credentials.
-            job.error = str(error) if isinstance(error, SetupFailure) else (
-                "Setup could not complete. Check node connectivity and retry this step."
+            job.error = (
+                str(error)
+                if isinstance(error, SetupFailure)
+                else ("Setup could not complete. Check node connectivity and retry this step.")
             )
             if current and job.status == "failed":
                 remedies = {
-                    "dependencies": "Check apt repository access and sudo. Retry installs the missing packages.",
-                    "head": "Check sudo journalctl -u k3s and access to get.k3s.io. Retry reconciles k3s.",
-                    "workers": "Check TCP 6443 to the head and sudo journalctl -u k3s-agent on workers.",
-                    "gpu": "Check NVIDIA container runtime and the device-plugin logs in kube-system.",
-                    "storage": "Check NFS service, export permissions and TCP 2049 between selected nodes.",
-                    "dashboard": "Check image pull access, PVC binding and pods/events in inference.",
+                    "dependencies": "Check apt and sudo access; retry repairs the packages.",
+                    "head": "Check journalctl -u k3s and access to get.k3s.io.",
+                    "workers": "Check TCP 6443 to the head and k3s-agent logs.",
+                    "gpu": "Check NVIDIA runtime and device-plugin logs.",
+                    "storage": "Check NFS service, exports and TCP 2049.",
+                    "dashboard": "Check image pulls, PVC binding and inference events.",
                     "verify": "Check dashboard/agent pod readiness, NodePort 30080 and NFS mounts.",
                 }
-                job.checks.append(SetupCheck(
-                    node="cluster", code=current.id, status="error", message=job.error,
-                    remedy=remedies.get(current.id, "Check SSH access and retry."), automatic=True,
-                ))
+                job.checks.append(
+                    SetupCheck(
+                        node="cluster",
+                        code=current.id,
+                        status="error",
+                        message=job.error,
+                        remedy=remedies.get(current.id, "Check SSH access and retry."),
+                        automatic=True,
+                    )
+                )
             self.log(job, job.error)
         finally:
             self.tasks.pop(job.id, None)
 
     async def _apply(self, job, step):
         from .setup_scripts import apply_step
+
         await apply_step(self, job, step)

@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import json
 import subprocess
@@ -17,7 +16,7 @@ from spark_deepseek.cluster_setup import (
     fingerprint,
 )
 from spark_deepseek.config import Settings
-from spark_deepseek.setup_models import DiscoveryRequest, SetupCheck, SetupRequest
+from spark_deepseek.setup_models import DiscoveryRequest, SetupRequest
 from spark_deepseek.setup_scripts import chart_archive
 from spark_deepseek.store import SnapshotStore
 
@@ -25,20 +24,36 @@ PIN = "SHA256:" + "A" * 43
 
 
 def plan(count=2):
-    return SetupRequest(name="test-cluster", topology="single" if count == 1 else "switch", nodes=[
-        {"address": f"192.168.50.{10 + index}", "username": "spark", "fingerprint": PIN,
-         "role": "head" if index == 0 else "worker"} for index in range(count)
-    ])
+    return SetupRequest(
+        name="test-cluster",
+        topology="single" if count == 1 else "switch",
+        nodes=[
+            {
+                "address": f"192.168.50.{10 + index}",
+                "username": "spark",
+                "fingerprint": PIN,
+                "role": "head" if index == 0 else "worker",
+            }
+            for index in range(count)
+        ],
+    )
 
 
 def settings(tmp_path, **kwargs):
-    return Settings(mode="live", setup_enabled=True, model_admin_token="admin-test-secret",
-                    database_path=tmp_path / "state.db", model_cache_path=tmp_path / "models",
-                    setup_state_path=tmp_path / "trust", **kwargs)
+    return Settings(
+        mode="live",
+        setup_enabled=True,
+        model_admin_token="admin-test-secret",
+        database_path=tmp_path / "state.db",
+        model_cache_path=tmp_path / "models",
+        setup_state_path=tmp_path / "trust",
+        **kwargs,
+    )
 
 
 class FakeTransport:
     """A deterministic remote boundary; never invokes SSH or modifies the system."""
+
     def __init__(self):
         self.scripts = []
         self.trusted = []
@@ -65,22 +80,45 @@ class FakeTransport:
             raise RuntimeError("sensitive-output-that-must-not-be-persisted")
         if "python3 - <<'PROBE'" in script:
             suffix = node.address.rsplit(".", 1)[-1]
-            return json.dumps({
-                "hostname": "spark-" + suffix, "architecture": self.architecture,
-                "gpu": "NVIDIA GB10", "driver": "580.0", "memory_gib": 128,
-                "available_gib": 110, "disk_gib": 1500, "sudo": self.sudo,
-                "toolkit": self.toolkit, "k3s": self.k3s, "managed_cluster": None,
-                "clock": time.time(), "rdma": self.fabric,
-                "interfaces": [{"up": True, "speed_mbps": 200000,
-                                "addresses": [f"10.10.0.{suffix}"]}],
-            })
+            return json.dumps(
+                {
+                    "hostname": "spark-" + suffix,
+                    "architecture": self.architecture,
+                    "gpu": "NVIDIA GB10",
+                    "driver": "580.0",
+                    "memory_gib": 128,
+                    "available_gib": 110,
+                    "disk_gib": 1500,
+                    "sudo": self.sudo,
+                    "toolkit": self.toolkit,
+                    "k3s": self.k3s,
+                    "managed_cluster": None,
+                    "clock": time.time(),
+                    "rdma": self.fabric,
+                    "interfaces": [
+                        {"up": True, "speed_mbps": 200000, "addresses": [f"10.10.0.{suffix}"]}
+                    ],
+                }
+            )
         if "server/node-token" in script:
             return "K10::server:private-join-token\n"
         if "kubectl get nodes -o json" in script:
-            return json.dumps({"items": [{"metadata": {"name": f"spark-{index}"}, "status": {
-                "addresses": [{"type": "InternalIP", "address": f"10.10.0.{10 + index}"}],
-                "allocatable": {"nvidia.com/gpu": str(self.gpus)},
-            }} for index in range(len(self.request.nodes))]})
+            return json.dumps(
+                {
+                    "items": [
+                        {
+                            "metadata": {"name": f"spark-{index}"},
+                            "status": {
+                                "addresses": [
+                                    {"type": "InternalIP", "address": f"10.10.0.{10 + index}"}
+                                ],
+                                "allocatable": {"nvidia.com/gpu": str(self.gpus)},
+                            },
+                        }
+                        for index in range(len(self.request.nodes))
+                    ]
+                }
+            )
         return ""
 
     async def upload(self, node, archive):
@@ -93,11 +131,17 @@ async def terminal(service, job):
     return service.store.get_setup_job(job.id)
 
 
-@pytest.mark.parametrize("payload", [
-    {"subnet": "10.0.0.0/8"}, {"subnet": "8.8.8.0/24"},
-    {"addresses": ["127.0.0.1"]}, {"addresses": ["169.254.169.254"]},
-    {"addresses": ["::1"]}, {"addresses": ["192.168.1.2;id"]},
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"subnet": "10.0.0.0/8"},
+        {"subnet": "8.8.8.0/24"},
+        {"addresses": ["127.0.0.1"]},
+        {"addresses": ["169.254.169.254"]},
+        {"addresses": ["::1"]},
+        {"addresses": ["192.168.1.2;id"]},
+    ],
+)
 def test_discovery_rejects_unsafe_or_unbounded_targets(payload):
     with pytest.raises(ValidationError):
         DiscoveryRequest(**payload)
@@ -106,8 +150,11 @@ def test_discovery_rejects_unsafe_or_unbounded_targets(payload):
 def test_topology_and_shell_inputs_are_validated():
     assert DiscoveryRequest(subnet="192.168.1.42/24").subnet == "192.168.1.0/24"
     payload = plan().model_dump()
-    for field, value in [("username", "root;id"), ("fingerprint", "anything"),
-                         ("fabric_address", "8.8.8.8")]:
+    for field, value in [
+        ("username", "root;id"),
+        ("fingerprint", "anything"),
+        ("fabric_address", "8.8.8.8"),
+    ]:
         changed = deepcopy(payload)
         changed["nodes"][0][field] = value
         with pytest.raises(ValidationError):
@@ -137,10 +184,15 @@ async def test_preflight_autodetects_fabric_and_flags_automatic_repairs(tmp_path
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("attribute,value,code", [
-    ("sudo", False, "sudo"), ("architecture", "x86_64", "gb10"),
-    ("k3s", True, "ownership"), ("fabric", False, "fabric"),
-])
+@pytest.mark.parametrize(
+    "attribute,value,code",
+    [
+        ("sudo", False, "sudo"),
+        ("architecture", "x86_64", "gb10"),
+        ("k3s", True, "ownership"),
+        ("fabric", False, "fabric"),
+    ],
+)
 async def test_preflight_blocks_unsupported_or_unmanaged_nodes(tmp_path, attribute, value, code):
     store = SnapshotStore(tmp_path / "state.db")
     remote = FakeTransport()
@@ -209,8 +261,13 @@ async def test_restart_requires_explicit_resume_and_preserves_plan(tmp_path):
     service = ClusterSetupService(settings(tmp_path), store, remote)
     # Persist the state that would remain after a process exit.
     from spark_deepseek.setup_models import SetupJob, SetupStep
-    job = SetupJob(request=plan(), mode="ssh", status="running", steps=[
-        SetupStep(id="head", label="Head", status="running")])
+
+    job = SetupJob(
+        request=plan(),
+        mode="ssh",
+        status="running",
+        steps=[SetupStep(id="head", label="Head", status="running")],
+    )
     store.save_setup_job(job)
     await service.start()
     recovered = store.get_setup_job(job.id)
@@ -224,8 +281,10 @@ async def test_restart_requires_explicit_resume_and_preserves_plan(tmp_path):
 @pytest.mark.asyncio
 async def test_changed_host_key_fails_before_trust_is_written(tmp_path, monkeypatch):
     transport = SSHTransport(settings(tmp_path))
+
     async def changed(address):
         return base64.b64encode(b"new-host-key").decode(), "SHA256:" + "B" * 43
+
     monkeypatch.setattr(transport, "host_key", changed)
     with pytest.raises(SetupFailure, match="Host key changed"):
         await transport.trust(plan().nodes)
@@ -252,8 +311,12 @@ def test_live_setup_requires_opt_in_and_admin_authentication(tmp_path):
         assert client.get("/api/v1/setup").status_code == 401
         assert client.post("/api/v1/setup/jobs/missing/resume").status_code == 401
         headers = {"Authorization": "Bearer admin-test-secret"}
-        assert client.post("/api/v1/setup/discover", headers=headers,
-                           json={"subnet": "10.0.0.0/8"}).status_code == 422
+        assert (
+            client.post(
+                "/api/v1/setup/discover", headers=headers, json={"subnet": "10.0.0.0/8"}
+            ).status_code
+            == 422
+        )
         assert client.post("/api/v1/setup/jobs/missing/resume", headers=headers).status_code == 404
     disabled = settings(tmp_path)
     disabled.setup_enabled = False
@@ -264,11 +327,17 @@ def test_live_setup_requires_opt_in_and_admin_authentication(tmp_path):
 
 
 def test_demo_wizard_end_to_end_without_network_or_ssh(tmp_path, monkeypatch):
-    config = Settings(mode="demo", database_path=tmp_path / "demo.db",
-                      model_cache_path=tmp_path / "models", openai_api_base="http://127.0.0.1:9/v1")
+    config = Settings(
+        mode="demo",
+        database_path=tmp_path / "demo.db",
+        model_cache_path=tmp_path / "models",
+        openai_api_base="http://127.0.0.1:9/v1",
+    )
     app = create_app(config)
+
     async def forbidden(*args, **kwargs):
         pytest.fail("Demo setup must not contact a real node")
+
     monkeypatch.setattr(app.state.setup_service.transport, "run", forbidden)
     monkeypatch.setattr(app.state.setup_service.transport, "trust", forbidden)
     with TestClient(app) as client:
@@ -292,6 +361,7 @@ def test_demo_wizard_end_to_end_without_network_or_ssh(tmp_path, monkeypatch):
 def test_chart_is_packaged_in_bootstrap_archive():
     import io
     import tarfile
+
     with tarfile.open(fileobj=io.BytesIO(chart_archive()), mode="r:gz") as archive:
         assert "spark-deepseek/Chart.yaml" in archive.getnames()
         assert "spark-deepseek/templates/runtime.yaml" in archive.getnames()

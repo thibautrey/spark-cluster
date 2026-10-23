@@ -27,28 +27,41 @@ if __name__ == "__main__":
             speed = int((path / "speed").read_text().strip())
         except (OSError, ValueError):
             speed = 0
-        interfaces.append({
-            "name": item["ifname"], "speed_mbps": speed,
-            "addresses": [a["local"] for a in item.get("addr_info", [])],
-            "up": item.get("operstate") == "UP",
-        })
+        interfaces.append(
+            {
+                "name": item["ifname"],
+                "speed_mbps": speed,
+                "addresses": [a["local"] for a in item.get("addr_info", [])],
+                "up": item.get("operstate") == "UP",
+            }
+        )
     memory = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines())
     marker = Path("/var/lib/spark-deepseek/cluster-name")
     role = Path("/var/lib/spark-deepseek/cluster-role")
-    print(json.dumps({
-        "hostname": socket.gethostname(), "architecture": platform.machine(),
-        "gpu": command("nvidia-smi", "--query-gpu=name", "--format=csv,noheader"),
-        "driver": command("nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"),
-        "memory_gib": int(memory["MemTotal"].split()[0]) / 1024**2,
-        "available_gib": int(memory["MemAvailable"].split()[0]) / 1024**2,
-        "disk_gib": shutil.disk_usage("/var/lib").free / 2**30,
-        "sudo": subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0,
-        "toolkit": shutil.which("nvidia-container-runtime") is not None,
-        "k3s": shutil.which("k3s") is not None,
-        "managed_cluster": marker.read_text().strip() if marker.exists() else None,
-        "managed_role": role.read_text().strip() if role.exists() else None,
-        "interfaces": interfaces, "rdma": bool(glob.glob("/sys/class/infiniband/*")),
-        "clock": time.time(), "os": platform.freedesktop_os_release().get("PRETTY_NAME", ""),
-        "dgx_release": command("cat", "/etc/dgx-release"),
-        "uid": os.getuid(), "gid": os.getgid(),
-    }))
+    print(
+        json.dumps(
+            {
+                "hostname": socket.gethostname(),
+                "architecture": platform.machine(),
+                "gpu": command("nvidia-smi", "--query-gpu=name", "--format=csv,noheader"),
+                "driver": command(
+                    "nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"
+                ),
+                "memory_gib": int(memory["MemTotal"].split()[0]) / 1024**2,
+                "available_gib": int(memory["MemAvailable"].split()[0]) / 1024**2,
+                "disk_gib": shutil.disk_usage("/var/lib").free / 2**30,
+                "sudo": subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0,
+                "toolkit": shutil.which("nvidia-container-runtime") is not None,
+                "k3s": shutil.which("k3s") is not None,
+                "managed_cluster": marker.read_text().strip() if marker.exists() else None,
+                "managed_role": role.read_text().strip() if role.exists() else None,
+                "interfaces": interfaces,
+                "rdma": bool(glob.glob("/sys/class/infiniband/*")),
+                "clock": time.time(),
+                "os": platform.freedesktop_os_release().get("PRETTY_NAME", ""),
+                "dgx_release": command("cat", "/etc/dgx-release"),
+                "uid": os.getuid(),
+                "gid": os.getgid(),
+            }
+        )
+    )

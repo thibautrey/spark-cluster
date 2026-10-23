@@ -10,9 +10,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 def private_address(value: str) -> str:
     address = ipaddress.IPv4Address(value)
-    allowed = any(address in ipaddress.ip_network(cidr) for cidr in (
-        "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"
-    ))
+    allowed = any(
+        address in ipaddress.ip_network(cidr)
+        for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+    )
     if not allowed:
         raise ValueError("Use an RFC1918 LAN IPv4 address")
     return str(address)

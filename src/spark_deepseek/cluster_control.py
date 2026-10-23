@@ -445,7 +445,7 @@ class RuntimeDeploymentService:
                             }
                         },
                         "spec": {"containers": [{"name": "engine", "env": environment}]},
-                    }
+                    },
                 }
             },
         )

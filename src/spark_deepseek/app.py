@@ -16,9 +16,8 @@ from .cluster_control import (
     RuntimeDeploymentService,
     RuntimeLogService,
 )
-from .config import Settings
 from .cluster_setup import ClusterSetupService, SetupFailure
-from .setup_models import DiscoveryRequest, SetupRequest
+from .config import Settings
 from .model_manager import (
     ModelAlreadyInstalled,
     ModelDoesNotFit,
@@ -41,6 +40,7 @@ from .models import (
     RuntimeLog,
 )
 from .prometheus import render_metrics
+from .setup_models import DiscoveryRequest, SetupRequest
 from .simulator import ClusterSimulator
 from .store import SnapshotStore
 
@@ -135,6 +135,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.exception_handler(SetupFailure)
     async def setup_failure(_, error: SetupFailure):
         from fastapi.responses import JSONResponse
+
         return JSONResponse(status_code=409, content={"detail": str(error)})
 
     @app.get("/api/v1/setup", dependencies=[Depends(require_model_token)])
@@ -150,13 +151,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         checks = await setup_service.preflight(request)
         return {"checks": checks, "nodes": request.nodes}
 
-    @app.post("/api/v1/setup/jobs", status_code=202,
-              dependencies=[Depends(require_model_token)])
+    @app.post("/api/v1/setup/jobs", status_code=202, dependencies=[Depends(require_model_token)])
     async def start_setup(request: SetupRequest):
         return await setup_service.launch(request)
 
-    @app.post("/api/v1/setup/jobs/{job_id}/resume", status_code=202,
-              dependencies=[Depends(require_model_token)])
+    @app.post(
+        "/api/v1/setup/jobs/{job_id}/resume",
+        status_code=202,
+        dependencies=[Depends(require_model_token)],
+    )
     async def resume_setup(job_id: str):
         try:
             return await setup_service.resume(job_id)
