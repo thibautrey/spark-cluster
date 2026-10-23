@@ -12,7 +12,7 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
-from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
 from .config import Settings
 from .models import (
@@ -74,6 +74,17 @@ class HuggingFaceCatalog:
             if str(getattr(item, "rfilename", "")).lower().endswith(WEIGHT_SUFFIXES)
         )
         config = dict(info.config or {})
+        try:
+            config_path = hf_hub_download(
+                repo_id=repo_id,
+                filename="config.json",
+                revision=revision,
+                token=self.token,
+            )
+            config.update(json.loads(Path(config_path).read_text()))
+        except Exception:
+            # Some repositories omit config.json; size-based planning remains available.
+            pass
         architecture = None
         architectures = config.get("architectures")
         if isinstance(architectures, list) and architectures:
@@ -378,12 +389,21 @@ class ModelManager:
             repo_id = path.name.removeprefix("models--").replace("--", "/", 1)
             if repo_id in known:
                 continue
+            snapshots = path / "snapshots"
+            weight_files = [
+                file
+                for file in snapshots.glob("**/*")
+                if file.is_file() and file.name.lower().endswith(WEIGHT_SUFFIXES)
+            ]
+            if not weight_files:
+                continue
+            unique_weight_files = {file.resolve() for file in weight_files}
             models.append(
                 LocalModel(
                     id=repo_id,
                     source="huggingface-cache",
                     path=str(path),
-                    size_bytes=directory_size(path),
+                    size_bytes=sum(file.stat().st_size for file in unique_weight_files),
                     loaded=repo_id in loaded,
                 )
             )
