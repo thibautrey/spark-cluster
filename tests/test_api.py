@@ -1,3 +1,6 @@
+import json
+import time
+
 from fastapi.testclient import TestClient
 
 from spark_deepseek.app import create_app
@@ -100,3 +103,99 @@ def test_model_mutations_can_require_separate_admin_token(tmp_path):
             json={"repo_id": "acme/model"},
         )
         assert response.status_code == 401
+
+
+def test_model_launch_and_runtime_logs_end_to_end(tmp_path):
+    model_path = tmp_path / "models" / "acme" / "tiny-model"
+    model_path.mkdir(parents=True)
+    (model_path / "config.json").write_text(
+        json.dumps(
+            {
+                "architectures": ["GPT2LMHeadModel"],
+                "n_layer": 2,
+                "n_head": 2,
+                "n_embd": 32,
+            }
+        )
+    )
+    fit = {
+        "repo_id": "acme/tiny-model",
+        "revision": "main",
+        "architecture": "GPT2LMHeadModel",
+        "parameter_count": 1000000,
+        "repository_bytes": 1000000,
+        "weight_bytes": 500000,
+        "weights_gib": 0.01,
+        "kv_cache_gib": 0.01,
+        "runtime_overhead_gib": 8,
+        "total_required_gib": 8.02,
+        "cluster_nodes": 4,
+        "usable_per_node_gib": 104.96,
+        "usable_cluster_gib": 419.84,
+        "minimum_nodes": 1,
+        "headroom_gib": 411.82,
+        "memory_fits": True,
+        "storage_available_gib": 100,
+        "storage_fits": True,
+        "fits": True,
+        "confidence": "architecture",
+        "notes": [],
+        "bits_per_weight": 4,
+        "context_length": 131072,
+        "concurrent_sequences": 1,
+    }
+    (model_path / ".spark-deepseek.json").write_text(
+        json.dumps(
+            {
+                "repo_id": "acme/tiny-model",
+                "revision": "main",
+                "downloaded_at": "2026-10-23T10:00:00+00:00",
+                "fit": fit,
+            }
+        )
+    )
+    app = create_app(
+        Settings(
+            mode="demo",
+            database_path=tmp_path / "launch.db",
+            model_cache_path=tmp_path / "models",
+            openai_api_base="http://127.0.0.1:9/v1",
+            sample_interval_seconds=0.05,
+        )
+    )
+    with TestClient(app) as client:
+        invalid = client.post(
+            "/api/v1/launches",
+            json={
+                "model_id": "acme/tiny-model",
+                "served_model_name": "too-wide",
+                "context_length": 131072,
+                "tensor_parallel": 5,
+                "pipeline_parallel": 1,
+            },
+        )
+        assert invalid.status_code == 409
+        assert "cluster currently exposes 4" in invalid.json()["detail"]
+        response = client.post(
+            "/api/v1/launches",
+            json={
+                "model_id": "acme/tiny-model",
+                "served_model_name": "tiny-model",
+                "context_length": 131072,
+                "tensor_parallel": 1,
+                "pipeline_parallel": 1,
+            },
+        )
+        assert response.status_code == 202
+        job_id = response.json()["id"]
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            launches = client.get("/api/v1/launches").json()
+            job = next(item for item in launches if item["id"] == job_id)
+            if job["status"] == "ready":
+                break
+            time.sleep(0.1)
+        assert job["status"] == "ready"
+        assert job["progress"] == 100
+        logs = client.get("/api/v1/logs?pod=control-plane").json()
+        assert any("Model is ready to serve" in entry["message"] for entry in logs)

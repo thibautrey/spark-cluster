@@ -1,6 +1,10 @@
 const $ = (id) => document.getElementById(id);
 const throughputHistory = [];
 let currentFit = null;
+let localModels = [];
+let launchFit = null;
+let logEntries = [];
+let logsPaused = false;
 
 const formatNumber = (value) => value >= 1e9 ? `${(value / 1e9).toFixed(1)}B` : value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : value >= 1e3 ? `${(value / 1e3).toFixed(1)}k` : `${Math.round(value)}`;
 const formatBytes = (value) => value >= 2 ** 30 ? `${(value / 2 ** 30).toFixed(1)} GiB` : value >= 2 ** 20 ? `${(value / 2 ** 20).toFixed(1)} MiB` : `${Math.round(value / 1024)} KiB`;
@@ -128,6 +132,8 @@ function renderEndpoint(endpoint) {
 }
 
 function renderModels(models) {
+  localModels = models;
+  updateLaunchModelOptions(models);
   $('model-count').textContent = `${models.length} model${models.length === 1 ? '' : 's'}`;
   if (!models.length) {
     $('local-models').innerHTML = '<div class="empty-state"><b>No local model found</b><span>Add one from Hugging Face.</span></div>';
@@ -139,6 +145,14 @@ function renderModels(models) {
       <div><h3>${escapeHtml(model.id)}</h3><p>${escapeHtml(model.source)} · ${formatBytes(model.size_bytes)}${model.revision ? ` · ${escapeHtml(model.revision)}` : ''}</p></div>
       <span class="model-state ${model.loaded ? 'loaded' : ''}">${model.loaded ? '● loaded' : '○ local'}</span>
     </article>`).join('');
+}
+
+function updateLaunchModelOptions(models) {
+  const select = $('launch-model');
+  const selected = select.value;
+  const managed = models.filter(model => model.source === 'managed');
+  select.innerHTML = '<option value="">Select a managed model</option>' + managed.map(model => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.id)}</option>`).join('');
+  if (managed.some(model => model.id === selected)) select.value = selected;
 }
 
 function renderDownloads(downloads) {
@@ -155,16 +169,143 @@ function renderDownloads(downloads) {
     </div>`).join('');
 }
 
+const launchStages = [
+  ['validating', 'Validate model'],
+  ['scaling-workers', 'Scale Ray workers'],
+  ['starting-runtime', 'Start vLLM runtime'],
+  ['waiting-ready', 'Wait for readiness'],
+  ['ready', 'Serve OpenAI API'],
+];
+
+function renderLaunches(launches) {
+  if (!launches.length) {
+    $('launch-status').innerHTML = '<div class="launch-empty"><span>▷</span><b>No launch in progress</b><small>Select a local model to configure the runtime.</small></div>';
+    $('launch-history').innerHTML = '';
+    return;
+  }
+  const current = launches.find(job => !['ready', 'failed'].includes(job.status)) || launches[0];
+  const activeIndex = launchStages.findIndex(([status]) => status === current.status);
+  $('launch-status').innerHTML = `
+    <div class="launch-job-head"><div><h3>${escapeHtml(current.request.served_model_name)}</h3><p>${escapeHtml(current.request.model_id)} · TP ${current.request.tensor_parallel} × PP ${current.request.pipeline_parallel} · ${Math.round(current.request.context_length / 1024)}k</p></div><span class="launch-progress-value">${current.progress.toFixed(0)}%</span></div>
+    <div class="launch-progress-bar"><i style="width:${current.progress}%"></i></div>
+    <div class="launch-steps">${launchStages.map(([status, label], index) => `<div class="launch-step ${index < activeIndex || current.status === 'ready' ? 'done' : index === activeIndex ? 'active' : ''}"><i>${index < activeIndex || current.status === 'ready' ? '✓' : index + 1}</i><span>${label}</span><span>${status === current.status ? escapeHtml(current.message) : ''}</span></div>`).join('')}</div>
+    ${current.error ? `<div class="launch-error">${escapeHtml(current.error)}</div>` : ''}`;
+  $('launch-history').innerHTML = launches.slice(0, 8).map(job => `
+    <div class="launch-history-row"><b>${escapeHtml(job.request.served_model_name)}</b><span>${new Date(job.created_at).toLocaleTimeString()}</span><span class="${job.status}">${escapeHtml(job.status)}</span><span>${job.status === 'failed' ? `<button class="launch-retry" data-launch-id="${escapeHtml(job.id)}">Retry</button>` : escapeHtml(job.message)}</span></div>`).join('');
+}
+
+function launchPayload() {
+  return {
+    model_id: $('launch-model').value,
+    served_model_name: $('served-model-name').value.trim(),
+    bits_per_weight: Number($('launch-bits').value),
+    context_length: Number($('launch-context').value),
+    concurrent_sequences: 1,
+    tensor_parallel: Number($('tensor-parallel').value),
+    pipeline_parallel: Number($('pipeline-parallel').value),
+    gpu_memory_utilization: Number($('gpu-memory-utilization').value),
+  };
+}
+
+function launchAuthHeaders() {
+  const token = $('launch-admin-token').value.trim();
+  return token ? {Authorization: `Bearer ${token}`} : {};
+}
+
+async function checkLaunchFit() {
+  if (!$('launch-model').value) {
+    launchFit = null;
+    $('launch-model-button').disabled = true;
+    $('launch-fit').className = 'fit-result neutral';
+    $('launch-fit').innerHTML = '<span class="fit-symbol">?</span><div><b>Select a model</b><small>The launch is revalidated against current cluster capacity.</small></div>';
+    return;
+  }
+  const payload = launchPayload();
+  try {
+    launchFit = await api('/api/v1/models/fit-local', {method: 'POST', body: JSON.stringify({repo_id: payload.model_id, bits_per_weight: payload.bits_per_weight, context_length: payload.context_length, concurrent_sequences: payload.concurrent_sequences})});
+    const requestedNodes = payload.tensor_parallel * payload.pipeline_parallel;
+    const parallelFits = requestedNodes >= launchFit.minimum_nodes && requestedNodes <= launchFit.cluster_nodes;
+    const canLaunch = launchFit.memory_fits && parallelFits;
+    $('launch-fit').className = `fit-result ${canLaunch ? 'fit' : 'no-fit'}`;
+    $('launch-fit').innerHTML = `<span class="fit-symbol">${canLaunch ? '✓' : '!'}</span><div><b>${canLaunch ? 'Ready to launch' : !launchFit.memory_fits ? 'Insufficient cluster memory' : 'Adjust runtime parallelism'}</b><small>${launchFit.total_required_gib.toFixed(1)} GiB required · ${launchFit.minimum_nodes} nodes minimum · ${requestedNodes} selected of ${launchFit.cluster_nodes} available · ${launchFit.headroom_gib.toFixed(1)} GiB headroom</small></div>`;
+    launchFit.parallel_fits = parallelFits;
+    $('launch-model-button').disabled = !canLaunch || !payload.served_model_name;
+  } catch (error) {
+    launchFit = null;
+    $('launch-model-button').disabled = true;
+    $('launch-fit').className = 'fit-result no-fit';
+    $('launch-fit').innerHTML = `<span class="fit-symbol">!</span><div><b>Launch validation failed</b><small>${escapeHtml(error.message)}</small></div>`;
+  }
+}
+
+function renderLogLines() {
+  const instance = $('log-instance').value;
+  const level = $('log-level').value;
+  const visible = logEntries.filter(entry => (!instance || entry.pod === instance) && (!level || entry.level === level));
+  $('log-count').textContent = `${visible.length} line${visible.length === 1 ? '' : 's'}`;
+  if (!visible.length) {
+    $('log-terminal').innerHTML = '<div class="log-empty">No log matches the current filters.</div>';
+    return;
+  }
+  $('log-terminal').innerHTML = visible.slice(-1000).map(entry => `
+    <div class="log-line ${entry.level}"><time>${new Date(entry.timestamp).toLocaleTimeString([], {hour12: false})}</time><span class="log-source" title="${escapeHtml(entry.pod)} / ${escapeHtml(entry.container)}">${escapeHtml(entry.pod)}</span><span class="log-level">${escapeHtml(entry.level)}</span><span class="log-message">${escapeHtml(entry.message)}</span></div>`).join('');
+  if (!logsPaused) $('log-terminal').scrollTop = $('log-terminal').scrollHeight;
+}
+
+function updateLogInstances(instances) {
+  const select = $('log-instance');
+  const selected = select.value;
+  select.innerHTML = '<option value="">All instances</option>' + instances.map(instance => `<option value="${escapeHtml(instance)}">${escapeHtml(instance)}</option>`).join('');
+  if (instances.includes(selected)) select.value = selected;
+}
+
+function addLogInstance(instance) {
+  const select = $('log-instance');
+  if ([...select.options].some(option => option.value === instance)) return;
+  const option = document.createElement('option');
+  option.value = instance;
+  option.textContent = instance;
+  select.appendChild(option);
+}
+
+async function loadLogHistory() {
+  try {
+    const [entries, instances] = await Promise.all([api('/api/v1/logs?limit=1000'), api('/api/v1/logs/instances')]);
+    logEntries = entries;
+    updateLogInstances(instances);
+    renderLogLines();
+  } catch (error) {
+    $('log-terminal').innerHTML = `<div class="log-empty">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function connectLogs() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const socket = new WebSocket(`${protocol}//${location.host}/api/v1/logs/stream`);
+  socket.onmessage = event => {
+    const entry = JSON.parse(event.data);
+    logEntries.push(entry);
+    addLogInstance(entry.pod);
+    if (logEntries.length > 2000) logEntries.shift();
+    if (!logsPaused) renderLogLines();
+  };
+  socket.onclose = () => setTimeout(connectLogs, 1500);
+}
+
 async function refreshLibrary() {
   try {
-    const [endpoint, models, downloads] = await Promise.all([
+    const [endpoint, models, downloads, launches, health] = await Promise.all([
       api('/api/v1/runtime'),
       api('/api/v1/models'),
       api('/api/v1/downloads'),
+      api('/api/v1/launches'),
+      api('/healthz'),
     ]);
     renderEndpoint(endpoint);
     renderModels(models);
     renderDownloads(downloads);
+    renderLaunches(launches);
+    $('launch-mode').textContent = health.runtime_control_mode;
   } catch (error) {
     $('api-status').textContent = 'control plane error';
     $('api-status').className = 'pill unreachable';
@@ -264,6 +405,59 @@ $('download-list').addEventListener('click', async event => {
   }
 });
 
+$('launch-model').addEventListener('change', () => {
+  const model = localModels.find(item => item.id === $('launch-model').value);
+  if (model) $('served-model-name').value = model.id.split('/').pop().toLowerCase();
+  checkLaunchFit();
+});
+['served-model-name', 'launch-context', 'launch-bits', 'tensor-parallel', 'pipeline-parallel', 'gpu-memory-utilization'].forEach(id => {
+  $(id).addEventListener('change', checkLaunchFit);
+});
+$('served-model-name').addEventListener('input', () => {
+  $('launch-model-button').disabled = !launchFit?.memory_fits || !launchFit?.parallel_fits || !$('served-model-name').value.trim();
+});
+$('launch-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!launchFit?.memory_fits || !launchFit?.parallel_fits) return;
+  $('launch-model-button').disabled = true;
+  $('launch-model-button').textContent = 'Launching…';
+  try {
+    await api('/api/v1/launches', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify(launchPayload())});
+    $('launch-model-button').textContent = 'Launch queued';
+    await refreshLibrary();
+  } catch (error) {
+    $('launch-fit').className = 'fit-result no-fit';
+    $('launch-fit').innerHTML = `<span class="fit-symbol">!</span><div><b>Launch failed</b><small>${escapeHtml(error.message)}</small></div>`;
+    $('launch-model-button').textContent = 'Launch on cluster';
+    $('launch-model-button').disabled = false;
+  }
+});
+$('launch-history').addEventListener('click', async event => {
+  const button = event.target.closest('[data-launch-id]');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    await api(`/api/v1/launches/${button.dataset.launchId}/retry`, {method: 'POST', headers: launchAuthHeaders()});
+    await refreshLibrary();
+  } catch (error) {
+    button.textContent = error.message;
+  }
+});
+$('log-instance').addEventListener('change', renderLogLines);
+$('log-level').addEventListener('change', renderLogLines);
+$('pause-logs').addEventListener('click', () => {
+  logsPaused = !logsPaused;
+  $('pause-logs').classList.toggle('active', logsPaused);
+  $('pause-logs').textContent = logsPaused ? 'Resume' : 'Pause';
+  if (!logsPaused) renderLogLines();
+});
+$('clear-logs').addEventListener('click', () => {
+  logEntries = [];
+  renderLogLines();
+});
+
 connect();
+connectLogs();
+loadLogHistory();
 refreshLibrary();
 setInterval(refreshLibrary, 2000);

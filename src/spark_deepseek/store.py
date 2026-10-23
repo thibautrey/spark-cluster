@@ -4,7 +4,7 @@ import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from .models import ClusterSnapshot, DownloadJob
+from .models import ClusterSnapshot, DownloadJob, ModelLaunchJob, RuntimeLog
 
 
 class SnapshotStore:
@@ -20,6 +20,17 @@ class SnapshotStore:
         self._connection.execute(
             "CREATE TABLE IF NOT EXISTS model_downloads "
             "(id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+        )
+        self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS runtime_logs "
+            "(id TEXT PRIMARY KEY, timestamp TEXT NOT NULL, pod TEXT NOT NULL, "
+            "container TEXT NOT NULL, level TEXT NOT NULL, payload TEXT NOT NULL)"
+        )
+        self._connection.execute(
+            "CREATE INDEX IF NOT EXISTS runtime_logs_timestamp ON runtime_logs(timestamp DESC)"
+        )
+        self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS model_launches (id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
         )
         self._connection.commit()
 
@@ -85,6 +96,87 @@ class SnapshotStore:
                 job.error = None
                 job.updated_at = datetime.now(UTC)
                 self.save_download(job)
+                recovered.append(job)
+        return recovered
+
+    def append_runtime_log(self, entry: RuntimeLog) -> None:
+        with self._lock:
+            self._connection.execute(
+                "INSERT OR IGNORE INTO runtime_logs"
+                "(id, timestamp, pod, container, level, payload) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    entry.id,
+                    entry.timestamp.isoformat(),
+                    entry.pod,
+                    entry.container,
+                    entry.level,
+                    entry.model_dump_json(),
+                ),
+            )
+            self._connection.commit()
+
+    def list_runtime_logs(
+        self, limit: int = 500, pod: str | None = None, level: str | None = None
+    ) -> list[RuntimeLog]:
+        clauses: list[str] = []
+        parameters: list[str | int] = []
+        if pod:
+            clauses.append("pod = ?")
+            parameters.append(pod)
+        if level:
+            clauses.append("level = ?")
+            parameters.append(level)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        parameters.append(limit)
+        with self._lock:
+            rows = self._connection.execute(
+                f"SELECT payload FROM runtime_logs {where} ORDER BY timestamp DESC LIMIT ?",
+                parameters,
+            ).fetchall()
+        return [RuntimeLog.model_validate_json(row[0]) for row in reversed(rows)]
+
+    def prune_runtime_logs(self, keep: int) -> None:
+        with self._lock:
+            self._connection.execute(
+                "DELETE FROM runtime_logs WHERE id NOT IN "
+                "(SELECT id FROM runtime_logs ORDER BY timestamp DESC LIMIT ?)",
+                (keep,),
+            )
+            self._connection.commit()
+
+    def save_launch(self, job: ModelLaunchJob) -> None:
+        with self._lock:
+            self._connection.execute(
+                "INSERT OR REPLACE INTO model_launches(id, payload) VALUES (?, ?)",
+                (job.id, job.model_dump_json()),
+            )
+            self._connection.commit()
+
+    def get_launch(self, job_id: str) -> ModelLaunchJob | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT payload FROM model_launches WHERE id = ?", (job_id,)
+            ).fetchone()
+        return ModelLaunchJob.model_validate_json(row[0]) if row else None
+
+    def list_launches(self, limit: int = 50) -> list[ModelLaunchJob]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT payload FROM model_launches "
+                "ORDER BY json_extract(payload, '$.created_at') DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [ModelLaunchJob.model_validate_json(row[0]) for row in rows]
+
+    def recover_launches(self) -> list[ModelLaunchJob]:
+        recovered: list[ModelLaunchJob] = []
+        for job in self.list_launches():
+            if job.status not in {"ready", "failed"}:
+                job.status = "queued"
+                job.message = "Recovered after control-plane restart"
+                job.error = None
+                job.updated_at = datetime.now(UTC)
+                self.save_launch(job)
                 recovered.append(job)
         return recovered
 

@@ -6,6 +6,8 @@ image:
 controlPlane:
   replicas: 1
   mode: live
+  runtimeLogsMode: auto
+  runtimeControlMode: auto
   service:
     type: ClusterIP
     port: 8080

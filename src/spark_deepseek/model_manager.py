@@ -224,6 +224,9 @@ def build_fit_plan(
         fits=memory_fits and storage_fits,
         confidence=confidence,
         notes=notes,
+        bits_per_weight=request.bits_per_weight,
+        context_length=request.context_length,
+        concurrent_sequences=request.concurrent_sequences,
     )
 
 
@@ -261,6 +264,39 @@ class ModelManager:
         return await asyncio.to_thread(
             build_fit_plan, request, metadata, self.runtime.latest, self.settings
         )
+
+    async def fit_for_local(self, request: ModelFitRequest) -> ModelFitPlan:
+        parts = safe_repo_parts(request.repo_id)
+        model_path = self.settings.model_cache_path.joinpath(*parts)
+        manifest_path = model_path / ".spark-deepseek.json"
+        if not manifest_path.exists():
+            return await self.fit(request)
+
+        def local_metadata() -> RepositoryMetadata:
+            manifest = json.loads(manifest_path.read_text())
+            previous = ModelFitPlan.model_validate(manifest["fit"])
+            config_path = model_path / "config.json"
+            config = json.loads(config_path.read_text()) if config_path.exists() else {}
+            return RepositoryMetadata(
+                repo_id=request.repo_id,
+                revision=request.revision,
+                repository_bytes=previous.repository_bytes,
+                weight_bytes=previous.weight_bytes,
+                parameter_count=previous.parameter_count,
+                architecture=previous.architecture,
+                config=config,
+            )
+
+        metadata = await asyncio.to_thread(local_metadata)
+        return await asyncio.to_thread(
+            build_fit_plan, request, metadata, self.runtime.latest, self.settings
+        )
+
+    async def managed_model(self, model_id: str) -> LocalModel | None:
+        for model in await asyncio.to_thread(self._scan_managed_models, set()):
+            if model.id == model_id:
+                return model
+        return None
 
     async def enqueue(self, request: ModelDownloadRequest) -> DownloadJob:
         fit = await self.fit(request)

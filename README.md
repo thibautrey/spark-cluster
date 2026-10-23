@@ -20,6 +20,9 @@ cache storage, per-node telemetry, capacity planning, and a live cluster dashboa
   and automatically resume interrupted transfers.
 - **OpenAI endpoint discovery** — display and copy the configured `/v1` endpoint and show models that
   are currently loaded by the inference runtime.
+- **Runtime log console** — stream, filter, and retain logs from every vLLM head and Ray worker.
+- **Model launcher** — select a managed model, revalidate capacity, scale workers, roll the vLLM head,
+  and follow readiness from the dashboard.
 
 The dashboard is responsive and has no frontend build step. The control plane stores a bounded history
 in SQLite WAL mode and exposes the same snapshot used by the UI through `/api/v1/snapshot`.
@@ -60,6 +63,26 @@ dashboard accepts it in the model form and keeps it in the page only.
 
 Managed models are stored under `SPARK_DEEPSEEK_MODEL_CACHE_PATH` and are listed alongside models found
 in the standard Hugging Face cache and models reported by the live OpenAI-compatible runtime.
+
+## Runtime logs and model launches
+
+The log console reads the Kubernetes pod log API for every container matching the runtime label
+selector. It persists a bounded history in SQLite, streams new entries over WebSocket, infers log
+levels, and filters by instance and severity. Pausing or clearing the view only affects the browser;
+the retained cluster history stays intact.
+
+The launch screen accepts only models in the managed shared cache. Before launch, it recalculates the
+fit from the local manifest and `config.json`, so it works without another Hugging Face lookup. A launch
+then:
+
+1. scales the Ray worker StatefulSet to match tensor × pipeline parallelism;
+2. applies the model path, served name, context, parallelism, and memory target to the vLLM head;
+3. performs a `Recreate` rollout so the existing head releases its GPU;
+4. waits for all workers and the vLLM `/health` readiness probe;
+5. records every stage and exposes retryable failures in the dashboard.
+
+Queued launches are recovered after a control-plane restart. Kubernetes operations use a namespace
+Role restricted to reading pod logs and patching only the named runtime Deployment and StatefulSet.
 
 ## Quick start
 
@@ -166,6 +189,12 @@ not in the dashboard.
 | `POST /api/v1/models/download` | Queue a resumable model download |
 | `GET /api/v1/downloads` | Download progress, attempts, and errors |
 | `POST /api/v1/downloads/{id}/retry` | Resume a failed download job |
+| `GET /api/v1/logs` | Filtered persisted runtime log history |
+| `GET /api/v1/logs/instances` | Runtime instances available to the log console |
+| `WS /api/v1/logs/stream` | Live structured runtime logs |
+| `GET /api/v1/launches` | Model launch history and rollout progress |
+| `POST /api/v1/launches` | Validate and launch a managed model |
+| `POST /api/v1/launches/{id}/retry` | Retry a failed rollout |
 | `WS /api/v1/stream` | Live dashboard updates |
 | `GET /metrics` | Prometheus exposition |
 
@@ -191,6 +220,10 @@ All control-plane settings use the `SPARK_DEEPSEEK_` prefix:
 | `MODEL_ADMIN_TOKEN` | unset | Bearer token required for download and retry actions |
 | `HF_DOWNLOAD_WORKERS` | `4` | Parallel Hugging Face file transfers per job |
 | `MODEL_USABLE_MEMORY_FRACTION` | `0.82` | Per-node memory envelope used by fit checks |
+| `RUNTIME_LOGS_MODE` | `auto` | `kubernetes`, `demo`, or automatic detection |
+| `RUNTIME_CONTROL_MODE` | `auto` | `kubernetes`, `demo`, or automatic detection |
+| `RUNTIME_LOG_RETENTION` | `10000` | Maximum persisted runtime log lines |
+| `RUNTIME_POD_SELECTOR` | runtime label | Kubernetes selector used by the log collector |
 
 ## Development
 

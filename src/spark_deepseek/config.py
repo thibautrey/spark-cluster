@@ -29,6 +29,17 @@ class Settings(BaseSettings):
     model_usable_memory_fraction: float = 0.82
     fallback_node_count: int = 1
     fallback_node_memory_gib: float = 128
+    runtime_logs_mode: str = "auto"
+    runtime_control_mode: str = "auto"
+    runtime_log_poll_seconds: float = 2
+    runtime_log_retention: int = 10_000
+    kubernetes_namespace: str = "inference"
+    kubernetes_api_url: str | None = None
+    kubernetes_token_path: Path = Path("/var/run/secrets/kubernetes.io/serviceaccount/token")
+    kubernetes_ca_path: Path = Path("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+    runtime_pod_selector: str = "app.kubernetes.io/name=spark-deepseek-runtime"
+    runtime_head_deployment: str = "spark-deepseek-runtime-head"
+    runtime_worker_statefulset: str = "spark-deepseek-runtime-worker"
 
     @property
     def cors_origin_list(self) -> list[str]:

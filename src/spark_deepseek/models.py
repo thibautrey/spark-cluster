@@ -121,6 +121,9 @@ class ModelFitPlan(BaseModel):
     fits: bool
     confidence: Literal["architecture", "parameters", "repository"]
     notes: list[str] = Field(default_factory=list)
+    bits_per_weight: float = 4
+    context_length: int = 131072
+    concurrent_sequences: int = 1
 
 
 class ModelDownloadRequest(ModelFitRequest):
@@ -163,3 +166,51 @@ class RuntimeEndpoint(BaseModel):
     chat_completions_url: str
     status: Literal["ready", "unreachable"]
     loaded_model_ids: list[str] = Field(default_factory=list)
+
+
+LogLevel = Literal["debug", "info", "warning", "error"]
+
+
+class RuntimeLog(BaseModel):
+    id: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    pod: str
+    container: str
+    level: LogLevel = "info"
+    message: str
+
+
+LaunchStatus = Literal[
+    "queued",
+    "validating",
+    "scaling-workers",
+    "starting-runtime",
+    "waiting-ready",
+    "ready",
+    "failed",
+]
+
+
+class ModelLaunchRequest(BaseModel):
+    model_id: str = Field(min_length=1, max_length=200)
+    served_model_name: str = Field(min_length=1, max_length=100)
+    bits_per_weight: float = Field(default=4, gt=0, le=32)
+    context_length: int = Field(default=131072, gt=0, le=1_048_576)
+    concurrent_sequences: int = Field(default=1, gt=0, le=1024)
+    tensor_parallel: int = Field(default=1, gt=0, le=64)
+    pipeline_parallel: int = Field(default=1, gt=0, le=64)
+    gpu_memory_utilization: float = Field(default=0.82, gt=0, lt=1)
+
+
+class ModelLaunchJob(BaseModel):
+    id: str
+    request: ModelLaunchRequest
+    model_path: str
+    status: LaunchStatus = "queued"
+    progress: float = Field(default=0, ge=0, le=100)
+    message: str = "Queued"
+    fit: ModelFitPlan
+    error: str | None = None
+    attempts: int = 0
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

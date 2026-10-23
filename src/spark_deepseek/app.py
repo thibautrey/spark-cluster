@@ -10,6 +10,12 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from .capacity import calculate_capacity
+from .cluster_control import (
+    InvalidParallelism,
+    ModelNotManaged,
+    RuntimeDeploymentService,
+    RuntimeLogService,
+)
 from .config import Settings
 from .model_manager import (
     ModelAlreadyInstalled,
@@ -25,9 +31,12 @@ from .models import (
     ModelDownloadRequest,
     ModelFitPlan,
     ModelFitRequest,
+    ModelLaunchJob,
+    ModelLaunchRequest,
     ModelRuntime,
     NodeSnapshot,
     RuntimeEndpoint,
+    RuntimeLog,
 )
 from .prometheus import render_metrics
 from .simulator import ClusterSimulator
@@ -75,18 +84,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     runtime = Runtime(settings)
     model_manager = ModelManager(settings, runtime.store, runtime)
+    log_service = RuntimeLogService(settings, runtime.store)
+    deployment_service = RuntimeDeploymentService(
+        settings, runtime.store, model_manager, log_service
+    )
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await runtime.start()
         await model_manager.start()
+        await log_service.start()
+        await deployment_service.start()
         yield
+        await deployment_service.stop()
+        await log_service.stop()
         await model_manager.stop()
         await runtime.stop()
 
     app = FastAPI(title=settings.title, version="0.1.0", lifespan=lifespan)
     app.state.runtime = runtime
     app.state.model_manager = model_manager
+    app.state.log_service = log_service
+    app.state.deployment_service = deployment_service
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
@@ -113,7 +132,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/healthz")
     async def health() -> dict:
-        return {"status": "ok", "mode": settings.mode, "has_snapshot": runtime.latest is not None}
+        return {
+            "status": "ok",
+            "mode": settings.mode,
+            "logs_mode": log_service.mode,
+            "runtime_control_mode": deployment_service.mode,
+            "has_snapshot": runtime.latest is not None,
+        }
 
     @app.get("/api/v1/snapshot", response_model=ClusterSnapshot)
     async def snapshot() -> ClusterSnapshot:
@@ -192,6 +217,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail=f"Hugging Face metadata lookup failed: {model_manager.safe_error(error)}",
             ) from error
 
+    @app.post("/api/v1/models/fit-local", response_model=ModelFitPlan)
+    async def local_model_fit(request: ModelFitRequest) -> ModelFitPlan:
+        try:
+            return await model_manager.fit_for_local(request)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except Exception as error:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Local model metadata is unavailable: {model_manager.safe_error(error)}",
+            ) from error
+
     @app.post(
         "/api/v1/models/download",
         response_model=DownloadJob,
@@ -231,6 +268,52 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Download job not found") from error
 
+    @app.get("/api/v1/logs", response_model=list[RuntimeLog])
+    async def runtime_logs(
+        limit: int = Query(default=500, ge=1, le=5000),
+        pod: str | None = None,
+        level: str | None = None,
+    ) -> list[RuntimeLog]:
+        return await log_service.history(limit=limit, pod=pod, level=level)
+
+    @app.get("/api/v1/logs/instances", response_model=list[str])
+    async def log_instances() -> list[str]:
+        return await log_service.instances()
+
+    @app.get("/api/v1/launches", response_model=list[ModelLaunchJob])
+    async def launches() -> list[ModelLaunchJob]:
+        return await deployment_service.launches()
+
+    @app.post(
+        "/api/v1/launches",
+        response_model=ModelLaunchJob,
+        status_code=202,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def launch_model(request: ModelLaunchRequest) -> ModelLaunchJob:
+        try:
+            return await deployment_service.launch(request)
+        except ModelNotManaged as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ModelDoesNotFit as error:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": str(error), "fit": error.fit.model_dump(mode="json")},
+            ) from error
+        except InvalidParallelism as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.post(
+        "/api/v1/launches/{job_id}/retry",
+        response_model=ModelLaunchJob,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def retry_launch(job_id: str) -> ModelLaunchJob:
+        try:
+            return await deployment_service.retry(job_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Launch job not found") from error
+
     @app.get("/metrics", response_class=PlainTextResponse)
     async def metrics() -> str:
         if runtime.latest is None:
@@ -252,6 +335,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             pass
         finally:
             runtime.subscribers.discard(queue)
+
+    @app.websocket("/api/v1/logs/stream")
+    async def stream_logs(websocket: WebSocket) -> None:
+        await websocket.accept()
+        queue: asyncio.Queue[RuntimeLog] = asyncio.Queue(maxsize=200)
+        log_service.subscribers.add(queue)
+        try:
+            while True:
+                entry = await queue.get()
+                await websocket.send_json(entry.model_dump(mode="json"))
+        except WebSocketDisconnect:
+            pass
+        finally:
+            log_service.subscribers.discard(queue)
 
     return app
 
