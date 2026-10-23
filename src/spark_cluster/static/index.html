@@ -141,6 +141,13 @@
               <div><p class="eyebrow"><i></i>ACTIVE DOWNLOADS</p><h3 id="active-download-title">Downloading models</h3></div>
               <span id="active-download-count">0 active</span>
             </div>
+            <form id="hf-token-form" class="hf-token-form" hidden>
+              <div><b>Download with your Hugging Face account</b><p>A read token gives you higher request limits and can reduce throttling. Transfer speed still depends on the network and storage.</p><a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer">Create a read token ↗</a></div>
+              <div class="hf-token-fields"><label>Hugging Face token<input id="hf-download-token" type="password" autocomplete="off" placeholder="hf_…" required /></label><label id="hf-token-admin-label" hidden>Controller admin token<input id="hf-token-admin" type="password" autocomplete="off" /></label><button type="submit" id="hf-token-save">Save &amp; resume downloads</button></div>
+              <small>Stored on this controller. Active Hub downloads restart with the new token and preserve downloaded files. Paused downloads stay paused.</small>
+              <p id="hf-token-message" role="status"></p>
+            </form>
+            <p id="hf-token-saved" role="status" hidden></p>
             <div class="active-download-list" id="active-download-list"></div>
           </section>
           <div class="catalog-toolbar">

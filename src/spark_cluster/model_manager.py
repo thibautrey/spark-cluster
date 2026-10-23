@@ -1061,6 +1061,34 @@ class ModelManager:
             message="Model removed from the controller and all attached cluster storage",
         )
 
+    async def refresh_huggingface_token(self, token: str) -> list[str]:
+        """Replace credentials and restart HF workers without removing partial files."""
+        self.settings.hf_token = token
+        self.catalog.token = token
+        if isinstance(self.catalog, HuggingFaceCatalog):
+            self.catalog.api.token = token
+        restarted = []
+        for job in await self.downloads():
+            if job.source != "huggingface" or job.status not in {
+                "resolving",
+                "downloading",
+                "paused",
+            }:
+                continue
+            was_paused = job.status == "paused"
+            if not was_paused:
+                await self.pause(job.id)
+            # SIGCONT alone would keep the old process environment and old token.
+            task = self._active_tasks.get(job.id)
+            if task and not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            if not was_paused:
+                await self.resume(job.id)
+                restarted.append(job.id)
+        return restarted
+
     async def downloads(self) -> list[DownloadJob]:
         return await asyncio.to_thread(self.store.list_downloads)
 

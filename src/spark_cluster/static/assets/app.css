@@ -247,3 +247,5 @@ body.bottom-sheet-open{overflow:hidden}
 .cluster-card-meta{display:flex;gap:6px;flex-wrap:wrap}.cluster-card-meta span{padding:4px 6px;border-radius:4px;background:#17241e;color:#90a79a;font-size:8px}
 .cluster-card button{justify-self:start;padding:7px 10px}
 @media(max-width:700px){.cluster-switch select{min-width:130px}.cluster-fleet-head{align-items:flex-start;flex-direction:column}}
+
+.hf-token-form{margin:12px 0 18px;padding:18px;border:1px solid #486047;border-radius:12px;background:#142019;display:grid;gap:12px}.hf-token-form[hidden]{display:none}.hf-token-form p,.hf-token-form small{color:var(--muted);line-height:1.6;margin:6px 0}.hf-token-form a{color:var(--green)}.hf-token-fields{display:flex;align-items:end;gap:12px;flex-wrap:wrap}.hf-token-fields label{flex:1;min-width:200px}.hf-token-fields input{width:100%}.hf-token-fields button{white-space:nowrap}.hf-token-fields label[hidden]{display:none}#hf-token-message:empty{display:none}#hf-token-saved{color:var(--green);line-height:1.6}

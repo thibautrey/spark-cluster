@@ -401,3 +401,20 @@ Generic client configuration:
 ```
 
 For administrative access, configure an `Authorization` header through the client's secret mechanism. Do not commit the token to a repository or client configuration file.
+
+### Hugging Face account for downloads
+
+While a Hub download is queued or running without a configured token, the model
+library offers a password field to save a Hugging Face read token. The controller
+validates it with Hugging Face and stores it in its persistent setup-state volume
+with owner-only permissions. Saving requires the controller administration token
+when authentication is enabled. Credentials are never returned by the API.
+
+Active Hub workers restart with the new credentials and reuse their partial files;
+queued downloads use the token when they start, paused downloads remain paused,
+and LAN distribution is unaffected. The form disappears after a successful save.
+
+Authentication provides account-based request quotas and may reduce throttling.
+It does not guarantee higher transfer throughput: bandwidth, Hub/CDN conditions,
+Xet reconstruction and destination storage still matter. See the
+[Hugging Face rate-limit reference](https://huggingface.co/docs/hub/rate-limits).

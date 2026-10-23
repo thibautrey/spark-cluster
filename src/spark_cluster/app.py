@@ -29,6 +29,7 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 
+from . import hf_credentials
 from .capacity import calculate_capacity
 from .catalog import (
     CatalogDetail,
@@ -145,6 +146,7 @@ class Runtime:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
+    hf_credentials.load_token(settings)
     if settings.remote_cluster_url:
         settings.remote_cluster_url = validated_cluster_url(settings.remote_cluster_url)
     cluster_registry = ClusterRegistry(settings)
@@ -911,6 +913,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/logs/instances", response_model=list[str])
     async def log_instances() -> list[str]:
         return await log_service.instances()
+
+    hf_token_lock = asyncio.Lock()
+
+    @app.get("/api/v1/controller/huggingface")
+    async def huggingface_status() -> dict:
+        return {
+            "configured": bool(settings.hf_token),
+            "requires_admin": bool(settings.model_admin_token),
+        }
+
+    @app.put(
+        "/api/v1/controller/huggingface",
+        dependencies=[Depends(require_model_token)],
+    )
+    async def configure_huggingface(request: hf_credentials.HuggingFaceTokenRequest) -> dict:
+        token = request.token.get_secret_value().strip()
+        async with hf_token_lock:
+            try:
+                await hf_credentials.validate_token(token)
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail=str(error)) from None
+            except RuntimeError as error:
+                raise HTTPException(status_code=502, detail=str(error)) from None
+            await asyncio.to_thread(hf_credentials.save_token, settings, token)
+            browser.token = token
+            restarted = await model_manager.refresh_huggingface_token(token)
+        return {"configured": True, "restarted_downloads": restarted}
 
     @app.get("/api/v1/launches", response_model=list[ModelLaunchJob])
     async def launches() -> list[ModelLaunchJob]:

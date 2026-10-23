@@ -16,6 +16,9 @@ let runtimeInstallJob = null;
 let runtimeInstallTimer = null;
 let pendingLaunchPayload = null;
 let runtimeTerminalSocket = null;
+let hfTokenStatus = null;
+let hfTokenSaving = false;
+let latestDownloads = [];
 let clusterState = {clusters: [], active_cluster_id: null};
 
 const formatNumber = (value) => value >= 1e9 ? `${(value / 1e9).toFixed(1)}B` : value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : value >= 1e3 ? `${(value / 1e3).toFixed(1)}k` : `${Math.round(value)}`;
@@ -231,7 +234,45 @@ function formatDuration(seconds) {
   return `${Math.ceil(seconds / 86400)} days`;
 }
 
+function renderHuggingFacePrompt() {
+  const downloading = latestDownloads.some(job => job.source === 'huggingface' && ['queued', 'resolving', 'downloading'].includes(job.status));
+  $('hf-token-form').hidden = !downloading || !hfTokenStatus || hfTokenStatus.configured;
+  $('hf-token-admin-label').hidden = !hfTokenStatus?.requires_admin || Boolean(Object.keys(clusterAuthHeaders()).length);
+}
+
+$('hf-token-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (hfTokenSaving) return;
+  hfTokenSaving = true;
+  $('hf-token-save').disabled = true;
+  $('hf-token-message').textContent = 'Validating token and restarting active downloads…';
+  try {
+    const admin = $('hf-token-admin').value.trim();
+    const state = await api('/api/v1/controller/huggingface', {
+      method: 'PUT',
+      headers: admin ? {Authorization: `Bearer ${admin}`} : clusterAuthHeaders(),
+      body: JSON.stringify({token: $('hf-download-token').value.trim()}),
+    });
+    hfTokenStatus = {...hfTokenStatus, configured: state.configured};
+    $('hf-download-token').value = '';
+    $('hf-token-admin').value = '';
+    $('hf-token-message').textContent = '';
+    $('hf-token-saved').textContent = `Hugging Face token saved. ${state.restarted_downloads.length} active download(s) restarted from preserved files. Higher request limits apply; a speed increase is not guaranteed.`;
+    $('hf-token-saved').hidden = false;
+    renderHuggingFacePrompt();
+    downloadSamples.clear();
+    await refreshLibrary();
+  } catch (error) {
+    $('hf-token-message').textContent = error.message;
+  } finally {
+    hfTokenSaving = false;
+    $('hf-token-save').disabled = false;
+  }
+});
+
 function renderActiveDownloads(downloads) {
+  latestDownloads = downloads;
+  renderHuggingFacePrompt();
   const active = downloads.filter(job => activeDownloadStatuses.has(job.status));
   const section = $('active-downloads');
   section.hidden = active.length === 0;
@@ -626,7 +667,8 @@ let libraryRefreshRunning = false;
 async function refreshLibrary() {
   if (libraryRefreshRunning) return;
   libraryRefreshRunning = true;
-  const downloadsRequest = api('/api/v1/downloads').then(downloads => {
+  const downloadsRequest = Promise.all([api('/api/v1/downloads'), api('/api/v1/controller/huggingface')]).then(([downloads, status]) => {
+    hfTokenStatus = status;
     renderDownloads(downloads);
     document.dispatchEvent(new CustomEvent('library-updated', {detail: downloads}));
   }).catch(() => {});
