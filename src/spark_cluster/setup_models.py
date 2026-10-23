@@ -59,7 +59,7 @@ class SetupNode(BaseModel):
 class SetupRequest(BaseModel):
     name: str = Field(default="spark-cluster", pattern=r"^[a-z][a-z0-9-]{0,39}$")
     nodes: list[SetupNode] = Field(min_length=1, max_length=4)
-    topology: Literal["single", "direct", "switch"] = "switch"
+    topology: Literal["single", "direct", "ring", "switch"] = "switch"
 
     @model_validator(mode="after")
     def valid_cluster(self):
@@ -67,8 +67,10 @@ class SetupRequest(BaseModel):
             raise ValueError("Each machine may only be selected once")
         if sum(node.role == "head" for node in self.nodes) != 1:
             raise ValueError("Select exactly one head node")
-        if len(self.nodes) == 4 and self.topology != "switch":
-            raise ValueError("Four Sparks require a ConnectX-7 switch")
+        if len(self.nodes) == 4 and self.topology not in {"ring", "switch"}:
+            raise ValueError("Use a four-node ring or a ConnectX-7 switch")
+        if self.topology == "ring" and len(self.nodes) != 4:
+            raise ValueError("The switchless ring topology requires exactly four Sparks")
         if (len(self.nodes) == 1) != (self.topology == "single"):
             raise ValueError("Use single topology for one node only")
         return self
@@ -128,7 +130,7 @@ class HardwareInstruction(BaseModel):
 
 
 class HardwareTopology(BaseModel):
-    topology: Literal["single", "direct", "switch"]
+    topology: Literal["single", "direct", "ring", "switch"]
     verdict: Literal["pass", "warning", "error", "pending"]
     expected_cables: int
     detected_cables: int

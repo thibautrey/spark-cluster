@@ -152,6 +152,9 @@ async def test_kubernetes_launch_patches_runtime_resources_and_waits_for_readine
         assert environment["MODEL_ID"] == "/models/acme/model"
         assert environment["TENSOR_PARALLEL_SIZE"] == "2"
         assert environment["PIPELINE_PARALLEL_SIZE"] == "2"
+        assert environment["KV_CACHE_DTYPE"] == "auto"
+        assert environment["MAX_NUM_SEQS"] == "4"
+        assert environment["MAX_NUM_BATCHED_TOKENS"] == "8192"
         assert any("ready to serve" in entry[3] for entry in logs.entries)
     finally:
         await service.stop()

@@ -132,6 +132,35 @@ def test_four_spark_switch_needs_one_healthy_link_per_node():
     assert all(link.target == "switch" for link in topology.links)
 
 
+def test_four_spark_ring_uses_two_unique_ports_per_node():
+    plan = request(4, "ring")
+    ports = [
+        [
+            interface(f"en-{index}-next", f"10.30.{index + 1}.1"),
+            interface(f"en-{index}-prev", f"10.30.{index or 4}.2"),
+        ]
+        for index in range(4)
+    ]
+    # Each segment has its own /30: 0-1, 1-2, 2-3 and 3-0.
+    ports[1][1]["addresses"] = ["10.30.1.2"]
+    ports[1][1]["address_info"] = [{"local": "10.30.1.2", "prefixlen": 30}]
+    ports[2][1]["addresses"] = ["10.30.2.2"]
+    ports[2][1]["address_info"] = [{"local": "10.30.2.2", "prefixlen": 30}]
+    ports[3][1]["addresses"] = ["10.30.3.2"]
+    ports[3][1]["address_info"] = [{"local": "10.30.3.2", "prefixlen": 30}]
+    ports[0][1]["addresses"] = ["10.30.4.2"]
+    ports[0][1]["address_info"] = [{"local": "10.30.4.2", "prefixlen": 30}]
+    topology = build_hardware_topology(plan, facts_for(plan, ports))
+    assert topology.verdict == "pass"
+    assert topology.expected_cables == topology.detected_cables == 4
+    used = {}
+    for link in topology.links:
+        used.setdefault(link.source, set()).add(link.source_port)
+        used.setdefault(link.target, set()).add(link.target_port)
+    assert all(len(names) == 2 for names in used.values())
+    assert any("NCCL ring" in item.title for item in topology.instructions)
+
+
 def test_switch_carrier_without_common_network_is_not_declared_correct():
     plan = request(3, "switch")
     topology = build_hardware_topology(

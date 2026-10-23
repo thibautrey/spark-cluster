@@ -55,8 +55,9 @@
             <div class="setup-nodes" id="setup-nodes"><div class="empty-state">Discover machines to begin.</div></div>
           </div>
           <div class="setup-page" data-setup-page="1" hidden>
-            <h3>Choose roles and connect the fabric</h3><p class="setup-note">Select one head. For multiple Sparks, run NVIDIA Sync → Settings → Cluster Assistant, then leave fabric IPv4 blank for automatic detection, or enter it from Sync if several links are active. Four Sparks require a switch.</p>
-            <div class="setup-plan-fields"><label>Cluster name<input id="setup-name" value="spark-cluster" pattern="[a-z][a-z0-9-]{0,39}" /></label><label>Cabling topology<select id="setup-topology"><option value="switch">High-speed Ethernet switch</option><option value="direct">Direct cables (2–3 nodes)</option><option value="single">Single Spark</option></select></label></div>
+            <h3>Choose roles and connect the fabric</h3><p class="setup-note">Select one head. For multiple Sparks, run NVIDIA Sync → Settings → Cluster Assistant, then leave fabric IPv4 blank for automatic detection, or enter it from Sync if several links are active. Four Sparks support either a physical ring or a 200G switch.</p>
+            <div class="setup-plan-fields"><label>Cluster name<input id="setup-name" value="spark-cluster" pattern="[a-z][a-z0-9-]{0,39}" /></label><label>Cabling topology<select id="setup-topology"><option value="switch">200G switch · maximum flexibility</option><option value="ring">Four-Spark ring · no switch</option><option value="direct">Direct cables · 2–3 Sparks</option><option value="single">Single Spark</option></select></label></div>
+            <div class="topology-choice-note" id="topology-choice-note">A switch enables the lowest-latency collectives and independent model pools. Four Sparks can also run efficiently as a switchless NCCL ring.</div>
             <div id="setup-roles" class="setup-roles"></div>
             <div class="setup-callout"><b>One-time access preparation</b><p>Use an existing SSH key on the bootstrap host and an account with noninteractive sudo. Verify each displayed fingerprint on its device with <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code>. Passwords and private keys are never requested in this page.</p><label class="setup-checkbox"><input id="setup-trust" type="checkbox" /> I verified the selected machines’ host fingerprints.</label></div>
             <div class="hardware-assistant">
@@ -183,7 +184,7 @@
               <label>Local model<select id="launch-model" required><option value="">Select a managed model</option></select></label>
               <label>Served model name<input id="served-model-name" placeholder="deepseek-r1" required /></label>
               <div class="form-row three">
-                <label>Context<select id="launch-context"><option value="131072">128k</option><option value="262144">256k</option><option value="524288" selected>512k</option></select></label>
+                <label>Context<select id="launch-context"><option value="131072">128k</option><option value="262144">256k</option><option value="524288" selected>512k</option><option value="1048576">1M</option></select></label>
                 <label>Tensor parallel<input id="tensor-parallel" type="number" min="1" max="64" value="4" /></label>
                 <label>Pipeline parallel<input id="pipeline-parallel" type="number" min="1" max="64" value="1" /></label>
               </div>
@@ -191,6 +192,11 @@
                 <label>Weight bits<select id="launch-bits"><option value="4">4-bit</option><option value="8">8-bit</option><option value="16">BF16 / FP16</option></select></label>
                 <label>GPU memory utilization<input id="gpu-memory-utilization" type="number" min="0.1" max="0.99" step="0.01" value="0.82" /></label>
               </div>
+              <div class="form-row">
+                <label>Optimization goal<select id="launch-workload"><option value="balanced">Balanced</option><option value="latency">Lowest latency</option><option value="throughput">Maximum throughput</option><option value="long-context">Long context</option></select></label>
+                <label>Concurrent sequences<input id="launch-concurrency" type="number" min="1" max="1024" value="1" /></label>
+              </div>
+              <div class="performance-plan" id="performance-plan"><span>◎</span><div><b>Automatic performance plan</b><small>Select a model to apply model, workload, and fabric-aware runtime settings.</small></div></div>
               <label>Admin token <span class="optional">optional</span><input id="launch-admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label>
               <div class="fit-result neutral" id="launch-fit"><span class="fit-symbol">?</span><div><b>Select a model</b><small>The launch is revalidated against current cluster capacity.</small></div></div>
               <button class="primary launch-button" id="launch-model-button" type="submit" disabled>Launch on cluster</button>

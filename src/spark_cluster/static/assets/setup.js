@@ -58,6 +58,7 @@ function renderSetupRoles() {
   if (!nodes.some(node => node.role === 'head') && nodes.length) nodes[0].role = 'head';
   if (nodes.length === 1) $('setup-topology').value = 'single';
   else if ($('setup-topology').value === 'single') $('setup-topology').value = 'switch';
+  if (nodes.length !== 4 && $('setup-topology').value === 'ring') $('setup-topology').value = 'switch';
   $('setup-roles').innerHTML = nodes.map(node => `<div class="setup-role"><div><b>${escapeHtml(node.hostname)}</b><small>${escapeHtml(node.address)}</small></div><label class="setup-checkbox"><input type="radio" name="setup-head" data-head="${escapeHtml(node.address)}" ${node.role === 'head' ? 'checked' : ''} /> Head</label><label>SSH user<input data-user="${escapeHtml(node.address)}" aria-label="SSH user ${escapeHtml(node.address)}" value="${escapeHtml(node.username || 'nvidia')}" pattern="[a-z_][a-z0-9_-]{0,31}" /></label><label>Fabric IPv4<input data-fabric="${escapeHtml(node.address)}" aria-label="Fabric IPv4 ${escapeHtml(node.address)}" value="${escapeHtml(node.fabric_address || '')}" placeholder="Auto-detect from Sync" /></label></div>`).join('');
   renderHardwareTopology(hardwareTopology || expectedHardwareTopology());
 }
@@ -65,13 +66,14 @@ function renderSetupRoles() {
 function expectedHardwareTopology() {
   const nodes = [...setupSelection.values()];
   const topology = $('setup-topology').value;
-  const portCount = topology === 'direct' && nodes.length === 3 ? 2 : topology === 'single' ? 0 : 1;
+  const portCount = topology === 'ring' || topology === 'direct' && nodes.length === 3 ? 2 : topology === 'single' ? 0 : 1;
   const hardwareNodes = nodes.map(node => ({address:node.address, hostname:node.hostname, role:node.role || 'worker', status:'pending', ports:Array.from({length:portCount}, (_,index) => ({name:`QSFP ${index + 1}`,status:'unknown',carrier:false,speed_gbps:0,rdma:true,addresses:[]}))}));
   const links = [];
   if (topology === 'switch') for (const node of nodes) links.push({source:node.address,target:'switch',status:'pending',message:'Expected cable to switch'});
   if (topology === 'direct') for (let left=0;left<nodes.length;left++) for (let right=left+1;right<nodes.length;right++) links.push({source:nodes[left].address,target:nodes[right].address,status:'pending',message:'Expected direct cable'});
+  if (topology === 'ring' && nodes.length === 4) for (let index=0;index<nodes.length;index++) links.push({source:nodes[index].address,target:nodes[(index+1)%nodes.length].address,status:'pending',message:'Expected ring cable'});
   const expected = topology === 'single' ? 0 : links.length;
-  const detail = topology === 'single' ? 'No fabric cable is required for one Spark.' : topology === 'switch' ? `Connect one cable from every Spark to the same ConnectX-7 switch (${expected} cables total).` : nodes.length === 3 ? 'Connect every Spark to the other two to form a triangle (3 cables total).' : 'Connect the two Sparks directly with one cable.';
+  const detail = topology === 'single' ? 'No fabric cable is required for one Spark.' : topology === 'switch' ? `Connect one cable from every Spark to the same ConnectX-7 switch (${expected} cables total).` : topology === 'ring' ? 'Connect each Spark to its two neighbours to close a four-cable ring.' : nodes.length === 3 ? 'Connect every Spark to the other two to form a triangle (3 cables total).' : 'Connect the two Sparks directly with one cable.';
   return {topology,verdict:'pending',expected_cables:expected,detected_cables:0,summary:'Expected physical layout — inspect the machines to verify it.',nodes:hardwareNodes,links,instructions:[{status:'info',title:'How to cable this layout',detail}]};
 }
 
@@ -82,6 +84,9 @@ function hardwarePositions(topology) {
     const layouts = [[18,24],[82,24],[18,78],[82,78]];
     nodes.forEach((node,index) => { positions[node.address] = layouts[index] || [50,88]; });
     positions.switch = [50,51];
+  } else if (nodes.length === 4) {
+    const layouts = [[20,22],[80,22],[80,78],[20,78]];
+    nodes.forEach((node,index) => { positions[node.address] = layouts[index]; });
   } else if (nodes.length === 3) {
     positions[nodes[0].address] = [50,20]; positions[nodes[1].address] = [20,76]; positions[nodes[2].address] = [80,76];
   } else if (nodes.length === 2) {
@@ -190,6 +195,14 @@ $('setup-roles').addEventListener('input', event => {
 });
 $('setup-name').addEventListener('input', invalidateSetup);
 $('setup-topology').addEventListener('input', () => {
+  const topology = $('setup-topology').value;
+  $('topology-choice-note').textContent = topology === 'switch'
+    ? 'Best decode scaling and required for independent model pools. NVIDIA measured 36.34 tok/s on four Sparks with RoCEnante versus 32.82 tok/s on a physical ring for Qwen3.8-27B NVFP4.'
+    : topology === 'ring'
+      ? 'Official switchless four-Spark layout. NCCL follows the ring directly; choose a switch later for any-to-any traffic or independent model pools.'
+      : topology === 'direct'
+        ? 'Direct point-to-point fabric for two Sparks, or a three-Spark triangle.'
+        : 'No fabric cable is required for a standalone Spark.';
   invalidateSetup();
   renderSetupRoles();
 });

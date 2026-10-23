@@ -432,6 +432,12 @@ class RuntimeDeploymentService:
             {"name": "TENSOR_PARALLEL_SIZE", "value": str(request.tensor_parallel)},
             {"name": "PIPELINE_PARALLEL_SIZE", "value": str(request.pipeline_parallel)},
             {"name": "GPU_MEMORY_UTILIZATION", "value": str(request.gpu_memory_utilization)},
+            {"name": "KV_CACHE_DTYPE", "value": request.kv_cache_dtype},
+            {"name": "MAX_NUM_SEQS", "value": str(request.max_num_seqs)},
+            {
+                "name": "MAX_NUM_BATCHED_TOKENS",
+                "value": str(request.max_num_batched_tokens),
+            },
         ]
         await self.kubernetes.patch_deployment(
             self.settings.runtime_head_deployment,

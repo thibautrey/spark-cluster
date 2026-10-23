@@ -102,16 +102,22 @@ def _direct_link(
     right: HardwareNode,
     left_facts: dict[str, Any],
     right_facts: dict[str, Any],
-    node_count: int,
+    required_links: int,
+    left_used: set[str] | None = None,
+    right_used: set[str] | None = None,
 ) -> FabricLink:
+    left_used = left_used if left_used is not None else set()
+    right_used = right_used if right_used is not None else set()
     for left_port in left.ports:
-        if not left_port.carrier:
+        if not left_port.carrier or left_port.name in left_used:
             continue
         for right_port in right.ports:
-            if not right_port.carrier:
+            if not right_port.carrier or right_port.name in right_used:
                 continue
             common = _networks(left_port, left_facts) & _networks(right_port, right_facts)
             if common:
+                left_used.add(left_port.name)
+                right_used.add(right_port.name)
                 speed = min(left_port.speed_gbps, right_port.speed_gbps)
                 verified = (
                     any(network.prefixlen >= 30 for network in common)
@@ -134,15 +140,21 @@ def _direct_link(
                         else "Carrier is present, but the expected peer ports are not verified"
                     ),
                 )
-    if node_count >= 2:
-        left_up = next((port for port in left.ports if port.carrier), None)
-        right_up = next((port for port in right.ports if port.carrier), None)
+    if required_links >= 1:
+        left_up = next(
+            (port for port in left.ports if port.carrier and port.name not in left_used), None
+        )
+        right_up = next(
+            (port for port in right.ports if port.carrier and port.name not in right_used), None
+        )
         if (
             left_up
             and right_up
-            and sum(port.carrier for port in left.ports) >= node_count - 1
-            and sum(port.carrier for port in right.ports) >= node_count - 1
+            and sum(port.carrier for port in left.ports) >= required_links
+            and sum(port.carrier for port in right.ports) >= required_links
         ):
+            left_used.add(left_up.name)
+            right_used.add(right_up.name)
             speed = min(left_up.speed_gbps, right_up.speed_gbps)
             return FabricLink(
                 source=left.address,
@@ -171,7 +183,7 @@ def build_hardware_topology(
         raw = facts.get(requested.address, {})
         ports = _fabric_ports(raw)
         if simulated and request.topology != "single":
-            count = 2 if request.topology == "direct" and len(request.nodes) == 3 else 1
+            count = 2 if request.topology == "ring" or len(request.nodes) == 3 else 1
             ports = [
                 FabricPort(
                     name=f"cx7-{index + 1}",
@@ -196,9 +208,16 @@ def build_hardware_topology(
         )
 
     links: list[FabricLink] = []
-    if request.topology == "direct":
+    if request.topology in {"direct", "ring"}:
         simulated_ports = {node.address: 0 for node in nodes}
-        for left_index, right_index in itertools.combinations(range(len(nodes)), 2):
+        used_ports = {node.address: set() for node in nodes}
+        pairs = (
+            [(index, (index + 1) % len(nodes)) for index in range(len(nodes))]
+            if request.topology == "ring"
+            else list(itertools.combinations(range(len(nodes)), 2))
+        )
+        required_links = 2 if request.topology == "ring" else len(nodes) - 1
+        for left_index, right_index in pairs:
             left, right = nodes[left_index], nodes[right_index]
             if simulated:
                 left_port = left.ports[simulated_ports[left.address] % len(left.ports)]
@@ -220,7 +239,9 @@ def build_hardware_topology(
                     right,
                     facts.get(left.address, {}),
                     facts.get(right.address, {}),
-                    len(nodes),
+                    required_links,
+                    used_ports[left.address],
+                    used_ports[right.address],
                 )
             links.append(link)
     elif request.topology == "switch":
@@ -351,6 +372,18 @@ def build_hardware_topology(
     else:
         verdict = "pass"
         summary = f"All {expected} expected links have verified peers and the required speed."
+        if request.topology == "ring":
+            instructions.append(
+                HardwareInstruction(
+                    status="pass",
+                    title="NCCL ring path is ready",
+                    detail=(
+                        "The four-node switchless ring is suitable for tensor-parallel inference. "
+                        "A 200G switch can improve low-concurrency decode and enables independent "
+                        "model pools, but it is not required for this layout."
+                    ),
+                )
+            )
         instructions.append(
             HardwareInstruction(
                 status="pass",

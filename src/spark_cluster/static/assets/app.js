@@ -4,6 +4,7 @@ let currentFit = null;
 let fitRequestVersion = 0;
 let localModels = [];
 let launchFit = null;
+let launchPerformance = null;
 let logEntries = [];
 let logsPaused = false;
 
@@ -201,11 +202,47 @@ function launchPayload() {
     served_model_name: $('served-model-name').value.trim(),
     bits_per_weight: Number($('launch-bits').value),
     context_length: Number($('launch-context').value),
-    concurrent_sequences: 1,
+    concurrent_sequences: Number($('launch-concurrency').value),
     tensor_parallel: Number($('tensor-parallel').value),
     pipeline_parallel: Number($('pipeline-parallel').value),
     gpu_memory_utilization: Number($('gpu-memory-utilization').value),
+    optimization_profile: $('launch-workload').value,
+    kv_cache_dtype: launchPerformance?.kv_cache_dtype || 'auto',
+    max_num_seqs: launchPerformance?.max_num_seqs || Number($('launch-concurrency').value),
+    max_num_batched_tokens: launchPerformance?.max_num_batched_tokens || 8192,
   };
+}
+
+async function loadPerformancePlan(apply = true) {
+  const modelId = $('launch-model').value;
+  if (!modelId) {
+    launchPerformance = null;
+    $('performance-plan').innerHTML = '<span>◎</span><div><b>Automatic performance plan</b><small>Select a model to apply model, workload, and fabric-aware runtime settings.</small></div>';
+    return;
+  }
+  $('performance-plan').innerHTML = '<span>…</span><div><b>Calculating performance plan</b><small>Matching the model, workload, node count, and fabric.</small></div>';
+  try {
+    const plan = await api('/api/v1/performance/plan', {method: 'POST', body: JSON.stringify({
+      model_id: modelId,
+      workload: $('launch-workload').value,
+      context_length: Number($('launch-context').value),
+      concurrent_sequences: Number($('launch-concurrency').value),
+    })});
+    launchPerformance = plan;
+    if (apply) {
+      const contextOption = [...$('launch-context').options].find(option => Number(option.value) === plan.context_length);
+      if (contextOption) $('launch-context').value = contextOption.value;
+      $('tensor-parallel').value = plan.tensor_parallel;
+      $('pipeline-parallel').value = plan.pipeline_parallel;
+      $('gpu-memory-utilization').value = plan.gpu_memory_utilization;
+    }
+    const evidence = plan.evidence.map(item => `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)} ↗</a>`).join(' · ');
+    const warnings = plan.warnings.length ? `<p>${plan.warnings.map(item => escapeHtml(item)).join(' ')}</p>` : '';
+    $('performance-plan').innerHTML = `<span>↗</span><div><b>${escapeHtml(plan.profile)}</b><small>${escapeHtml(plan.engine)} · ${escapeHtml(plan.collective_backend)} · TP ${plan.tensor_parallel} · ${plan.kv_cache_dtype === 'fp8_e4m3' ? 'FP8 KV' : 'automatic KV'} · ${plan.max_num_seqs} sequences</small><p>${escapeHtml(plan.engine_guidance)} ${escapeHtml(plan.topology_guidance)}</p>${warnings}<small>${evidence}</small></div>`;
+  } catch (error) {
+    launchPerformance = null;
+    $('performance-plan').innerHTML = `<span>!</span><div><b>Performance plan unavailable</b><small>${escapeHtml(error.message)}</small></div>`;
+  }
 }
 
 function launchAuthHeaders() {
@@ -410,13 +447,18 @@ $('download-list').addEventListener('click', async event => {
   }
 });
 
-$('launch-model').addEventListener('change', () => {
+$('launch-model').addEventListener('change', async () => {
   const model = localModels.find(item => item.id === $('launch-model').value);
   if (model) $('served-model-name').value = model.id.split('/').pop().toLowerCase();
+  await loadPerformancePlan(true);
   checkLaunchFit();
 });
-['served-model-name', 'launch-context', 'launch-bits', 'tensor-parallel', 'pipeline-parallel', 'gpu-memory-utilization'].forEach(id => {
+['served-model-name', 'launch-context', 'launch-bits', 'tensor-parallel', 'pipeline-parallel', 'gpu-memory-utilization', 'launch-concurrency'].forEach(id => {
   $(id).addEventListener('change', checkLaunchFit);
+});
+$('launch-workload').addEventListener('change', async () => {
+  await loadPerformancePlan(true);
+  checkLaunchFit();
 });
 $('served-model-name').addEventListener('input', () => {
   $('launch-model-button').disabled = !launchFit?.memory_fits || !launchFit?.parallel_fits || !$('served-model-name').value.trim();

@@ -60,6 +60,19 @@ def test_history_metrics_and_capacity(tmp_path):
         assert endpoint.json()["base_url"] == "http://127.0.0.1:9/v1"
         assert endpoint.json()["chat_completions_url"].endswith("/chat/completions")
 
+        performance = client.post(
+            "/api/v1/performance/plan",
+            json={
+                "model_id": "zai-org/GLM-5.3-Flash",
+                "node_count": 4,
+                "topology": "switch",
+                "workload": "throughput",
+            },
+        )
+        assert performance.status_code == 200
+        assert performance.json()["kv_cache_dtype"] == "fp8_e4m3"
+        assert performance.json()["tensor_parallel"] == 4
+
 
 def test_ingest_token_is_enforced(tmp_path):
     app = create_app(

@@ -224,7 +224,8 @@ class ClusterSetupService:
                 "Run this bootstrap dashboard on the same LAN as the Sparks.",
                 "Verify SSH fingerprints, configure SSH key access and noninteractive sudo.",
                 "Use NVIDIA Sync Cluster Assistant to configure cabled ConnectX-7 networking.",
-                "Four nodes require a switch. Internet access is needed for pinned installers.",
+                "Four nodes can use a switchless ring or a 200G switch. Internet access is "
+                "needed for pinned installers.",
             ],
         }
 

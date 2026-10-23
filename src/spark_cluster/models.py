@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 NodeStatus = Literal["healthy", "degraded", "offline"]
 NodeRole = Literal["head", "worker", "cache"]
@@ -224,6 +224,16 @@ class ModelLaunchRequest(BaseModel):
     tensor_parallel: int = Field(default=1, gt=0, le=64)
     pipeline_parallel: int = Field(default=1, gt=0, le=64)
     gpu_memory_utilization: float = Field(default=0.82, gt=0, lt=1)
+    optimization_profile: Literal["balanced", "latency", "throughput", "long-context"] = "balanced"
+    kv_cache_dtype: Literal["auto", "fp8_e4m3"] = "auto"
+    max_num_seqs: int = Field(default=4, gt=0, le=1024)
+    max_num_batched_tokens: int = Field(default=8192, ge=512, le=1_048_576)
+
+    @model_validator(mode="after")
+    def scheduler_covers_requested_concurrency(self):
+        if self.max_num_seqs < self.concurrent_sequences:
+            self.max_num_seqs = self.concurrent_sequences
+        return self
 
 
 class ModelLaunchJob(BaseModel):

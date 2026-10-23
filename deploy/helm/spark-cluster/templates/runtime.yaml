@@ -64,6 +64,9 @@ spec:
                 --pipeline-parallel-size "$PIPELINE_PARALLEL_SIZE" \
                 --max-model-len "$MAX_MODEL_LEN" \
                 --gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" \
+                --kv-cache-dtype "$KV_CACHE_DTYPE" \
+                --max-num-seqs "$MAX_NUM_SEQS" \
+                --max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS" \
                 --enable-prefix-caching \
                 --kv-transfer-config '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"}' \
                 --host 0.0.0.0 --port 8000
@@ -77,6 +80,13 @@ spec:
             - { name: PIPELINE_PARALLEL_SIZE, value: {{ .Values.runtime.pipelineParallelSize | quote }} }
             - { name: MAX_MODEL_LEN, value: {{ .Values.runtime.maxModelLen | quote }} }
             - { name: GPU_MEMORY_UTILIZATION, value: {{ .Values.runtime.gpuMemoryUtilization | quote }} }
+            - { name: KV_CACHE_DTYPE, value: {{ .Values.runtime.kvCacheDtype | quote }} }
+            - { name: MAX_NUM_SEQS, value: {{ .Values.runtime.maxNumSeqs | quote }} }
+            - { name: MAX_NUM_BATCHED_TOKENS, value: {{ .Values.runtime.maxNumBatchedTokens | quote }} }
+            - { name: NCCL_NET, value: IB }
+            - { name: NCCL_IB_DISABLE, value: "0" }
+            - { name: NCCL_IB_ROCE_VERSION_NUM, value: "2" }
+            - { name: PYTORCH_CUDA_ALLOC_CONF, value: "expandable_segments:True" }
           ports: [{ name: ray, containerPort: 6379 }, { name: api, containerPort: 8000 }]
           readinessProbe:
             httpGet: { path: /health, port: api }
@@ -136,6 +146,10 @@ spec:
             - { name: NODE_IP, valueFrom: { fieldRef: { fieldPath: status.hostIP } } }
             - { name: VLLM_USE_V1, value: "1" }
             - { name: LMCACHE_CONFIG_FILE, value: /etc/lmcache/lmcache.yaml }
+            - { name: NCCL_NET, value: IB }
+            - { name: NCCL_IB_DISABLE, value: "0" }
+            - { name: NCCL_IB_ROCE_VERSION_NUM, value: "2" }
+            - { name: PYTORCH_CUDA_ALLOC_CONF, value: "expandable_segments:True" }
           resources:
             limits: { nvidia.com/gpu: 1 }
             requests: { nvidia.com/gpu: 1, memory: 96Gi, cpu: "8" }

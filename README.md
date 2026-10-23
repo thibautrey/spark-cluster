@@ -72,13 +72,30 @@ The inference hot path stays between clients and vLLM. Dashboard availability do
 The setup flow is deliberately sequential:
 
 1. **Discover** — find SSH machines on the management LAN or enter their addresses.
-2. **Configure** — select head and worker roles and choose direct or switched fabric topology.
+2. **Configure** — select head and worker roles and choose direct, four-node ring, or switched fabric topology.
 3. **Prepare hardware** — follow connector diagrams, verify host fingerprints, and inspect ConnectX-7 links.
 4. **Check readiness** — validate GB10, memory, storage, sudo, toolkit, clock, OS/driver parity, RDMA, peers, and fabric reachability.
 5. **Install** — deploy pinned k3s, GPU scheduling, NFS model storage, the bridge, dashboard, and telemetry agents.
 6. **Verify** — confirm GPU registration, workloads, storage, dashboard health, and a cross-node read/write check.
 
 For direct links, a green result requires the expected point-to-point subnet, sufficient negotiated speed, successful interface-bound peer checks, and a neighbor MAC matching the remote fabric interface. Carrier alone stays amber. See the [cluster setup guide](docs/cluster-setup.md) for access, networking, supported layouts, recovery, and security boundaries.
+
+### Performance-aware setup and launch
+
+The topology assistant follows NVIDIA's current multi-Spark results. A four-node switchless ring is a
+supported tensor-parallel layout; a 200G switch remains the faster and more flexible choice for
+low-concurrency decode, any-to-any traffic, and independent model pools. NVIDIA measured Qwen3.8-27B
+NVFP4 at 32.82 decode tok/s on a four-Spark physical ring and 36.34 tok/s on a switched cluster with
+RoCEnante at concurrency one. The launch screen explains this tradeoff instead of requiring a switch.
+
+Selecting a local model now builds an automatic performance plan from its family, the available node
+count, context, and intended workload. The controller bounds vLLM scheduler concurrency and batched
+tokens, chooses FP8 KV for validated long-context profiles, keeps CUDA graphs enabled, and forces NCCL
+onto RoCEv2 without pinning the reboot-volatile GID index. DeepSeek V4.1 Flash and GLM 5.3 Flash plans
+also show their specialized engine, weight-layout, speculative-decoding, license, and storage guidance.
+These recommendations cite the [official NVIDIA scaling results](https://developer.nvidia.com/blog/running-frontier-class-ai-models-across-8-nvidia-dgx-spark-nodes/),
+the [measured DeepSeek V4.1 Spark recipes](https://github.com/tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark),
+and the [GLM 5.3 Flash optimization campaign](https://github.com/chishiki37/glm-5.3-flash-nvfp4-dgx-spark).
 
 ## Run the dashboard
 
@@ -208,6 +225,7 @@ The complete setup-specific reference is in [docs/cluster-setup.md](docs/cluster
 | `GET /api/v1/models` | Managed, cached, and runtime-reported models. |
 | `POST /api/v1/models/fit` | Repository metadata and fit preflight. |
 | `GET /api/v1/models/storage` | Available bytes in the cluster's shared model volume. |
+| `POST /api/v1/performance/plan` | Model, workload, node, and topology-aware launch settings. |
 | `POST /api/v1/models/download` | Resumable model download. |
 | `POST /api/v1/models/import` | Ask the bridge to copy a staged controller model into shared storage. |
 | `GET /api/v1/controller/downloads/{id}/manifest` | Signed file manifest used by the cluster bridge. |

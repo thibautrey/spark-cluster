@@ -163,7 +163,13 @@ def test_topology_and_shell_inputs_are_validated():
     with pytest.raises(ValidationError):
         SetupRequest(**payload)
     payload = plan(4).model_dump()
+    payload["topology"] = "ring"
+    assert SetupRequest(**payload).topology == "ring"
     payload["topology"] = "direct"
+    with pytest.raises(ValidationError):
+        SetupRequest(**payload)
+    payload = plan(3).model_dump()
+    payload["topology"] = "ring"
     with pytest.raises(ValidationError):
         SetupRequest(**payload)
 

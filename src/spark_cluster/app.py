@@ -54,6 +54,7 @@ from .models import (
     RuntimeEndpoint,
     RuntimeLog,
 )
+from .performance import PerformancePlan, PerformancePlanRequest, build_performance_plan
 from .prometheus import render_metrics
 from .remote_cluster import (
     RemoteClusterConnector,
@@ -338,6 +339,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/v1/capacity", response_model=CapacityPlan)
     async def capacity(request: CapacityRequest) -> CapacityPlan:
         return calculate_capacity(request)
+
+    @app.post("/api/v1/performance/plan", response_model=PerformancePlan)
+    async def performance_plan(request: PerformancePlanRequest) -> PerformancePlan:
+        available_nodes = (
+            len(runtime.latest.nodes)
+            if runtime.latest and runtime.latest.nodes
+            else settings.fallback_node_count
+        )
+        if request.topology == "auto":
+            setup_jobs = await asyncio.to_thread(runtime.store.list_setup_jobs)
+            configured = next((job for job in setup_jobs if job.status == "ready"), None)
+            if configured:
+                request = request.model_copy(update={"topology": configured.request.topology})
+        return build_performance_plan(request, available_nodes)
 
     @app.get("/api/v1/runtime", response_model=RuntimeEndpoint)
     async def runtime_endpoint() -> RuntimeEndpoint:

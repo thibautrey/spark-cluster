@@ -85,9 +85,10 @@ Public addresses, link-local addresses and wider subnet scans are rejected.
 
 For multiple devices, connect the QSFP fabric and use the official
 [NVIDIA Sync Cluster Assistant](https://docs.nvidia.com/sync/latest/cluster-assistant.html). It configures
-ConnectX-7 networking and inter-device SSH. It supports 2–4 DGX Spark / GB10 systems; four devices
-require a switch. Direct and switched links must not be mixed. Update systems to the current DGX OS
-release first. See [direct connections](https://docs.nvidia.com/sync/latest/direct-connections.html)
+ConnectX-7 networking and inter-device SSH. Spark Cluster supports a direct link for two systems, a
+triangle for three, and either a four-cable physical ring or a 200G switch for four. A ring must not be
+mixed with switched links. Update systems to the current DGX OS release first. See
+[direct connections](https://docs.nvidia.com/sync/latest/direct-connections.html)
 for NVIDIA Sync device discovery and account setup.
 
 NVIDIA documents a desktop workflow rather than a public cluster-configuration API. The wizard links
@@ -105,6 +106,7 @@ After selecting head and worker roles, the dashboard immediately draws the expec
 - two Sparks: one direct cable;
 - three Sparks with direct links: three cables forming a triangle, with every Spark connected to the
   other two;
+- four Sparks without a switch: four cables forming a closed ring, with two fabric links per Spark;
 - two to four Sparks through a switch: one cable from every Spark to the same switch;
 - one Spark: management Ethernet and power only.
 
@@ -112,7 +114,7 @@ Select **Inspect cables** after verifying SSH fingerprints. The read-only probe 
 interface to its PCI device and `mlx5`/RDMA device, then reads carrier state, negotiated speed, MTU,
 MAC address, IP prefix, RDMA port state and neighbor table. A bounded second pass sends interface-bound
 pings to selected peers on each fabric subnet and checks their neighbor MAC against the expected
-remote interface. Direct layouts also require point-to-point /30 or /31 subnets; a subnet match alone
+remote interface. Direct and ring layouts also require point-to-point /30 or /31 subnets; a subnet match alone
 stays amber. Switch layouts require one active link from every selected node with verified peers.
 Links with verified peers at or above the documented 184 Gbit/s lower bound appear green; slower or
 unverified carrier appears amber; missing expected links

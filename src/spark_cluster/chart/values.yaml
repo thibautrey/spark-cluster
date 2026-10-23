@@ -56,6 +56,9 @@ runtime:
   tensorParallelSize: 4
   pipelineParallelSize: 1
   gpuMemoryUtilization: 0.82
+  kvCacheDtype: auto
+  maxNumSeqs: 4
+  maxNumBatchedTokens: 8192
   openAIBaseUrl: http://spark-cluster-openai:8000/v1
   apiKeySecret: ""
   service:
