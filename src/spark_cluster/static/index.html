@@ -117,7 +117,7 @@
 
           <article class="panel cache-panel" id="cache" data-route-view="cache">
             <div id="cache-tiers" class="cache-tiers"></div>
-            <details class="cache-lifecycle">
+            <details class="cache-lifecycle" id="cache-lifecycle" hidden>
               <summary><span>Prewarm reusable context</span><small>Advanced</small></summary>
               <div class="cache-lifecycle-content"><p>Raw prompts are sent only to your runtime and are never stored by the controller.</p>
               <div class="cache-prewarm-form">
@@ -277,7 +277,7 @@
             </div>
           </div>
           <div class="launch-history" id="launch-history"></div>
-          <details class="optimization-lab">
+          <details class="optimization-lab" id="optimization-lab" hidden>
             <summary><span>Performance testing</span><span class="pill" id="telemetry-state">awaiting metrics</span></summary>
             <div class="optimization-lab-content"><div class="telemetry-grid" id="telemetry-grid"></div>
             <div class="benchmark-layout">
@@ -327,7 +327,7 @@
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=model-header-v1"></script>
+    <script src="/assets/app.js?v=performance-visibility-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>

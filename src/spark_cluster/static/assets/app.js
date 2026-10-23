@@ -820,6 +820,12 @@ async function refreshOptimizationLab() {
     api('/api/v1/optimization/benchmarks?limit=12'),
     api('/api/v1/cache/prefixes?limit=20'),
   ]);
+  const lab = $('optimization-lab');
+  lab.hidden = !telemetry.available && benchmarks.length === 0;
+  if (lab.hidden) lab.open = false;
+  const cacheLifecycle = $('cache-lifecycle');
+  cacheLifecycle.hidden = !telemetry.available && prefixes.length === 0;
+  if (cacheLifecycle.hidden) cacheLifecycle.open = false;
   renderTelemetry(telemetry);
   renderBenchmarks(benchmarks);
   renderCachePrefixes(prefixes);
