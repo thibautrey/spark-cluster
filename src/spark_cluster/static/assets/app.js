@@ -18,6 +18,8 @@ let pendingLaunchPayload = null;
 let runtimeTerminalSocket = null;
 let hfTokenStatus = null;
 let hfTokenSaving = false;
+let hfTokenSheetOpener = null;
+let hfTokenSheetCloseTimer = null;
 let latestDownloads = [];
 let clusterState = {clusters: [], active_cluster_id: null};
 
@@ -234,11 +236,44 @@ function formatDuration(seconds) {
   return `${Math.ceil(seconds / 86400)} days`;
 }
 
+function openHuggingFaceTokenSheet(opener) {
+  clearTimeout(hfTokenSheetCloseTimer);
+  hfTokenSheetOpener = opener || hfTokenSheetOpener;
+  $('hf-token-sheet').hidden = false;
+  document.body.classList.add('bottom-sheet-open');
+  requestAnimationFrame(() => {
+    $('hf-token-sheet').classList.add('open');
+    $('hf-token-close').focus({preventScroll: true});
+  });
+}
+
+function closeHuggingFaceTokenSheet() {
+  if ($('hf-token-sheet').hidden) return;
+  $('hf-token-sheet').classList.remove('open');
+  document.body.classList.remove('bottom-sheet-open');
+  const opener = hfTokenSheetOpener;
+  hfTokenSheetCloseTimer = setTimeout(() => {
+    $('hf-token-sheet').hidden = true;
+    if (opener?.isConnected && !opener.hidden) opener.focus({preventScroll: true});
+  }, 220);
+}
+
 function renderHuggingFacePrompt() {
   const downloading = latestDownloads.some(job => job.source === 'huggingface' && ['queued', 'resolving', 'downloading'].includes(job.status));
-  $('hf-token-form').hidden = !downloading || !hfTokenStatus || hfTokenStatus.configured;
+  const visible = downloading && hfTokenStatus && !hfTokenStatus.configured;
+  $('hf-token-prompt').hidden = !visible;
+  $('hf-token-form').hidden = !visible;
   $('hf-token-admin-label').hidden = !hfTokenStatus?.requires_admin || Boolean(Object.keys(clusterAuthHeaders()).length);
+  if (!visible) closeHuggingFaceTokenSheet();
 }
+
+$('hf-token-prompt').addEventListener('click', event => openHuggingFaceTokenSheet(event.currentTarget));
+$('hf-token-close').addEventListener('click', closeHuggingFaceTokenSheet);
+$('hf-token-backdrop').addEventListener('click', closeHuggingFaceTokenSheet);
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !$('hf-token-sheet').hidden) closeHuggingFaceTokenSheet();
+});
+window.addEventListener('hashchange', closeHuggingFaceTokenSheet);
 
 $('hf-token-form').addEventListener('submit', async event => {
   event.preventDefault();

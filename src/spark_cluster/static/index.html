@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=mobile-header-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=hf-token-sheet-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -144,11 +144,18 @@
               <div><p class="eyebrow"><i></i>ACTIVE DOWNLOADS</p><h3 id="active-download-title">Downloading models</h3></div>
               <span id="active-download-count">0 active</span>
             </div>
-            <form id="hf-token-form" class="hf-token-form" hidden>
-              <div class="hf-token-copy"><span aria-hidden="true">HF</span><div><b>Faster Hub downloads</b><small>Add a read token to reduce throttling. <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer">Get a token ↗</a></small></div></div>
-              <div class="hf-token-fields"><label><span class="sr-only">Hugging Face token</span><input id="hf-download-token" type="password" autocomplete="off" placeholder="Hugging Face token · hf_…" required /></label><label id="hf-token-admin-label" hidden><span class="sr-only">Controller admin token</span><input id="hf-token-admin" type="password" autocomplete="off" placeholder="Controller admin token" /></label><button type="submit" id="hf-token-save">Save token</button></div>
-              <p id="hf-token-message" role="status"></p>
-            </form>
+            <button class="hf-token-prompt" id="hf-token-prompt" type="button" hidden><span aria-hidden="true">HF</span><span><b>Faster Hub downloads</b><small>Add a read token to reduce throttling.</small></span><strong>Add token</strong></button>
+            <div class="bottom-sheet hf-token-sheet" id="hf-token-sheet" hidden>
+              <button class="bottom-sheet-backdrop" id="hf-token-backdrop" type="button" tabindex="-1" aria-label="Close Hugging Face token setup"></button>
+              <section class="bottom-sheet-panel hf-token-sheet-panel" role="dialog" aria-modal="true" aria-labelledby="hf-token-title">
+                <header class="bottom-sheet-header"><span class="catalog-sheet-handle" aria-hidden="true"></span><div><p class="eyebrow">HUGGING FACE</p><h3 id="hf-token-title">Speed up downloads</h3></div><button class="catalog-sheet-close" id="hf-token-close" type="button" aria-label="Close Hugging Face token setup">×</button></header>
+                <form id="hf-token-form" class="hf-token-form hf-token-sheet-content" hidden>
+                  <div class="hf-token-copy"><span aria-hidden="true">HF</span><div><b>Use a read token</b><small>Higher request limits can reduce throttling. <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer">Create a token ↗</a></small></div></div>
+                  <div class="hf-token-fields"><label><span class="sr-only">Hugging Face token</span><input id="hf-download-token" type="password" autocomplete="off" placeholder="Hugging Face token · hf_…" required /></label><label id="hf-token-admin-label" hidden><span class="sr-only">Controller admin token</span><input id="hf-token-admin" type="password" autocomplete="off" placeholder="Controller admin token" /></label><button type="submit" id="hf-token-save">Save token</button></div>
+                  <p id="hf-token-message" role="status"></p>
+                </form>
+              </section>
+            </div>
             <p id="hf-token-saved" role="status" hidden></p>
             <div class="active-download-list" id="active-download-list"></div>
           </section>
@@ -320,7 +327,7 @@
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=lazy-inventory-v1"></script>
+    <script src="/assets/app.js?v=hf-token-sheet-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>
