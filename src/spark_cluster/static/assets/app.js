@@ -38,10 +38,6 @@ function render(snapshot) {
   $('memory-total').textContent = `${Math.round(memoryTotal)} GiB total · ${pct(memoryUsed, memoryTotal).toFixed(0)}% allocated`;
   $('memory-bar').style.width = `${pct(memoryUsed, memoryTotal)}%`;
   $('prefix-reuse').textContent = formatNumber(snapshot.prefix_reuse_tokens);
-  $('model-short').textContent = snapshot.runtime.model.split('/').pop().replace('DeepSeek-', '');
-  $('runtime-context').textContent = `${Math.round(snapshot.runtime.context_length / 1024)}k`;
-  $('runtime-parallel').textContent = `${snapshot.runtime.tensor_parallel} × ${snapshot.runtime.pipeline_parallel}`;
-  $('runtime-status').textContent = snapshot.status[0].toUpperCase() + snapshot.status.slice(1);
   $('node-count').textContent = `${snapshot.nodes.length} nodes`;
   renderTopology(snapshot.nodes);
   renderCache(snapshot.cache_tiers);
@@ -114,14 +110,8 @@ function drawSparkline(values) {
 function connect() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const socket = new WebSocket(`${protocol}//${location.host}/api/v1/stream`);
-  socket.onopen = () => {
-    $('connection-dot').style.background = 'var(--green)';
-    $('connection-label').textContent = 'Live stream';
-  };
   socket.onmessage = event => render(JSON.parse(event.data));
   socket.onclose = () => {
-    $('connection-dot').style.background = 'var(--amber)';
-    $('connection-label').textContent = 'Reconnecting';
     setTimeout(connect, 1500);
   };
 }
