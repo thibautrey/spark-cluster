@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=mobile-model-actions-v2" />
+    <link rel="stylesheet" href="/assets/app.css?v=fit-details-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -207,7 +207,7 @@
                     <label>Admin token <span class="optional">optional</span><input id="admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label>
                   </div></details>
                   <div class="fit-result neutral" id="fit-result"><span class="fit-symbol">?</span><div><b>Check compatibility</b><small>Memory, storage, and runtime support.</small></div></div>
-                  <div class="fit-details" id="fit-details" hidden></div>
+                  <details class="fit-details" id="fit-details" hidden></details>
                   <div class="form-actions"><button class="secondary" id="check-fit" type="button">Check fit</button><button class="primary" id="download-model" type="submit" disabled>Download</button></div>
                 </form>
                 <div class="catalog-sheet-detail"><div id="catalog-detail" hidden></div></div>
@@ -329,7 +329,7 @@
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=performance-visibility-v1"></script>
+    <script src="/assets/app.js?v=fit-details-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>

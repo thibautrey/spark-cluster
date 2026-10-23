@@ -305,6 +305,7 @@ function resetModelFit() {
   $('download-model').textContent = 'Download';
   $('fit-result').className = 'fit-result neutral';
   $('fit-result').innerHTML = '<span class="fit-symbol">?</span><div><b>Check compatibility</b><small>Memory, storage, and runtime support.</small></div>';
+  $('fit-details').open = false;
   $('fit-details').hidden = true;
 }
 
