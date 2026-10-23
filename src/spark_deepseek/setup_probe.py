@@ -82,8 +82,9 @@ if __name__ == "__main__":
                 "rdma": bool(details),
                 "rdma_device": details[0]["device"] if details else None,
                 "rdma_ports": [port for device in details for port in device["ports"]],
-                "neighbors": json.loads(command("ip", "-j", "neigh", "show", "dev", item["ifname"])
-                                        or "[]"),
+                "neighbors": json.loads(
+                    command("ip", "-j", "neigh", "show", "dev", item["ifname"]) or "[]"
+                ),
             }
         )
     memory = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines())

@@ -337,9 +337,7 @@ class ClusterSetupService:
 
     async def _preflight(self, request: SetupRequest) -> list[SetupCheck]:
         if self.mode == "demo":
-            self.last_hardware_topology = build_hardware_topology(
-                request, {}, simulated=True
-            )
+            self.last_hardware_topology = build_hardware_topology(request, {}, simulated=True)
             return [
                 SetupCheck(
                     node=node.address,
@@ -500,8 +498,7 @@ class ClusterSetupService:
             for node in request.nodes:
                 peers = [peer.fabric_address for peer in request.nodes if peer != node]
                 command = "\n".join(
-                    f"ping -c 2 -W 2 {shlex.quote(peer)} >/dev/null"
-                    for peer in peers
+                    f"ping -c 2 -W 2 {shlex.quote(peer)} >/dev/null" for peer in peers
                 )
                 try:
                     await self.transport.run(node, command, timeout=30)
@@ -532,7 +529,8 @@ class ClusterSetupService:
                     status=self.last_hardware_topology.verdict,
                     message=self.last_hardware_topology.summary,
                     remedy=(
-                        "Follow the cabling diagram, wait for link LEDs, then run hardware detection again."
+                        "Follow the cabling diagram, wait for link LEDs, then run hardware "
+                        "detection again."
                     ),
                 )
             )

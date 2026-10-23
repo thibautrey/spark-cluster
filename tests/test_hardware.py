@@ -106,10 +106,7 @@ def test_four_spark_switch_needs_one_healthy_link_per_node():
         plan,
         facts_for(
             plan,
-            [
-                [interface(f"enp{index}", f"10.20.0.{10 + index}", prefix=24)]
-                for index in range(4)
-            ],
+            [[interface(f"enp{index}", f"10.20.0.{10 + index}", prefix=24)] for index in range(4)],
         ),
     )
     assert topology.verdict == "pass"

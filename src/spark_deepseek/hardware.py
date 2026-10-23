@@ -59,9 +59,7 @@ def _networks(port: FabricPort, raw: dict[str, Any]) -> set[ipaddress.IPv4Networ
     for address in interface.get("address_info", []):
         try:
             values.add(
-                ipaddress.ip_network(
-                    f"{address['local']}/{address['prefixlen']}", strict=False
-                )
+                ipaddress.ip_network(f"{address['local']}/{address['prefixlen']}", strict=False)
             )
         except (KeyError, TypeError, ValueError):
             continue
@@ -148,8 +146,13 @@ def build_hardware_topology(
             count = 2 if request.topology == "direct" and len(request.nodes) == 3 else 1
             ports = [
                 FabricPort(
-                    name=f"cx7-{index + 1}", status="connected", carrier=True,
-                    speed_gbps=200, rdma=True, rdma_device=f"mlx5_{index}", mtu=9000,
+                    name=f"cx7-{index + 1}",
+                    status="connected",
+                    carrier=True,
+                    speed_gbps=200,
+                    rdma=True,
+                    rdma_device=f"mlx5_{index}",
+                    mtu=9000,
                     addresses=[f"10.10.{index}.{10 + len(nodes)}"],
                 )
                 for index in range(count)
@@ -185,14 +188,20 @@ def build_hardware_topology(
                 )
             else:
                 link = _direct_link(
-                    left, right, facts.get(left.address, {}), facts.get(right.address, {}), len(nodes)
+                    left,
+                    right,
+                    facts.get(left.address, {}),
+                    facts.get(right.address, {}),
+                    len(nodes),
                 )
             links.append(link)
     elif request.topology == "switch":
         for node in nodes:
             connected = next((port for port in node.ports if port.carrier), None)
-            status = "error" if connected is None else (
-                "pass" if connected.status == "connected" else "warning"
+            status = (
+                "error"
+                if connected is None
+                else ("pass" if connected.status == "connected" else "warning")
             )
             links.append(
                 FabricLink(
@@ -227,8 +236,10 @@ def build_hardware_topology(
                             "Port carrier is present, but a common switched subnet is not verified"
                         )
 
-    expected = 0 if request.topology == "single" else (
-        len(request.nodes) if request.topology == "switch" else len(links)
+    expected = (
+        0
+        if request.topology == "single"
+        else (len(request.nodes) if request.topology == "switch" else len(links))
     )
     detected = sum(link.status in {"pass", "warning"} for link in links)
     errors = [link for link in links if link.status == "error"]
@@ -259,7 +270,9 @@ def build_hardware_topology(
             HardwareInstruction(
                 status="warning",
                 title="Link needs attention",
-                detail=f"{link.message}. Reseat the cable and verify Ethernet mode and switch speed.",
+                detail=(
+                    f"{link.message}. Reseat the cable and verify Ethernet mode and switch speed."
+                ),
             )
         )
     if request.topology == "single":
@@ -285,7 +298,9 @@ def build_hardware_topology(
             HardwareInstruction(
                 status="pass",
                 title="Physical topology looks correct",
-                detail="Continue with NVIDIA Sync network configuration and the full readiness test.",
+                detail=(
+                    "Continue with NVIDIA Sync network configuration and the full readiness test."
+                ),
             )
         )
     return HardwareTopology(
