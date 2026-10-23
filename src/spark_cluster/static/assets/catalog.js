@@ -6,6 +6,10 @@ let catalogRequest = 0;
 let detailRequest = 0;
 let catalogTimer;
 let catalogJobs = [];
+let catalogFits = new Map();
+let catalogFitRequest = 0;
+let catalogCapacityLoading = false;
+let catalogBaseStatus = '';
 
 function catalogState(id) {
   const job = catalogJobs.find(item => item.repo_id === id && !['failed', 'completed'].includes(item.status));
@@ -31,17 +35,79 @@ function catalogImage(model, detail = false) {
   </span>`;
 }
 
+function selectedCapacity() {
+  return Number($('catalog-capacity').value || 0);
+}
+
+function fitBadge(model) {
+  const fit = catalogFits.get(model.id);
+  if (!fit) return '';
+  const label = fit.memory_fits ? 'Full memory' : fit.placement_strategy.replaceAll('-', ' ');
+  const engine = fit.launch_supported ? '' : ' · engine required';
+  return `<span class="catalog-fit-badge"><i>✓</i>${escapeHtml(label)} · ${fit.minimum_nodes} Spark${fit.minimum_nodes === 1 ? '' : 's'}${engine}</span>`;
+}
+
+function visibleCatalogModels() {
+  if (!selectedCapacity()) return catalogModels;
+  return catalogModels.filter(model => catalogFits.get(model.id)?.compatible);
+}
+
 function renderCatalogCards() {
-  $('catalog-grid').innerHTML = catalogModels.length ? catalogModels.map(model => `
+  const visibleModels = visibleCatalogModels();
+  if (catalogCapacityLoading) {
+    $('catalog-grid').innerHTML = '<div class="catalog-empty catalog-analyzing"><i></i><b>Calculating model capacity…</b><span>Inspecting repository precision, weights, KV cache, and known hybrid placements.</span></div>';
+    return;
+  }
+  $('catalog-grid').innerHTML = visibleModels.length ? visibleModels.map(model => `
     <button type="button" class="catalog-card ${catalogSelection === model.id ? 'selected' : ''}" data-repo="${escapeHtml(model.id)}" aria-pressed="${catalogSelection === model.id}">
       ${catalogImage(model)}
       <span class="catalog-card-content">
         <span class="catalog-card-head"><span class="catalog-avatar">${escapeHtml(model.author[0].toUpperCase())}</span><span class="catalog-author">${escapeHtml(model.author)}</span><span class="catalog-card-arrow">↗</span></span>
         <b class="catalog-card-title">${escapeHtml(model.id.split('/').pop())}</b>
         <span class="catalog-tags">${[model.task, model.library, model.parameters ? `${formatNumber(model.parameters)} params` : null].filter(Boolean).slice(0, 3).map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</span>
+        ${fitBadge(model)}
         <span class="catalog-card-foot"><span title="Downloads">↓ ${formatNumber(model.downloads)}</span><span title="Likes">♡ ${formatNumber(model.likes)}</span>${model.updated ? `<span class="catalog-updated">${escapeHtml(new Date(model.updated).toLocaleDateString())}</span>` : ''}</span>
       </span>
-    </button>`).join('') : '<div class="catalog-empty">No models match these filters.<br>Try another search or reset the filters.</div>';
+    </button>`).join('') : `<div class="catalog-empty">${selectedCapacity() ? `No analyzed model fits ${selectedCapacity()} Spark${selectedCapacity() === 1 ? '' : 's'} at this context.<br>Try more machines, a shorter context, or load more models.` : 'No models match these filters.<br>Try another search or reset the filters.'}</div>`;
+}
+
+async function applyCapacityFilter() {
+  const sparkCount = selectedCapacity();
+  const request = ++catalogFitRequest;
+  if (!sparkCount) {
+    catalogFits = new Map();
+    catalogCapacityLoading = false;
+    renderCatalogCards();
+    $('catalog-status').textContent = catalogBaseStatus;
+    return;
+  }
+  catalogCapacityLoading = true;
+  renderCatalogCards();
+  $('catalog-status').textContent = `Analyzing ${catalogModels.length} models for ${sparkCount} Spark${sparkCount === 1 ? '' : 's'}…`;
+  try {
+    const response = await api('/api/v1/catalog/fit', {method: 'POST', body: JSON.stringify({
+      models: catalogModels.map(model => ({id: model.id, commit: model.commit})),
+      spark_count: sparkCount,
+      context_length: Number($('catalog-fit-context').value),
+      concurrent_sequences: 1,
+      kv_cache_dtype: 'auto',
+    })});
+    if (request !== catalogFitRequest) return;
+    catalogFits = new Map(response.results.map(result => [result.repo_id, result]));
+    catalogCapacityLoading = false;
+    renderCatalogCards();
+    const compatible = response.results.filter(result => result.compatible).length;
+    const cached = response.results.filter(result => result.cached).length;
+    const unavailable = response.results.filter(result => result.error).length;
+    const context = Number($('catalog-fit-context').value) / 1024;
+    $('catalog-status').textContent = `${compatible} of ${catalogModels.length} fit ${sparkCount} Spark${sparkCount === 1 ? '' : 's'} at ${context >= 1024 ? `${context / 1024}M` : `${context}k`} context${cached ? ` · ${cached} cached` : ''}${unavailable ? ` · ${unavailable} unavailable` : ''}`;
+  } catch (error) {
+    if (request !== catalogFitRequest) return;
+    catalogCapacityLoading = false;
+    catalogFits = new Map();
+    renderCatalogCards();
+    $('catalog-status').textContent = `Capacity filter unavailable · ${error.message}`;
+  }
 }
 
 async function loadCatalog(append = false) {
@@ -65,8 +131,12 @@ async function loadCatalog(append = false) {
     const existing = new Set(catalogModels.map(model => model.id));
     catalogModels.push(...page.models.filter(model => !existing.has(model.id)));
     catalogCursor = page.cursor;
-    renderCatalogCards();
-    $('catalog-status').textContent = `${catalogModels.length} models${catalogCursor ? ' · more available' : ''} · Hugging Face Hub`;
+    catalogBaseStatus = `${catalogModels.length} models${catalogCursor ? ' · more available' : ''} · Hugging Face Hub`;
+    if (selectedCapacity()) await applyCapacityFilter();
+    else {
+      renderCatalogCards();
+      $('catalog-status').textContent = catalogBaseStatus;
+    }
     $('catalog-more').hidden = !catalogCursor;
   } catch (error) {
     if (request !== catalogRequest) return;
@@ -133,12 +203,16 @@ $('catalog-query').addEventListener('keydown', event => {
   if (event.key === 'Enter') { event.preventDefault(); loadCatalog(); }
 });
 ['catalog-sort', 'catalog-task', 'catalog-library', 'catalog-access'].forEach(id => $(id).addEventListener('change', () => loadCatalog()));
+['catalog-capacity', 'catalog-fit-context'].forEach(id => $(id).addEventListener('change', () => applyCapacityFilter()));
 $('catalog-reset').addEventListener('click', () => {
   $('catalog-query').value = '';
   $('catalog-sort').value = 'trendingScore';
   $('catalog-task').value = 'text-generation';
   $('catalog-library').value = '';
   $('catalog-access').value = '';
+  $('catalog-capacity').value = '';
+  $('catalog-fit-context').value = '32768';
+  catalogFits = new Map();
   loadCatalog();
 });
 $('catalog-retry').addEventListener('click', () => loadCatalog());

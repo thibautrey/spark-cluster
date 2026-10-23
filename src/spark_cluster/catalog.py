@@ -1,14 +1,25 @@
 """Bounded, controller-local Hugging Face discovery. Credentials never reach the UI."""
 
 import asyncio
+import json
+import re
 import time
 from typing import Literal
 from urllib.parse import parse_qs, quote, urlparse
 
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from .model_manager import safe_repo_parts
+from .catalog_cache import CatalogCache
+from .config import Settings
+from .model_manager import (
+    DEEPSEEK_V41_ENGRAM_BYTES,
+    WEIGHT_SUFFIXES,
+    RepositoryMetadata,
+    build_fit_plan,
+    safe_repo_parts,
+)
+from .models import ModelFitRequest
 
 CatalogSort = Literal["trendingScore", "downloads", "likes", "lastModified"]
 
@@ -25,6 +36,7 @@ class CatalogModel(BaseModel):
     updated: str | None = None
     parameters: int | None = None
     thumbnail_url: str
+    commit: str | None = None
 
 
 class CatalogPage(BaseModel):
@@ -39,12 +51,52 @@ class CatalogFile(BaseModel):
 
 class CatalogDetail(CatalogModel):
     revision: str
-    commit: str | None = None
     license: str | None = None
     architecture: str | None = None
     files: list[CatalogFile]
     repository_bytes: int
     size_complete: bool
+
+
+class CatalogFitCandidate(BaseModel):
+    id: str = Field(min_length=1, max_length=200)
+    commit: str | None = Field(default=None, max_length=200)
+
+    @field_validator("id")
+    @classmethod
+    def validate_repo_id(cls, value: str) -> str:
+        safe_repo_parts(value)
+        return value
+
+
+class CatalogFitBatchRequest(BaseModel):
+    models: list[CatalogFitCandidate] = Field(min_length=1, max_length=48)
+    spark_count: int = Field(ge=1, le=16)
+    context_length: int = Field(default=32768, ge=1024, le=1_048_576)
+    concurrent_sequences: int = Field(default=1, ge=1, le=128)
+    kv_cache_dtype: Literal["auto", "bf16", "fp8_e4m3"] = "auto"
+
+
+class CatalogFitResult(BaseModel):
+    repo_id: str
+    compatible: bool
+    memory_fits: bool = False
+    runtime_fits: bool = False
+    launch_supported: bool = False
+    fit_status: str = "download-only"
+    placement_strategy: str = "unsupported"
+    minimum_nodes: int = 0
+    weights_gib: float = 0
+    kv_cache_gib: float = 0
+    detected_format: str = "Unknown"
+    engine_recommendation: str = "Unknown"
+    cached: bool = False
+    error: str | None = None
+
+
+class CatalogFitBatchResponse(BaseModel):
+    results: list[CatalogFitResult]
+    cache: dict[str, int]
 
 
 def summary(data: dict) -> CatalogModel:
@@ -60,6 +112,7 @@ def summary(data: dict) -> CatalogModel:
         gated=bool(data.get("gated")),
         updated=data.get("lastModified"),
         parameters=(data.get("safetensors") or {}).get("total"),
+        commit=data.get("sha"),
         thumbnail_url=(
             "https://cdn-thumbnails.huggingface.co/social-thumbnails/models/"
             f"{quote(repo_id, safe='/')}.png"
@@ -68,34 +121,53 @@ def summary(data: dict) -> CatalogModel:
 
 
 class ModelBrowser:
-    def __init__(self, token: str | None = None):
-        self.token = token
+    planner_version = "catalog-fit-v1"
+
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self.token = settings.hf_token
+        cache_path = settings.catalog_cache_path or settings.database_path.with_name(
+            f"{settings.database_path.stem}-catalog-cache.db"
+        )
+        self.persistent_cache = CatalogCache(cache_path)
         self.cache: dict[tuple, tuple[float, dict | list, str | None]] = {}
         self.lock = asyncio.Lock()
         self.transport: httpx.AsyncBaseTransport | None = None
 
     async def fetch(self, path: str, params: dict) -> tuple[dict | list, str | None]:
         key = (path, *sorted(params.items()))
+        persistent_key = json.dumps(key, separators=(",", ":"), default=str)
         async with self.lock:
             cached = self.cache.get(key)
             if cached and time.monotonic() - cached[0] < 60:
                 return cached[1], cached[2]
-            headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
-            async with httpx.AsyncClient(
-                base_url="https://huggingface.co",
-                timeout=15,
-                headers=headers,
-                transport=self.transport,
-            ) as client:
-                response = await client.get(path, params=params)
-                response.raise_for_status()
-            data = response.json()
-            next_url = response.links.get("next", {}).get("url", "")
-            cursor = parse_qs(urlparse(next_url).query).get("cursor", [None])[0]
+        persisted = await asyncio.to_thread(self.persistent_cache.get_metadata, persistent_key)
+        if persisted:
+            async with self.lock:
+                self.cache[key] = (time.monotonic(), persisted[0], persisted[1])
+            return persisted
+        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
+        async with httpx.AsyncClient(
+            base_url="https://huggingface.co",
+            timeout=20,
+            headers=headers,
+            transport=self.transport,
+        ) as client:
+            response = await client.get(path, params=params)
+            response.raise_for_status()
+        data = response.json()
+        next_url = response.links.get("next", {}).get("url", "")
+        cursor = parse_qs(urlparse(next_url).query).get("cursor", [None])[0]
+        async with self.lock:
             if len(self.cache) >= 64:
                 self.cache.pop(next(iter(self.cache)))
             self.cache[key] = (time.monotonic(), data, cursor)
-            return data, cursor
+        immutable_revision = "/revision/" in path and "/revision/main" not in path
+        ttl = 30 * 86400 if immutable_revision else 600 if path == "/api/models" else 86400
+        await asyncio.to_thread(
+            self.persistent_cache.set_metadata, persistent_key, data, cursor, ttl
+        )
+        return data, cursor
 
     async def search(
         self,
@@ -138,10 +210,137 @@ class ModelBrowser:
         return CatalogDetail(
             **summary(data).model_dump(),
             revision=revision,
-            commit=data.get("sha"),
             license=(data.get("cardData") or {}).get("license"),
             architecture=architectures[0] if architectures else config.get("model_type"),
             files=files,
             repository_bytes=sum(item.size or 0 for item in files),
             size_complete=bool(files) and all(item.size is not None for item in files),
         )
+
+    async def fit_batch(self, request: CatalogFitBatchRequest) -> CatalogFitBatchResponse:
+        semaphore = asyncio.Semaphore(4)
+
+        async def plan(candidate: CatalogFitCandidate) -> CatalogFitResult:
+            safe_repo_parts(candidate.id)
+            revision = candidate.commit or "main"
+            key = json.dumps(
+                (
+                    self.planner_version,
+                    candidate.id,
+                    revision,
+                    request.spark_count,
+                    request.context_length,
+                    request.concurrent_sequences,
+                    request.kv_cache_dtype,
+                    self.settings.fallback_node_memory_gib,
+                    self.settings.model_usable_memory_fraction,
+                ),
+                separators=(",", ":"),
+            )
+            cached = await asyncio.to_thread(self.persistent_cache.get_fit, key)
+            if cached:
+                return CatalogFitResult.model_validate({**cached, "cached": True})
+            try:
+                async with semaphore:
+                    metadata = await self._repository_metadata(candidate.id, revision)
+                capacity_settings = self.settings.model_copy(
+                    update={
+                        "fallback_node_count": request.spark_count,
+                        # Capacity browsing must never touch a busy remote model mount.
+                        "model_cache_path": self.settings.database_path.parent,
+                    }
+                )
+                fit = await asyncio.to_thread(
+                    build_fit_plan,
+                    ModelFitRequest(
+                        repo_id=candidate.id,
+                        revision=revision,
+                        context_length=request.context_length,
+                        concurrent_sequences=request.concurrent_sequences,
+                        kv_cache_dtype=request.kv_cache_dtype,
+                    ),
+                    metadata,
+                    None,
+                    capacity_settings,
+                )
+                result = CatalogFitResult(
+                    repo_id=candidate.id,
+                    compatible=fit.runtime_fits,
+                    memory_fits=fit.memory_fits,
+                    runtime_fits=fit.runtime_fits,
+                    launch_supported=fit.launch_supported,
+                    fit_status=fit.fit_status,
+                    placement_strategy=fit.placement_strategy,
+                    minimum_nodes=fit.minimum_nodes,
+                    weights_gib=fit.weights_gib,
+                    kv_cache_gib=fit.kv_cache_gib,
+                    detected_format=fit.detected_format,
+                    engine_recommendation=fit.engine_recommendation,
+                )
+                ttl = 30 * 86400 if candidate.commit else 86400
+                await asyncio.to_thread(
+                    self.persistent_cache.set_fit,
+                    key,
+                    result.model_dump(exclude={"cached"}),
+                    ttl,
+                )
+                return result
+            except (httpx.HTTPError, ValueError, KeyError, TypeError, OSError):
+                return CatalogFitResult(
+                    repo_id=candidate.id,
+                    compatible=False,
+                    error="Model capacity metadata is unavailable",
+                )
+
+        results = await asyncio.gather(*(plan(candidate) for candidate in request.models))
+        stats = await asyncio.to_thread(self.persistent_cache.stats)
+        return CatalogFitBatchResponse(results=results, cache=stats)
+
+    async def _repository_metadata(self, repo_id: str, revision: str) -> RepositoryMetadata:
+        path = f"/api/models/{quote(repo_id, safe='/')}/revision/{quote(revision, safe='')}"
+        data, _ = await self.fetch(path, {"blobs": "true"})
+        files = tuple(
+            (str(item.get("rfilename") or ""), int(item.get("size") or 0))
+            for item in data.get("siblings", [])
+        )
+        config = dict(data.get("config") or {})
+        model = config.get("text_config") if isinstance(config.get("text_config"), dict) else config
+        architectures = model.get("architectures") or config.get("architectures") or []
+        architecture = architectures[0] if architectures else model.get("model_type")
+        parameter_count = (data.get("safetensors") or {}).get("total")
+        model_type = str(model.get("model_type") or config.get("model_type") or "")
+        is_deepseek_v41 = model_type == "deepseek_v41" or "deepseek-v4.1" in repo_id.lower()
+        engram_bytes = sum(
+            size
+            for name, size in files
+            if re.search(r"model-0004[78]-of-00048\.safetensors$", name)
+        )
+        external_artifacts_bytes = 0
+        external_artifacts: tuple[str, ...] = ()
+        if is_deepseek_v41 and "flash-1017" in repo_id.lower() and not engram_bytes:
+            external_artifacts_bytes = DEEPSEEK_V41_ENGRAM_BYTES
+            external_artifacts = (
+                "deepseek-ai/DeepSeek-V4.1-Flash-1017/model-00047-of-00048.safetensors",
+                "deepseek-ai/DeepSeek-V4.1-Flash-1017/model-00048-of-00048.safetensors",
+            )
+        return RepositoryMetadata(
+            repo_id=repo_id,
+            revision=revision,
+            repository_bytes=sum(size for _, size in files),
+            weight_bytes=sum(
+                size for name, size in files if name.lower().endswith(WEIGHT_SUFFIXES)
+            ),
+            parameter_count=int(parameter_count) if parameter_count else None,
+            architecture=str(architecture) if architecture else None,
+            config=config,
+            files=files,
+            tags=tuple(str(tag) for tag in data.get("tags") or []),
+            library_name=data.get("library_name"),
+            pipeline_tag=data.get("pipeline_tag"),
+            engram_bytes=engram_bytes,
+            external_artifacts_bytes=external_artifacts_bytes,
+            external_artifacts=external_artifacts,
+        )
+
+    def close(self) -> None:
+        self.persistent_cache.close()

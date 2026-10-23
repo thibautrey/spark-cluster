@@ -22,7 +22,14 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from .capacity import calculate_capacity
-from .catalog import CatalogDetail, CatalogPage, CatalogSort, ModelBrowser
+from .catalog import (
+    CatalogDetail,
+    CatalogFitBatchRequest,
+    CatalogFitBatchResponse,
+    CatalogPage,
+    CatalogSort,
+    ModelBrowser,
+)
 from .cluster_control import (
     InvalidParallelism,
     ModelNotManaged,
@@ -116,7 +123,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     runtime = Runtime(settings)
     model_relay = ModelRelay(settings, runtime.store)
     model_manager = ModelManager(settings, runtime.store, runtime, model_relay)
-    browser = ModelBrowser(settings.hf_token)
+    browser = ModelBrowser(settings)
     log_service = RuntimeLogService(settings, runtime.store)
     deployment_service = RuntimeDeploymentService(
         settings, runtime.store, model_manager, log_service
@@ -174,6 +181,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await deployment_service.stop()
         await log_service.stop()
         await model_manager.stop()
+        browser.close()
         await runtime.stop()
 
     app = FastAPI(title=settings.title, version="0.1.0", lifespan=lifespan)
@@ -404,6 +412,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return await catalog_result(
             browser.search(query, sort, task, library, access, limit, cursor)
         )
+
+    @app.post("/api/v1/catalog/fit", response_model=CatalogFitBatchResponse)
+    async def catalog_fit(request: CatalogFitBatchRequest) -> CatalogFitBatchResponse:
+        return await browser.fit_batch(request)
 
     @app.get("/api/v1/catalog/models/{repo_id:path}", response_model=CatalogDetail)
     async def catalog_model(repo_id: str, revision: str = Query("main", max_length=200)):

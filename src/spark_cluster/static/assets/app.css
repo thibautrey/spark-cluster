@@ -123,3 +123,6 @@
 @keyframes active-download-pulse{50%{opacity:.4;transform:scale(.75)}}
 @media(max-width:800px){.active-download-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:520px){.active-download-identity{grid-template-columns:34px minmax(0,1fr)}.active-download-status{grid-column:2;justify-self:start}.active-download-stats{grid-template-columns:1fr}.active-download-phases span{font-size:0}.active-download-phases i{font-size:8px}}
+
+/* Catalog capacity filter */
+.catalog-fit-badge{display:flex;align-items:center;gap:5px;color:#8fc0a7;font:8px DM Mono;text-transform:capitalize}.catalog-fit-badge i{width:15px;height:15px;display:grid;place-items:center;border-radius:50%;background:#17372b;color:var(--green);font-style:normal}.catalog-analyzing{display:grid!important;place-items:center;gap:8px}.catalog-analyzing i{width:24px;height:24px;border:2px solid #294236;border-top-color:var(--green);border-radius:50%;animation:catalog-spin .8s linear infinite}.catalog-analyzing b{color:#b9cbbf}.catalog-analyzing span{color:#71877a;font-size:9px}@keyframes catalog-spin{to{transform:rotate(360deg)}}

@@ -163,7 +163,7 @@ Common use cases include:
 - 128k, 256k, and 512k serving profiles;
 - tensor and pipeline parallel layouts across one to four nodes.
 
-Always run **Check fit** before downloading or launching. It separates weights, KV cache, runtime overhead, storage, usable unified memory, required node count, and remaining headroom.
+Always run **Check fit** before downloading or launching. It separates weights, KV cache, runtime overhead, storage, usable unified memory, required node count, and remaining headroom. The catalog can also be filtered for 1, 2, 4, or 8 DGX Sparks at a selected context length. Cards show full-memory, hybrid, and specialized-engine fits before a repository is selected.
 
 ## Model library and launch flow
 
@@ -224,6 +224,7 @@ All settings use the `SPARK_CLUSTER_` prefix.
 | --- | --- | --- |
 | `MODE` | `demo` | `demo` for deterministic UI data or `live` for collectors and remote control. |
 | `DATABASE_PATH` | `./spark-cluster.db` | SQLite state, bounded history, downloads, launches, logs, and setup jobs. |
+| `CATALOG_CACHE_PATH` | next to `DATABASE_PATH` | Separate bounded SQLite cache for Hugging Face metadata and per-context capacity plans. |
 | `MODEL_CACHE_PATH` | `./models` | Managed Hugging Face model cache. |
 | `MODEL_ADMIN_TOKEN` | unset | Protects setup, download, retry, and launch mutations. |
 | `INGEST_TOKEN` | unset | Authenticates node telemetry writes. |
@@ -308,5 +309,4 @@ the capacity planner estimate memory; they do not convert or quantize downloaded
 Available formats and tasks in the catalog do not guarantee compatibility with the configured
 vLLM runtime. Review the model card and license before running a model. For gated repositories,
 accept access on Hugging Face and configure `SPARK_CLUSTER_HF_TOKEN` on the controller; the
-credential is never sent to the browser. Catalog requests have bounded page sizes, a short cache,
-and request timeouts.
+credential is never sent to the browser. Catalog requests have bounded page sizes and request timeouts. Hugging Face responses and capacity results are stored in a separate bounded SQLite WAL database. Cache keys include the repository commit, Spark count, context, KV precision, memory assumptions, and planner version, so repeated filters avoid network and fit recomputation without reusing stale model revisions.

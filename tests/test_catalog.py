@@ -151,3 +151,53 @@ def test_timeout_and_validation(catalog):
         assert client.get("/api/v1/catalog/models?" + query).status_code == 422
     assert client.get("/api/v1/catalog/models/a/b/c").status_code == 422
     assert requests == []
+
+
+def test_capacity_filter_caches_metadata_and_context_plan(catalog):
+    client, browser, requests = catalog
+    payload = {
+        "models": [{"id": "acme/spark-model", "commit": "commit123"}],
+        "spark_count": 1,
+        "context_length": 32768,
+        "concurrent_sequences": 1,
+        "kv_cache_dtype": "auto",
+    }
+    first = client.post("/api/v1/catalog/fit", json=payload)
+    assert first.status_code == 200
+    result = first.json()["results"][0]
+    assert result["repo_id"] == "acme/spark-model"
+    assert result["compatible"] is True
+    assert result["minimum_nodes"] == 1
+    assert result["cached"] is False
+    metadata_requests = len(requests)
+
+    second = client.post("/api/v1/catalog/fit", json=payload)
+    assert second.status_code == 200
+    assert second.json()["results"][0]["cached"] is True
+    assert len(requests) == metadata_requests
+    assert second.json()["cache"] == {"metadata_entries": 1, "fit_entries": 1}
+
+    payload["context_length"] = 131072
+    third = client.post("/api/v1/catalog/fit", json=payload)
+    assert third.status_code == 200
+    assert third.json()["results"][0]["cached"] is False
+    assert len(requests) == metadata_requests
+    assert third.json()["cache"]["fit_entries"] == 2
+
+
+def test_capacity_filter_validates_batch_bounds(catalog):
+    client, _, _ = catalog
+    assert (
+        client.post(
+            "/api/v1/catalog/fit",
+            json={"models": [], "spark_count": 1},
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/api/v1/catalog/fit",
+            json={"models": [{"id": "acme/model"}], "spark_count": 0},
+        ).status_code
+        == 422
+    )
