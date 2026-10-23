@@ -171,7 +171,7 @@ def summary(data: dict) -> CatalogModel:
 
 
 class ModelBrowser:
-    planner_version = "catalog-fit-v1"
+    planner_version = "catalog-fit-v2"
 
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -466,6 +466,8 @@ class ModelBrowser:
                     request.context_length,
                     request.concurrent_sequences,
                     request.kv_cache_dtype,
+                    self.settings.active_hardware,
+                    self.settings.active_compute_capability,
                     self.settings.fallback_node_memory_gib,
                     self.settings.model_usable_memory_fraction,
                 ),
