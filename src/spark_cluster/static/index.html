@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=launch-empty-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=cluster-card-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -36,7 +36,7 @@
         </header>
 
         <section class="panel setup-panel" id="setup" data-route-view="setup">
-          <section class="cluster-fleet"><div class="cluster-fleet-head"><div><h3>Your clusters</h3><p>Select the cluster controlled by this dashboard.</p></div><div class="cluster-fleet-actions"><button class="secondary" id="cluster-add-local" type="button">Detect local GPUs</button><button class="primary" id="setup-open-sheet" type="button">＋ Add cluster</button></div></div><div id="cluster-list" class="cluster-list"><div class="empty-state">Loading clusters…</div></div><p class="sr-only" id="cluster-fleet-status">The selected cluster receives fit checks, downloads, launches, logs and telemetry.</p></section>
+          <section class="cluster-fleet"><div class="cluster-fleet-head"><div class="cluster-fleet-actions"><button class="secondary" id="cluster-add-local" type="button">Detect GPUs</button><button class="primary" id="setup-open-sheet" type="button">＋ Add cluster</button></div></div><div id="cluster-list" class="cluster-list"><div class="empty-state">Loading clusters…</div></div><p class="sr-only" id="cluster-fleet-status">The selected cluster receives fit checks, downloads, launches, logs and telemetry.</p></section>
           <div class="bottom-sheet setup-sheet" id="setup-sheet" hidden>
             <button class="bottom-sheet-backdrop" id="setup-sheet-backdrop" type="button" tabindex="-1" aria-label="Close cluster setup"></button>
             <section class="bottom-sheet-panel setup-sheet-panel" role="dialog" aria-modal="true" aria-labelledby="setup-sheet-title">
@@ -325,7 +325,7 @@
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=launch-empty-v1"></script>
+    <script src="/assets/app.js?v=cluster-card-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>
