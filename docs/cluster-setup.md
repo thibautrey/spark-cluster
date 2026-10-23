@@ -1,8 +1,10 @@
 # Guided cluster setup
 
-Open **Cluster setup** in the dashboard to discover machines, assign roles, check readiness, install
-cluster services and follow progress. Demo mode runs the entire wizard with simulated machines and
-never sends discovery probes or SSH commands.
+Run the dashboard on any Linux, macOS, NAS, VM, or container host that can reach the Spark management
+LAN. The interface remains on that system. A lightweight bridge inside Kubernetes performs model
+downloads, storage access, log collection and runtime rollouts next to the GPUs. The controller relays
+the bridge APIs and WebSockets, so cache, memory, topology, models, launches and logs all remain in one
+dashboard. Demo mode runs the same interface with simulated machines and sends no LAN or SSH traffic.
 
 ## Start a bootstrap dashboard
 
@@ -16,17 +18,30 @@ export SPARK_DEEPSEEK_MODE=live
 export SPARK_DEEPSEEK_SETUP_ENABLED=true
 export SPARK_DEEPSEEK_SETUP_SSH_IDENTITY=/absolute/path/to/existing-key
 # Set SPARK_DEEPSEEK_MODEL_ADMIN_TOKEN through your secret manager or environment.
-spark-deepseek serve --host 127.0.0.1 --port 8080
+spark-deepseek serve --host 0.0.0.0 --port 8080
 ```
 
 Enter the same administration token in the wizard and click **Connect**. Live discovery and setup
-require both explicit enablement and a configured administration token. Keep the bootstrap dashboard
-bound to loopback, or place it behind an authenticated TLS proxy. The token stays in the page's memory;
+require both explicit enablement and a configured administration token. Limit port 8080 to trusted
+management clients, or place it behind an authenticated TLS proxy. The token stays in the page's memory;
 it is not written to browser storage. A local SSH agent can be used instead of `SETUP_SSH_IDENTITY`.
 `SETUP_SSH_CONFIG` optionally points to a dedicated client configuration; the default ignores the
 user's global SSH configuration. Containers need the existing key or agent socket mounted explicitly,
 a writable `SETUP_STATE_PATH`, and host networking for LAN multicast discovery on Linux. Native
 execution is recommended for bootstrap, especially on macOS where container multicast is isolated.
+
+To attach a bridge that is already installed, enter its head-node management IPv4 and NodePort in
+**Already configured**. No SSH access is needed for attachment. The controller authenticates
+`/api/v1/controller/verify`, stores only the bridge URL and cluster identity in
+`SETUP_STATE_PATH/active-cluster.json` with mode `0600`, then immediately begins relaying cluster data.
+Set `SPARK_DEEPSEEK_REMOTE_CLUSTER_URL=http://192.168.1.42:30080` for an explicitly managed connection
+without the UI. Public, loopback, link-local and URL-with-path targets are rejected.
+
+The controller and bridge share `MODEL_ADMIN_TOKEN`, but the token is never sent across the LAN.
+Mutating requests and attachment checks use an HMAC-SHA256 signature over method, target, timestamp and
+body digest. Signatures expire after 30 seconds and prevent replay or modification. Keep clocks synced.
+Read-only telemetry remains available on the private bridge endpoint; restrict NodePort 30080 to the
+management LAN with host or upstream firewall rules.
 
 The SSH user must have noninteractive `sudo -n` access on the selected devices. Prepare that account
 according to your administration policy. The wizard does not collect SSH passwords, sudo passwords or
@@ -83,15 +98,17 @@ k3s; temporary enrollment files are root-only and removed on exit.
    the model PVC. Its advertised 1 TiB is a scheduling capacity, not a disk reservation or quota;
    model downloads still check actual free space.
 6. Verify Helm `v3.19.0` against its published SHA256, then install the bundled chart, telemetry agents,
-   dashboard, admin-token secret and idle runtime resources. The image must be accessible from every
+   authenticated cluster bridge and idle runtime resources. The image must be accessible from every
    node. Configure `SETUP_IMAGE_REPOSITORY` and `SETUP_IMAGE_TAG` for your published build.
 7. Check GPU registration, deployment/agent readiness, PVC binding, dashboard HTTP health and actual
    NFS read/write access from each selected machine as the application UID.
 
-Open the resulting dashboard on the head at port **30080**. Its administration token is the same as
-the bootstrap token. Add/download a model in the model library, then use **Launch**. Model capacity
-and runtime readiness are validated separately. Launching scales the deferred head and required Ray
-workers; a successful setup does not mean an inference model is already running.
+After verification, the current external dashboard automatically attaches to the bridge on head port
+**30080**. Add/download a model in the model library, then use **Launch**. The bridge stores models on
+the cluster NFS volume and executes Kubernetes operations; the external controller does not need that
+volume mounted. Model capacity and runtime readiness are validated separately. Launching scales the
+deferred head and required Ray workers. The OpenAI-compatible runtime is exposed on head NodePort
+**30000**, and the API panel displays that LAN URL after launch.
 
 The head is a single control-plane and storage server. Keep API, Ray, NFS and dashboard ports on a
 trusted private network. Allow SSH 22, Kubernetes 6443/10250, k3s overlay 8472/UDP, NFS 2049 and
@@ -120,10 +137,12 @@ All setup endpoints use the model administration bearer token in live mode.
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /api/v1/setup` | Mode, enablement, saved jobs and progress logs |
+| `POST /api/v1/setup/connect` | Authenticate and persist an existing LAN bridge |
 | `POST /api/v1/setup/discover` | mDNS discovery and optional bounded LAN probes |
 | `POST /api/v1/setup/check` | Read-only preflight and detected node fabric addresses |
 | `POST /api/v1/setup/jobs` | Start a reviewed installation |
 | `POST /api/v1/setup/jobs/{id}/resume` | Revalidate and resume an interrupted installation |
+| `GET /api/v1/controller/verify` | HMAC-authenticated bridge identity check |
 
 The dashboard polls authenticated setup state every two seconds while a job is running. Logs and
 step state survive browser reloads. The state directory and SQLite database must be on persistent

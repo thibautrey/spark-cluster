@@ -17,7 +17,13 @@ metadata:
 spec:
   type: {{ .Values.runtime.service.type }}
   selector: { app.kubernetes.io/name: spark-deepseek-runtime, app.kubernetes.io/component: head }
-  ports: [{ name: openai, port: {{ .Values.runtime.service.port }}, targetPort: api }]
+  ports:
+    - name: openai
+      port: {{ .Values.runtime.service.port }}
+      targetPort: api
+      {{- if and (eq .Values.runtime.service.type "NodePort") .Values.runtime.service.nodePort }}
+      nodePort: {{ .Values.runtime.service.nodePort }}
+      {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment

@@ -221,6 +221,8 @@ async def test_full_bootstrap_uses_valid_scripts_and_keeps_tokens_out_of_state(t
     join_script = next(script for script in remote.scripts if "K3S_TOKEN=" in script)
     assert "trap " in join_script and "join.env" in join_script
     assert any('"deferStart": true' in script for script in remote.scripts)
+    assert any('"clusterName": "test-cluster"' in script for script in remote.scripts)
+    assert any('"nodePort": 30000' in script for script in remote.scripts)
     store.close()
 
 

@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     setup_ssh_config: Path | None = None
     setup_image_repository: str = "ghcr.io/thibautrey/spark-deepseek"
     setup_image_tag: str = "latest"
+    remote_cluster_url: str | None = None
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -10,6 +10,8 @@ cache storage, per-node telemetry, capacity planning, and a live cluster dashboa
 
 - **Guided cluster setup** — discover LAN machines, verify SSH and GB10 compatibility, configure roles,
   install cluster services, diagnose failures and resume interrupted setup from the dashboard.
+- **External controller mode** — host the dashboard on another Linux, macOS, NAS, VM, or container
+  host and transparently control a Spark cluster through its authenticated LAN bridge.
 - **Distributed inference** — a Ray-backed vLLM runtime with tensor and pipeline parallel settings.
 - **Long-context configuration** — first-class 128k, 256k, and 512k deployment profiles.
 - **Restart-resilient KV cache** — GPU, unified memory, local NVMe, and shared-cache tiers through
@@ -31,11 +33,17 @@ in SQLite WAL mode and exposes the same snapshot used by the UI through `/api/v1
 
 ## Guided setup
 
-Open **Cluster setup** for a step-by-step assistant: discover machines → configure roles and NVIDIA
-Sync fabric → run diagnostics → install services → open the cluster dashboard. It automates k3s,
-GPU scheduling, shared model storage and idle inference resources over verified SSH connections.
-The same flow is available in demo mode. See the [setup guide](docs/cluster-setup.md) for access
-preparation, network requirements, installation details and recovery.
+The dashboard can run directly in Kubernetes or as an external controller on any system that can reach
+the Spark management LAN. The external controller keeps the UI and connection state locally. A small
+bridge in the cluster owns GPU-local model storage, Kubernetes logs and rollout operations; HTTP APIs
+and WebSocket streams are relayed transparently, so every existing dashboard screen continues to work.
+Control requests use timestamped HMAC signatures, and the administration token never crosses the LAN.
+
+Open **Cluster setup** to attach an existing bridge by head-node IPv4, or use the full assistant:
+discover machines → configure roles and NVIDIA Sync fabric → run diagnostics → install services →
+connect this controller. It automates k3s, GPU scheduling, shared model storage, the cluster bridge and
+idle inference resources over verified SSH connections. See the [setup guide](docs/cluster-setup.md)
+for host, network, access and recovery details.
 
 ## OpenAI-compatible endpoint
 
@@ -207,6 +215,8 @@ not in the dashboard.
 | `POST /api/v1/launches/{id}/retry` | Retry a failed rollout |
 | `GET /api/v1/control` | Aggregated runtime, model, download, and launch dashboard state |
 | `WS /api/v1/stream` | Live dashboard updates |
+| `POST /api/v1/setup/connect` | Attach this dashboard to an existing LAN bridge |
+| `GET /api/v1/controller/verify` | Authenticate and identify a cluster bridge |
 | `GET /metrics` | Prometheus exposition |
 
 Set `SPARK_DEEPSEEK_INGEST_TOKEN` on the server and every agent to authenticate writes. Read endpoints
@@ -241,6 +251,7 @@ All control-plane settings use the `SPARK_DEEPSEEK_` prefix:
 | `SETUP_SSH_CONFIG` | unset | Optional dedicated OpenSSH client configuration |
 | `SETUP_IMAGE_REPOSITORY` | `ghcr.io/thibautrey/spark-deepseek` | Dashboard/agent image installed by setup |
 | `SETUP_IMAGE_TAG` | `latest` | Published dashboard/agent image version |
+| `REMOTE_CLUSTER_URL` | unset | Existing bridge URL, such as `http://192.168.1.42:30080` |
 
 ## Development
 

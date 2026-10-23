@@ -5,6 +5,7 @@ image:
 
 controlPlane:
   replicas: 1
+  clusterName: gb10-lab
   mode: live
   runtimeLogsMode: auto
   runtimeControlMode: auto
@@ -58,6 +59,7 @@ runtime:
   service:
     type: ClusterIP
     port: 8000
+    nodePort: null
   cache:
     cpuGiB: 32
     diskGiB: 1536

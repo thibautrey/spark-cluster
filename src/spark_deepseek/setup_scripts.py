@@ -249,7 +249,11 @@ sudo -n install -m 0755 "$helmdir/linux-$arch/helm" /usr/local/bin/helm
                 "repository": service.settings.setup_image_repository,
                 "tag": service.settings.setup_image_tag,
             },
-            "controlPlane": {"mode": "live", "service": {"type": "NodePort", "nodePort": 30080}},
+            "controlPlane": {
+                "clusterName": name,
+                "mode": "live",
+                "service": {"type": "NodePort", "nodePort": 30080},
+            },
             "models": {
                 "adminTokenSecret": "spark-deepseek-admin",
                 "persistence": {"enabled": True, "existingClaim": "spark-deepseek-models"},
@@ -258,6 +262,8 @@ sudo -n install -m 0755 "$helmdir/linux-$arch/helm" /usr/local/bin/helm
                 "enabled": True,
                 "deferStart": True,
                 "hostNetwork": True,
+                "openAIBaseUrl": f"http://{head.address}:30000/v1",
+                "service": {"type": "NodePort", "nodePort": 30000},
                 "tensorParallelSize": len(nodes),
                 "nodeSelector": {"spark-deepseek.io/managed": "true"},
             },

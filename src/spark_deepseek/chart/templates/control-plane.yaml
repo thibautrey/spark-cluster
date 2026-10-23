@@ -22,6 +22,7 @@ spec:
           args: ["serve"]
           env:
             - { name: SPARK_DEEPSEEK_MODE, value: {{ .Values.controlPlane.mode | quote }} }
+            - { name: SPARK_DEEPSEEK_CLUSTER_NAME, value: {{ .Values.controlPlane.clusterName | quote }} }
             - { name: SPARK_DEEPSEEK_RUNTIME_LOGS_MODE, value: {{ .Values.controlPlane.runtimeLogsMode | quote }} }
             - { name: SPARK_DEEPSEEK_RUNTIME_CONTROL_MODE, value: {{ .Values.controlPlane.runtimeControlMode | quote }} }
             - { name: SPARK_DEEPSEEK_DATABASE_PATH, value: /data/spark-deepseek.db }

@@ -74,6 +74,13 @@ class SetupRequest(BaseModel):
         return self
 
 
+class ClusterConnectRequest(BaseModel):
+    address: str
+    port: int = Field(default=30080, ge=1024, le=65535)
+
+    _address = field_validator("address")(private_address)
+
+
 class SetupCheck(BaseModel):
     node: str
     code: str

@@ -4,7 +4,16 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
@@ -40,7 +49,15 @@ from .models import (
     RuntimeLog,
 )
 from .prometheus import render_metrics
-from .setup_models import DiscoveryRequest, SetupRequest
+from .remote_cluster import (
+    RemoteClusterConnector,
+    RemoteClusterProxyMiddleware,
+    RemoteClusterUnavailable,
+    load_active_connection,
+    valid_controller_signature,
+    validated_cluster_url,
+)
+from .setup_models import ClusterConnectRequest, DiscoveryRequest, SetupRequest
 from .simulator import ClusterSimulator
 from .store import SnapshotStore
 
@@ -84,6 +101,11 @@ class Runtime:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
+    if settings.remote_cluster_url:
+        settings.remote_cluster_url = validated_cluster_url(settings.remote_cluster_url)
+    else:
+        if active_connection := load_active_connection(settings):
+            settings.remote_cluster_url = active_connection["url"]
     runtime = Runtime(settings)
     model_manager = ModelManager(settings, runtime.store, runtime)
     log_service = RuntimeLogService(settings, runtime.store)
@@ -91,6 +113,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings, runtime.store, model_manager, log_service
     )
     setup_service = ClusterSetupService(settings, runtime.store)
+    cluster_connector = RemoteClusterConnector(settings)
+
+    async def activate_cluster(job) -> None:
+        head = next(node for node in job.request.nodes if node.role == "head")
+        await cluster_connector.attach(head.address, 30080)
+
+    setup_service.on_cluster_ready = activate_cluster
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -112,6 +141,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.log_service = log_service
     app.state.deployment_service = deployment_service
     app.state.setup_service = setup_service
+    app.state.settings = settings
+    app.state.cluster_connector = cluster_connector
+    app.add_middleware(RemoteClusterProxyMiddleware, settings=settings)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
@@ -127,10 +159,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if expected and authorization != f"Bearer {expected}":
             raise HTTPException(status_code=401, detail="Invalid ingest token")
 
-    def require_model_token(authorization: str | None = Header(default=None)) -> None:
+    async def require_model_token(
+        request: Request,
+        authorization: str | None = Header(default=None),
+        x_spark_timestamp: str | None = Header(default=None),
+        x_spark_signature: str | None = Header(default=None),
+    ) -> None:
         expected = settings.model_admin_token
-        if expected and authorization != f"Bearer {expected}":
-            raise HTTPException(status_code=401, detail="Invalid model administration token")
+        if not expected:
+            return
+        if authorization == f"Bearer {expected}":
+            return
+        target = request.url.path + (f"?{request.url.query}" if request.url.query else "")
+        if valid_controller_signature(
+            expected,
+            request.method,
+            target,
+            x_spark_timestamp,
+            x_spark_signature,
+            await request.body(),
+        ):
+            return
+        raise HTTPException(status_code=401, detail="Invalid model administration token")
 
     @app.exception_handler(SetupFailure)
     async def setup_failure(_, error: SetupFailure):
@@ -138,9 +188,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return JSONResponse(status_code=409, content={"detail": str(error)})
 
+    @app.exception_handler(RemoteClusterUnavailable)
+    async def remote_cluster_unavailable(_, error: RemoteClusterUnavailable):
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(status_code=502, content={"detail": str(error)})
+
     @app.get("/api/v1/setup", dependencies=[Depends(require_model_token)])
     async def setup_state():
         return await setup_service.state()
+
+    @app.post("/api/v1/setup/connect", dependencies=[Depends(require_model_token)])
+    async def connect_cluster(request: ClusterConnectRequest):
+        return await cluster_connector.attach(request.address, request.port)
+
+    @app.get("/api/v1/controller/verify", dependencies=[Depends(require_model_token)])
+    async def verify_controller():
+        return {"status": "ready", "cluster_name": settings.cluster_name}
 
     @app.post("/api/v1/setup/discover", dependencies=[Depends(require_model_token)])
     async def discover_nodes(request: DiscoveryRequest):

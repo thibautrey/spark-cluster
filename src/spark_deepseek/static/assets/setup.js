@@ -31,7 +31,7 @@ function setupButtons() {
   $('setup-next').disabled = setupBusy || !setupState?.enabled || !setupSelection.size ||
     (setupStage === 1 && !$('setup-trust').checked) ||
     (setupStage === 2 && (!setupChecks || setupChecks.some(check => check.status === 'error') || !$('setup-approve').checked));
-  ['setup-discover', 'setup-check', 'setup-connect', 'setup-back', 'setup-resume'].forEach(id => { $(id).disabled = setupBusy; });
+  ['setup-discover', 'setup-attach', 'setup-check', 'setup-connect', 'setup-back', 'setup-resume'].forEach(id => { $(id).disabled = setupBusy; });
 }
 async function setupAction(action) {
   if (setupBusy) return;
@@ -80,8 +80,9 @@ function renderSetupJob(job) {
 }
 async function loadSetup(restore = false) {
   setupState = await api('/api/v1/setup', {headers: setupAuth()});
-  $('setup-mode').textContent = setupState.mode === 'demo' ? 'DEMO · simulated machines' : setupState.enabled ? 'LIVE · SSH bootstrap' : 'Setup disabled';
-  $('setup-access').textContent = setupState.enabled ? (setupState.mode === 'demo' ? 'Simulated discovery and installation. No machine is modified.' : 'Authenticated bootstrap connected. Use a trusted LAN.') : 'Enable SETUP_ENABLED and MODEL_ADMIN_TOKEN on a local bootstrap dashboard. See docs/cluster-setup.md.';
+  const connected = setupState.connected_cluster;
+  $('setup-mode').textContent = connected ? `CONTROLLER · ${connected.cluster_name}` : setupState.mode === 'demo' ? 'DEMO · simulated machines' : setupState.enabled ? 'LIVE · SSH bootstrap' : 'Setup disabled';
+  $('setup-access').textContent = connected ? `This dashboard controls ${connected.cluster_name} through ${connected.url}.` : setupState.enabled ? (setupState.mode === 'demo' ? 'Simulated discovery and installation. No machine is modified.' : 'Authenticated bootstrap connected. Use a trusted LAN.') : 'Enter a bridge address above, or enable SETUP_ENABLED to configure new machines.';
   if (restore && setupState.jobs.length) {
     const job = setupState.jobs[0];
     $('setup-name').value = job.request.name;
@@ -96,6 +97,14 @@ async function loadSetup(restore = false) {
   setupButtons();
 }
 $('setup-connect').addEventListener('click', () => setupAction(() => loadSetup(true)));
+$('setup-attach').addEventListener('click', () => setupAction(async () => {
+  const address = $('setup-existing-address').value.trim();
+  if (!address) throw new Error('Enter the management IPv4 of the cluster head.');
+  const connection = await api('/api/v1/setup/connect', {method:'POST', headers:setupAuth(), body:JSON.stringify({address, port:Number($('setup-existing-port').value)})});
+  await loadSetup();
+  $('discovery-note').textContent = `Connected to ${connection.cluster_name} through ${connection.url}. Cluster data and commands now use this controller.`;
+  location.hash = '#overview';
+}));
 $('setup-discover').addEventListener('click', () => setupAction(async () => {
   if (!setupState) await loadSetup();
   $('discovery-note').textContent = 'Discovering LAN services and checking SSH…';

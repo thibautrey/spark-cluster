@@ -10,6 +10,7 @@ import os
 import shlex
 import signal
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -174,6 +175,7 @@ class ClusterSetupService:
         self.tasks: dict[str, asyncio.Task] = {}
         self.lock = asyncio.Lock()
         self.discovery_lock = asyncio.Lock()
+        self.on_cluster_ready: Callable[[SetupJob], Awaitable[None]] | None = None
 
     @property
     def enabled(self) -> bool:
@@ -208,11 +210,14 @@ class ClusterSetupService:
             )
 
     async def state(self):
+        from .remote_cluster import current_connection
+
         return {
             "mode": self.mode,
             "enabled": self.enabled,
             "sync_guide": SYNC_GUIDE,
             "jobs": self.store.list_setup_jobs(),
+            "connected_cluster": current_connection(self.settings),
             "requirements": [
                 "Run this bootstrap dashboard on the same LAN as the Sparks.",
                 "Verify SSH fingerprints, configure SSH key access and noninteractive sudo.",
@@ -569,8 +574,9 @@ class ClusterSetupService:
                 current.message = "Simulated" if self.mode == "demo" else "Verified"
                 self.save(job)
             job.status = "ready"
-            head = next(node for node in job.request.nodes if node.role == "head")
-            job.dashboard_url = "#models" if self.mode == "demo" else f"http://{head.address}:30080"
+            job.dashboard_url = "#models"
+            if self.mode != "demo" and self.on_cluster_ready:
+                await self.on_cluster_ready(job)
             self.log(job, "Cluster services are ready. Add a model to validate inference and NCCL.")
         except asyncio.CancelledError:
             job.status = "blocked"
