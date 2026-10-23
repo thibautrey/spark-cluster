@@ -201,3 +201,82 @@ def test_capacity_filter_validates_batch_bounds(catalog):
         ).status_code
         == 422
     )
+
+
+def test_spark_discovery_ranks_deduplicates_and_paginates_cached_shortlist(catalog):
+    client, browser, requests = catalog
+
+    def handle(request):
+        requests.append(request)
+        params = request.url.params
+        assert params["pipeline_tag"] == "text-generation"
+        assert params["gated"] == "false"
+        assert "safetensors" in params["filter"]
+        assert params["sort"] != "spark"
+        if params["search"] == "NVFP4":
+            models = [{"id": "nvidia/Qwen-NVFP4"}, {"id": "other/Irrelevant-NVFP4"}]
+        elif "dgx-spark" in params["filter"]:
+            models = [{"id": "acme/Qwen-NVFP4-DGX-Spark", "tags": ["dgx-spark", "nvfp4"]}]
+        elif "sm121" in params["filter"]:
+            models = [{"id": "acme/Qwen-NVFP4-DGX-Spark", "tags": ["sm121", "nvfp4"]}]
+        else:
+            models = [{"id": "popular/Qwen", "downloads": 9999999}]
+        return httpx.Response(200, json=models)
+
+    browser.transport = httpx.MockTransport(handle)
+    url = ("/api/v1/catalog/models?query=Qwen&task=text-generation"
+           "&library=safetensors&access=open&limit=1")
+    first = client.get(url)
+    assert first.status_code == 200
+    page = first.json()
+    assert page["models"][0]["id"] == "acme/Qwen-NVFP4-DGX-Spark"
+    assert page["models"][0]["spark"]["tier"] == "spark-targeted"
+    assert "shortlist of 3" in page["ranking_note"]
+    assert len(requests) == 4
+    cursor = page["cursor"]
+    second = client.get(url + "&cursor=" + cursor).json()
+    assert second["models"][0]["id"] == "nvidia/Qwen-NVFP4"
+    third = client.get(url + "&cursor=" + second["cursor"]).json()
+    assert third["models"][0]["id"] == "popular/Qwen"
+    assert third["cursor"] is None
+    assert len(requests) == 4
+    # A new browser instance reuses both classification and ordering from SQLite.
+    from spark_cluster.catalog import ModelBrowser
+    reopened = ModelBrowser(browser.settings)
+    assert reopened.persistent_cache.get_metadata(
+        "spark-ranking:" + cursor.split(":")[1]
+    )[0]["models"][0]["spark"]["tier"] == "spark-targeted"
+    reopened.close()
+    assert client.get(url.replace("query=Qwen", "query=Other") + "&cursor=" + cursor).status_code == 422
+    assert client.get(url + "&cursor=" + cursor.rsplit(":", 1)[0] + ":999").status_code == 422
+
+
+def test_spark_discovery_supplement_failure_keeps_regular_results(catalog):
+    client, browser, _ = catalog
+
+    def handle(request):
+        if request.url.params["search"] == "NVFP4" or request.url.params.get("filter"):
+            return httpx.Response(503)
+        return httpx.Response(200, json=[{"id": "acme/baseline"}])
+
+    browser.transport = httpx.MockTransport(handle)
+    response = client.get("/api/v1/catalog/models")
+    assert response.status_code == 200
+    assert response.json()["models"][0]["id"] == "acme/baseline"
+    assert "unavailable" in response.json()["ranking_note"]
+
+
+def test_explicit_sort_preserves_hub_order_while_adding_badges(catalog):
+    client, browser, requests = catalog
+    browser.transport = httpx.MockTransport(lambda request: (
+        requests.append(request) or httpx.Response(200, json=[
+            {"id": "popular/baseline"}, {"id": "acme/model-NVFP4"},
+        ])
+    ))
+    response = client.get("/api/v1/catalog/models?sort=downloads")
+    assert response.status_code == 200
+    assert [model["id"] for model in response.json()["models"]] == [
+        "popular/baseline", "acme/model-NVFP4",
+    ]
+    assert response.json()["models"][1]["spark"]["score"] > 0
+    assert len(requests) == 1

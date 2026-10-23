@@ -414,7 +414,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/catalog/models", response_model=CatalogPage)
     async def catalog_models(
         query: str = Query("", max_length=200),
-        sort: CatalogSort = "trendingScore",
+        sort: CatalogSort = "spark",
         task: str = Query("", max_length=80),
         library: str = Query("", max_length=80),
         access: Literal["", "open", "gated"] = "",

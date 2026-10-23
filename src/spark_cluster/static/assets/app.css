@@ -206,3 +206,13 @@ body.bottom-sheet-open{overflow:hidden}
 .runtime-terminal-toolbar{display:flex;align-items:end;gap:9px}.runtime-terminal-toolbar label{display:grid;gap:5px;flex:1;color:#718078;font-size:9px}.runtime-terminal-toolbar select{border:1px solid #293a32;border-radius:7px;background:#080e0b;color:#d5dfda;padding:9px;font:10px DM Mono}.runtime-terminal-toolbar button{height:36px;padding:0 12px;border-radius:7px;font-size:9px}
 .runtime-terminal-output{height:280px;margin:0;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #26362f;border-radius:9px;background:#030705;color:#b6d5c4;padding:14px;font:10px/1.55 DM Mono;box-shadow:inset 0 0 30px #0008}.runtime-terminal-input{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:9px;border:1px solid #2d463a;border-radius:8px;background:#07100c;padding:0 11px}.runtime-terminal-input span{color:var(--green);font:12px DM Mono}.runtime-terminal-input input{height:39px;border:0;outline:0;background:transparent;color:#d0ded6;font:10px DM Mono}
 @media(max-width:780px){.runtime-sheet-panel{width:100vw;height:calc(100dvh - 8px)}.runtime-sheet-content{padding:20px 16px 28px}.runtime-summary{grid-template-columns:42px 1fr}.runtime-summary>div:last-child{grid-column:2;text-align:left}.runtime-sheet-actions{display:grid;grid-template-columns:1fr 1fr}.runtime-sheet-actions button:first-child{grid-column:1/-1;margin:0}.runtime-terminal-toolbar{align-items:stretch;flex-wrap:wrap}.runtime-terminal-toolbar label{flex-basis:100%}.runtime-terminal-output{height:230px}}
+
+/* Explainable DGX Spark discovery signals. */
+.catalog-ranking-help{margin:4px 0 18px;color:#90a6b7;font-size:12px;line-height:1.6}
+.catalog-spark-badge{display:flex;align-items:center;gap:7px;width:fit-content;padding:6px 9px;border:1px solid #46733d;border-radius:7px;background:#20351e;color:#b7ed93;font-size:11px;line-height:1.4;text-align:left}
+.catalog-spark-badge.caution{border-color:#75602f;background:#302a1b;color:#e6c77e}
+.catalog-spark-info{margin:20px 0;padding:17px;border:1px solid #3a5837;border-radius:10px;background:linear-gradient(125deg,#192c21,#101d27);text-align:left}
+.catalog-spark-info h4{margin:0 0 12px;color:#b7ed93;font-size:15px}
+.catalog-spark-info ul{padding-left:18px;margin:14px 0;color:#c3d3df;font-size:12px;line-height:1.7}
+.catalog-spark-info p{font-size:11px!important;line-height:1.7;margin:9px 0}
+.catalog-spark-info a{display:inline-block;margin-top:7px;color:#b7ed93;font-size:12px}

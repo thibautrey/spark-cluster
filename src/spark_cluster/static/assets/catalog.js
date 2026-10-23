@@ -62,6 +62,14 @@ function catalogImage(model, detail = false) {
   </span>`;
 }
 
+function sparkBadge(model, detail = false) {
+  const spark = model.spark;
+  if (!spark || (!spark.score && !spark.caveats?.length)) return '';
+  const title = [...spark.reasons, ...spark.caveats].join(' ');
+  if (!detail) return `<span class="catalog-spark-badge ${spark.score ? '' : 'caution'}" title="${escapeHtml(title)}"><span aria-hidden="true">⚡</span>${escapeHtml(spark.label)}</span>`;
+  return `<section class="catalog-spark-info"><h4>⚡ ${escapeHtml(spark.label)}</h4><div class="catalog-tags">${spark.badges.map(badge => `<span>${escapeHtml(badge)}</span>`).join('')}</div>${spark.reasons.length ? `<ul>${spark.reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join('')}</ul>` : ''}${spark.caveats.map(note => `<p>${escapeHtml(note)}</p>`).join('')}<a href="https://github.com/NVIDIA/dgx-spark-playbooks/tree/main/nvidia/playbook-nvfp4-quantization" target="_blank" rel="noopener noreferrer">NVIDIA NVFP4 / Spark guide ↗</a></section>`;
+}
+
 function selectedCapacity() {
   return Number($('catalog-capacity').value || 0);
 }
@@ -92,6 +100,7 @@ function renderCatalogCards() {
         <span class="catalog-card-head"><span class="catalog-avatar">${escapeHtml(model.author[0].toUpperCase())}</span><span class="catalog-author">${escapeHtml(model.author)}</span><span class="catalog-card-arrow">↗</span></span>
         <b class="catalog-card-title">${escapeHtml(model.id.split('/').pop())}</b>
         <span class="catalog-tags">${[model.task, model.library, model.parameters ? `${formatNumber(model.parameters)} params` : null].filter(Boolean).slice(0, 3).map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</span>
+        ${sparkBadge(model)}
         ${fitBadge(model)}
         <span class="catalog-card-foot"><span title="Downloads">↓ ${formatNumber(model.downloads)}</span><span title="Likes">♡ ${formatNumber(model.likes)}</span>${model.updated ? `<span class="catalog-updated">${escapeHtml(new Date(model.updated).toLocaleDateString())}</span>` : ''}</span>
       </span>
@@ -112,13 +121,20 @@ async function applyCapacityFilter() {
   renderCatalogCards();
   $('catalog-status').textContent = `Analyzing ${catalogModels.length} models for ${sparkCount} Spark${sparkCount === 1 ? '' : 's'}…`;
   try {
-    const response = await api('/api/v1/catalog/fit', {method: 'POST', body: JSON.stringify({
-      models: catalogModels.map(model => ({id: model.id, commit: model.commit})),
-      spark_count: sparkCount,
-      context_length: Number($('catalog-fit-context').value),
-      concurrent_sequences: 1,
-      kv_cache_dtype: 'auto',
-    })});
+    const response = {results: []};
+    const candidates = [...catalogModels];
+    const contextLength = Number($('catalog-fit-context').value);
+    for (let start = 0; start < candidates.length; start += 48) {
+      const batch = await api('/api/v1/catalog/fit', {method: 'POST', body: JSON.stringify({
+        models: candidates.slice(start, start + 48).map(model => ({id: model.id, commit: model.commit})),
+        spark_count: sparkCount,
+        context_length: contextLength,
+        concurrent_sequences: 1,
+        kv_cache_dtype: 'auto',
+      })});
+      if (request !== catalogFitRequest) return;
+      response.results.push(...batch.results);
+    }
     if (request !== catalogFitRequest) return;
     catalogFits = new Map(response.results.map(result => [result.repo_id, result]));
     catalogCapacityLoading = false;
@@ -158,7 +174,7 @@ async function loadCatalog(append = false) {
     const existing = new Set(catalogModels.map(model => model.id));
     catalogModels.push(...page.models.filter(model => !existing.has(model.id)));
     catalogCursor = page.cursor;
-    catalogBaseStatus = `${catalogModels.length} models${catalogCursor ? ' · more available' : ''} · Hugging Face Hub`;
+    catalogBaseStatus = `${catalogModels.length} models${catalogCursor ? ' · more available' : ''} · ${page.ranking_note || 'Hugging Face Hub'}`;
     if (selectedCapacity()) await applyCapacityFilter();
     else {
       renderCatalogCards();
@@ -207,7 +223,7 @@ async function inspectCatalogModel(repo, revision = 'main', opener = null) {
     const model = await api(`/api/v1/catalog/models/${repo.split('/').map(encodeURIComponent).join('/')}?revision=${encodeURIComponent(revision)}`);
     if (request !== detailRequest) return;
     const facts = [['Repository size', `${model.size_complete ? '' : 'At least '}${formatBytes(model.repository_bytes)}`], ['Parameters', model.parameters ? formatNumber(model.parameters) : 'Not reported'], ['Architecture', model.architecture || model.library || 'Not reported'], ['License', model.license || 'See model license']];
-    $('catalog-detail').innerHTML = `${catalogImage(model, true)}<div class="catalog-detail-head"><div class="catalog-detail-identity"><span class="catalog-avatar">${escapeHtml(model.author[0].toUpperCase())}</span><div><p class="eyebrow">${escapeHtml(model.author)}</p><h3>${escapeHtml(model.id.split('/').pop())}</h3></div></div><div class="catalog-tags">${[model.task, model.library].filter(Boolean).map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div><div class="catalog-popularity"><span>↓ <b>${formatNumber(model.downloads)}</b><small>downloads</small></span><span>♡ <b>${formatNumber(model.likes)}</b><small>likes</small></span></div><dl class="catalog-facts">${facts.map(([title, value]) => `<div><dt>${title}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>${model.gated ? '<p class="catalog-access-note">License approval is required. Accept access on Hugging Face and configure the controller token.</p>' : ''}<a class="catalog-hf-link" href="https://huggingface.co/${model.id.split('/').map(encodeURIComponent).join('/')}" target="_blank" rel="noopener noreferrer">Open model card &amp; license <span>↗</span></a></div><details class="catalog-files"><summary><span>${model.files.length} repository files</span><small>Show file manifest</small></summary><div class="catalog-file-list">${model.files.map(file => `<div class="catalog-file"><span>${escapeHtml(file.name)}</span><span>${file.size === null ? 'Unknown size' : formatBytes(file.size)}</span></div>`).join('')}</div></details>`;
+    $('catalog-detail').innerHTML = `${catalogImage(model, true)}<div class="catalog-detail-head"><div class="catalog-detail-identity"><span class="catalog-avatar">${escapeHtml(model.author[0].toUpperCase())}</span><div><p class="eyebrow">${escapeHtml(model.author)}</p><h3>${escapeHtml(model.id.split('/').pop())}</h3></div></div><div class="catalog-tags">${[model.task, model.library].filter(Boolean).map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div><div class="catalog-popularity"><span>↓ <b>${formatNumber(model.downloads)}</b><small>downloads</small></span><span>♡ <b>${formatNumber(model.likes)}</b><small>likes</small></span></div>${sparkBadge(model, true)}<dl class="catalog-facts">${facts.map(([title, value]) => `<div><dt>${title}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>${model.gated ? '<p class="catalog-access-note">License approval is required. Accept access on Hugging Face and configure the controller token.</p>' : ''}<a class="catalog-hf-link" href="https://huggingface.co/${model.id.split('/').map(encodeURIComponent).join('/')}" target="_blank" rel="noopener noreferrer">Open model card &amp; license <span>↗</span></a></div><details class="catalog-files"><summary><span>${model.files.length} repository files</span><small>Show file manifest</small></summary><div class="catalog-file-list">${model.files.map(file => `<div class="catalog-file"><span>${escapeHtml(file.name)}</span><span>${file.size === null ? 'Unknown size' : formatBytes(file.size)}</span></div>`).join('')}</div></details>`;
     $('catalog-sheet-body').className = 'catalog-sheet-body';
     $('model-form').hidden = false;
   } catch (error) {
@@ -235,7 +251,7 @@ $('catalog-query').addEventListener('keydown', event => {
 ['catalog-capacity', 'catalog-fit-context'].forEach(id => $(id).addEventListener('change', () => applyCapacityFilter()));
 $('catalog-reset').addEventListener('click', () => {
   $('catalog-query').value = '';
-  $('catalog-sort').value = 'trendingScore';
+  $('catalog-sort').value = 'spark';
   $('catalog-task').value = 'text-generation';
   $('catalog-library').value = '';
   $('catalog-access').value = '';

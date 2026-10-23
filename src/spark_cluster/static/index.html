@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=runtime-readiness-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=spark-ranking-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -131,7 +131,7 @@
           </section>
           <div class="catalog-toolbar">
             <label class="catalog-search"><span>⌕</span><input id="catalog-query" type="search" aria-label="Search Hugging Face models" placeholder="Search models, authors, or paste a repository ID…" autocomplete="off" /></label>
-            <label>Sort by<select id="catalog-sort"><option value="trendingScore">Trending</option><option value="downloads">Most downloaded</option><option value="likes">Most liked</option><option value="lastModified">Recently updated</option></select></label>
+            <label>Sort by<select id="catalog-sort"><option value="spark">Best for DGX Spark</option><option value="trendingScore">Trending</option><option value="downloads">Most downloaded</option><option value="likes">Most liked</option><option value="lastModified">Recently updated</option></select></label>
           </div>
           <div class="catalog-filters">
             <label>Task<select id="catalog-task"><option value="text-generation">Text generation</option><option value="">All tasks</option><option value="image-text-to-text">Vision &amp; language</option><option value="feature-extraction">Embeddings</option><option value="text-to-image">Text to image</option><option value="automatic-speech-recognition">Speech recognition</option></select></label>
@@ -142,6 +142,7 @@
             <button id="catalog-reset" type="button" class="secondary">Reset filters</button>
             <button id="catalog-manual" type="button" class="secondary">Use repository ID</button>
           </div>
+          <p class="catalog-ranking-help">Spark-targeted and NVFP4 checkpoints are highlighted. Publisher signals guide discovery; memory fit and runtime support are checked separately.</p>
           <div class="catalog-workspace">
             <div class="catalog-results">
               <div class="catalog-status"><span id="catalog-status" role="status" aria-live="polite">Loading models…</span><button id="catalog-retry" type="button" class="secondary" hidden>Retry</button></div>
@@ -278,7 +279,7 @@
     </div>
     <script src="/assets/navigation.js"></script>
     <script src="/assets/app.js?v=runtime-readiness-v1"></script>
-    <script src="/assets/catalog.js?v=runtime-readiness-v1"></script>
+    <script src="/assets/catalog.js?v=spark-ranking-v1"></script>
     <script src="/assets/setup.js"></script>
   </body>
 </html>

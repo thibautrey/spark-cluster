@@ -1,6 +1,7 @@
 """Bounded, controller-local Hugging Face discovery. Credentials never reach the UI."""
 
 import asyncio
+import hashlib
 import json
 import re
 import time
@@ -20,8 +21,9 @@ from .model_manager import (
     safe_repo_parts,
 )
 from .models import ModelFitRequest
+from .spark_optimization import CLASSIFIER_VERSION, SparkOptimization, classify_spark
 
-CatalogSort = Literal["trendingScore", "downloads", "likes", "lastModified"]
+CatalogSort = Literal["spark", "trendingScore", "downloads", "likes", "lastModified"]
 
 
 class CatalogModel(BaseModel):
@@ -37,11 +39,13 @@ class CatalogModel(BaseModel):
     parameters: int | None = None
     thumbnail_url: str
     commit: str | None = None
+    spark: SparkOptimization = Field(default_factory=SparkOptimization)
 
 
 class CatalogPage(BaseModel):
     models: list[CatalogModel]
     cursor: str | None = None
+    ranking_note: str | None = None
 
 
 class CatalogFile(BaseModel):
@@ -103,6 +107,7 @@ def summary(data: dict) -> CatalogModel:
     repo_id = data.get("id") or data["modelId"]
     return CatalogModel(
         id=repo_id,
+        spark=classify_spark(data),
         author=data.get("author") or (repo_id.split("/")[0] if "/" in repo_id else "Hugging Face"),
         downloads=data.get("downloads") or 0,
         likes=data.get("likes") or 0,
@@ -179,6 +184,8 @@ class ModelBrowser:
         limit: int,
         cursor: str | None,
     ) -> CatalogPage:
+        if sort == "spark":
+            return await self._spark_search(query, task, library, access, limit, cursor)
         params = {
             "search": query,
             "sort": sort,
@@ -196,6 +203,79 @@ class ModelBrowser:
             params["cursor"] = cursor
         data, next_cursor = await self.fetch("/api/models", params)
         return CatalogPage(models=[summary(item) for item in data], cursor=next_cursor)
+
+    async def _spark_search(
+        self, query: str, task: str, library: str, access: str,
+        limit: int, cursor: str | None,
+    ) -> CatalogPage:
+        # Cache the entire ranked shortlist, not individual pages, so pagination is
+        # stable and classification is reused across controller restarts.
+        identity = json.dumps((CLASSIFIER_VERSION, query, task, library, access))
+        digest = hashlib.sha256(identity.encode()).hexdigest()[:24]
+        key = f"spark-ranking:{digest}"
+        offset = 0
+        if cursor:
+            parts = cursor.split(":")
+            if len(parts) != 3 or parts[:2] != ["spark-v1", digest]:
+                raise ValueError("Invalid Spark catalog cursor")
+            if not parts[2].isdigit():
+                raise ValueError("Invalid Spark catalog offset")
+            offset = int(parts[2])
+            if not 0 < offset < 192:
+                raise ValueError("Invalid Spark catalog offset")
+        cached = await asyncio.to_thread(self.persistent_cache.get_metadata, key)
+        if cursor and not cached:
+            raise ValueError("Expired Spark catalog cursor; restart search")
+        if cached:
+            snapshot = cached[0]
+        else:
+            # A bounded union discovers relevant low-precision checkpoints even
+            # when they do not make the first trending page. Every upstream query
+            # carries the same task, format and access constraints.
+            base = {"search": query, "sort": "trendingScore", "direction": "-1",
+                    "limit": "48", "full": "true"}
+            if task:
+                base["pipeline_tag"] = task
+            if library:
+                base["filter"] = library
+            if access:
+                base["gated"] = "true" if access == "gated" else "false"
+            targeted = []
+            for tag in ("dgx-spark", "sm121"):
+                targeted.append({**base, "filter": ",".join(filter(None, (library, tag)))})
+            responses = await asyncio.gather(
+                self.fetch("/api/models", base),
+                self.fetch("/api/models", {**base, "search": "NVFP4", "sort": "downloads"}),
+                *(self.fetch("/api/models", params) for params in targeted),
+                return_exceptions=True,
+            )
+            # A failed supplemental discovery must not take down regular search.
+            if isinstance(responses[0], Exception):
+                raise responses[0]
+            candidates = {}
+            for index, response in enumerate(responses):
+                if isinstance(response, Exception):
+                    continue
+                for item in response[0]:
+                    repo_id = item.get("id") or item.get("modelId", "")
+                    if index == 1 and query.casefold() not in repo_id.casefold():
+                        continue
+                    candidates.setdefault(repo_id, summary(item))
+            models = sorted(candidates.values(), key=lambda model: -model.spark.score)
+            note = f"Spark signals first · shortlist of {len(models)} models (up to 192 candidates)"
+            if any(isinstance(response, Exception) for response in responses[1:]):
+                note += " · some discovery sources unavailable"
+            snapshot = {"models": [model.model_dump() for model in models], "note": note}
+            await asyncio.to_thread(self.persistent_cache.set_metadata, key, snapshot, None, 600)
+        models = snapshot["models"]
+        if cursor and offset >= len(models):
+            raise ValueError("Invalid Spark catalog offset")
+        end = offset + limit
+        return CatalogPage(
+            models=[CatalogModel.model_validate(item) for item in models[offset:end]],
+            cursor=f"spark-v1:{digest}:{end}" if end < len(models) else None,
+            ranking_note=snapshot["note"],
+        )
 
     async def detail(self, repo_id: str, revision: str) -> CatalogDetail:
         safe_repo_parts(repo_id)
