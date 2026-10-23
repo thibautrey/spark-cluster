@@ -332,3 +332,7 @@ Available formats and tasks in the catalog do not guarantee compatibility with t
 vLLM runtime. Review the model card and license before running a model. For gated repositories,
 accept access on Hugging Face and configure `SPARK_CLUSTER_HF_TOKEN` on the controller; the
 credential is never sent to the browser. Catalog requests have bounded page sizes and request timeouts. Hugging Face responses and capacity results are stored in a separate bounded SQLite WAL database. Cache keys include the repository commit, Spark count, context, KV precision, memory assumptions, and planner version, so repeated filters avoid network and fit recomputation without reusing stale model revisions.
+
+### Evidence-based model discovery
+
+The catalog combines technical metadata, exact-revision community recipes and bounded popularity signals. Every recommendation explains its evidence and caveats; capacity and runtime launch support remain separate checks. See the [research and deterministic ranking policy](docs/research/model-selection-2026-10-23.md).

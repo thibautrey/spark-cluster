@@ -70,6 +70,13 @@ function sparkBadge(model, detail = false) {
   return `<section class="catalog-spark-info"><h4>⚡ ${escapeHtml(spark.label)}</h4><div class="catalog-tags">${spark.badges.map(badge => `<span>${escapeHtml(badge)}</span>`).join('')}</div>${spark.reasons.length ? `<ul>${spark.reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join('')}</ul>` : ''}${spark.caveats.map(note => `<p>${escapeHtml(note)}</p>`).join('')}<a href="https://github.com/NVIDIA/dgx-spark-playbooks/tree/main/nvidia/playbook-nvfp4-quantization" target="_blank" rel="noopener noreferrer">NVIDIA NVFP4 / Spark guide ↗</a></section>`;
 }
 
+function recommendationBadge(model, detail = false) {
+  const info = model.recommendation;
+  if (!info) return '';
+  if (!detail) return `<span class="catalog-spark-badge ${info.priority < 0 ? 'caution' : ''}" title="${escapeHtml([...info.reasons, ...info.caveats].join(' '))}">${escapeHtml(info.label)}</span>`;
+  return `<section class="catalog-spark-info"><h4>${escapeHtml(info.label)}</h4>${info.runtime ? `<p>${escapeHtml(info.runtime)} · reported on ${info.reported_nodes.join(', ')} Sparks · reviewed ${escapeHtml(info.reviewed)}</p>` : ''}<ul>${info.reasons.map(reason => `<li>${escapeHtml(reason)}</li>`).join('')}</ul>${info.caveats.map(note => `<p>${escapeHtml(note)}</p>`).join('')}${info.sources.map((url, index) => `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Evidence ${index + 1} ↗</a>`).join(' · ')}<p>Discovery evidence does not guarantee fit, model quality, speed or launch support.</p></section>`;
+}
+
 function selectedCapacity() {
   return Number($('catalog-capacity').value || 0);
 }
@@ -83,8 +90,26 @@ function fitBadge(model) {
 }
 
 function visibleCatalogModels() {
-  if (!selectedCapacity()) return catalogModels;
-  return catalogModels.filter(model => catalogFits.get(model.id)?.compatible);
+  const selection = $('catalog-selection').value;
+  let models = catalogModels.filter(model => {
+    const info = model.recommendation;
+    if (selection === 'standard') return !info || info.variant === 'standard';
+    if (selection === 'recipes') return info?.priority === 2;
+    if (selection === 'publisher') return info?.publisher !== 'community';
+    return true;
+  });
+  if (selectedCapacity()) {
+    models = models.filter(model => catalogFits.get(model.id)?.compatible);
+    if ($('catalog-sort').value === 'spark') models.sort((a, b) => {
+      const fitA = catalogFits.get(a.id), fitB = catalogFits.get(b.id);
+      // Prefer launchable results and the recipe's reported topology, never assume
+      // a TP2 report also proves TP3/TP4. Preserve backend order within each group.
+      return Number(fitB.launch_supported) - Number(fitA.launch_supported)
+        || Number(b.recommendation?.reported_nodes?.includes(selectedCapacity()))
+          - Number(a.recommendation?.reported_nodes?.includes(selectedCapacity()));
+    });
+  }
+  return models;
 }
 
 function renderCatalogCards() {
@@ -100,11 +125,12 @@ function renderCatalogCards() {
         <span class="catalog-card-head"><span class="catalog-avatar">${escapeHtml(model.author[0].toUpperCase())}</span><span class="catalog-author">${escapeHtml(model.author)}</span><span class="catalog-card-arrow">↗</span></span>
         <b class="catalog-card-title">${escapeHtml(model.id.split('/').pop())}</b>
         <span class="catalog-tags">${[model.task, model.library, model.parameters ? `${formatNumber(model.parameters)} params` : null].filter(Boolean).slice(0, 3).map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</span>
+        ${recommendationBadge(model)}
         ${sparkBadge(model)}
         ${fitBadge(model)}
         <span class="catalog-card-foot"><span title="Downloads">↓ ${formatNumber(model.downloads)}</span><span title="Likes">♡ ${formatNumber(model.likes)}</span>${model.updated ? `<span class="catalog-updated">${escapeHtml(new Date(model.updated).toLocaleDateString())}</span>` : ''}</span>
       </span>
-    </button>`).join('') : `<div class="catalog-empty">${selectedCapacity() ? `No analyzed model fits ${selectedCapacity()} Spark${selectedCapacity() === 1 ? '' : 's'} at this context.<br>Try more machines, a shorter context, or load more models.` : 'No models match these filters.<br>Try another search or reset the filters.'}</div>`;
+    </button>`).join('') : `<div class="catalog-empty">${selectedCapacity() ? `No analyzed model fits ${selectedCapacity()} Spark${selectedCapacity() === 1 ? '' : 's'} at this context.<br>Try more machines, a shorter context, or load more models.` : 'No loaded models match these filters.<br>Load more models, change Selection, or reset the filters.'}</div>`;
 }
 
 async function applyCapacityFilter() {
@@ -223,7 +249,7 @@ async function inspectCatalogModel(repo, revision = 'main', opener = null) {
     const model = await api(`/api/v1/catalog/models/${repo.split('/').map(encodeURIComponent).join('/')}?revision=${encodeURIComponent(revision)}`);
     if (request !== detailRequest) return;
     const facts = [['Repository size', `${model.size_complete ? '' : 'At least '}${formatBytes(model.repository_bytes)}`], ['Parameters', model.parameters ? formatNumber(model.parameters) : 'Not reported'], ['Architecture', model.architecture || model.library || 'Not reported'], ['License', model.license || 'See model license']];
-    $('catalog-detail').innerHTML = `${catalogImage(model, true)}<div class="catalog-detail-head"><div class="catalog-detail-identity"><span class="catalog-avatar">${escapeHtml(model.author[0].toUpperCase())}</span><div><p class="eyebrow">${escapeHtml(model.author)}</p><h3>${escapeHtml(model.id.split('/').pop())}</h3></div></div><div class="catalog-tags">${[model.task, model.library].filter(Boolean).map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div><div class="catalog-popularity"><span>↓ <b>${formatNumber(model.downloads)}</b><small>downloads</small></span><span>♡ <b>${formatNumber(model.likes)}</b><small>likes</small></span></div>${sparkBadge(model, true)}<dl class="catalog-facts">${facts.map(([title, value]) => `<div><dt>${title}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>${model.gated ? '<p class="catalog-access-note">License approval is required. Accept access on Hugging Face and configure the controller token.</p>' : ''}<a class="catalog-hf-link" href="https://huggingface.co/${model.id.split('/').map(encodeURIComponent).join('/')}" target="_blank" rel="noopener noreferrer">Open model card &amp; license <span>↗</span></a></div><details class="catalog-files"><summary><span>${model.files.length} repository files</span><small>Show file manifest</small></summary><div class="catalog-file-list">${model.files.map(file => `<div class="catalog-file"><span>${escapeHtml(file.name)}</span><span>${file.size === null ? 'Unknown size' : formatBytes(file.size)}</span></div>`).join('')}</div></details>`;
+    $('catalog-detail').innerHTML = `${catalogImage(model, true)}<div class="catalog-detail-head"><div class="catalog-detail-identity"><span class="catalog-avatar">${escapeHtml(model.author[0].toUpperCase())}</span><div><p class="eyebrow">${escapeHtml(model.author)}</p><h3>${escapeHtml(model.id.split('/').pop())}</h3></div></div><div class="catalog-tags">${[model.task, model.library].filter(Boolean).map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div><div class="catalog-popularity"><span>↓ <b>${formatNumber(model.downloads)}</b><small>downloads</small></span><span>♡ <b>${formatNumber(model.likes)}</b><small>likes</small></span></div>${recommendationBadge(model, true)}${sparkBadge(model, true)}<dl class="catalog-facts">${facts.map(([title, value]) => `<div><dt>${title}</dt><dd>${escapeHtml(value)}</dd></div>`).join('')}</dl>${model.gated ? '<p class="catalog-access-note">License approval is required. Accept access on Hugging Face and configure the controller token.</p>' : ''}<a class="catalog-hf-link" href="https://huggingface.co/${model.id.split('/').map(encodeURIComponent).join('/')}" target="_blank" rel="noopener noreferrer">Open model card &amp; license <span>↗</span></a></div><details class="catalog-files"><summary><span>${model.files.length} repository files</span><small>Show file manifest</small></summary><div class="catalog-file-list">${model.files.map(file => `<div class="catalog-file"><span>${escapeHtml(file.name)}</span><span>${file.size === null ? 'Unknown size' : formatBytes(file.size)}</span></div>`).join('')}</div></details>`;
     $('catalog-sheet-body').className = 'catalog-sheet-body';
     $('model-form').hidden = false;
   } catch (error) {
@@ -247,12 +273,14 @@ $('catalog-query').addEventListener('input', () => {
 $('catalog-query').addEventListener('keydown', event => {
   if (event.key === 'Enter') { event.preventDefault(); loadCatalog(); }
 });
+$('catalog-selection').addEventListener('change', () => renderCatalogCards());
 ['catalog-sort', 'catalog-task', 'catalog-library', 'catalog-access'].forEach(id => $(id).addEventListener('change', () => loadCatalog()));
 ['catalog-capacity', 'catalog-fit-context'].forEach(id => $(id).addEventListener('change', () => applyCapacityFilter()));
 $('catalog-reset').addEventListener('click', () => {
   $('catalog-query').value = '';
   $('catalog-sort').value = 'spark';
-  $('catalog-task').value = 'text-generation';
+  $('catalog-task').value = '';
+  $('catalog-selection').value = 'standard';
   $('catalog-library').value = '';
   $('catalog-access').value = '';
   $('catalog-capacity').value = '';

@@ -12,6 +12,12 @@ import httpx
 from pydantic import BaseModel, Field, field_validator
 
 from .catalog_cache import CatalogCache
+from .catalog_recommendation import (
+    RECOMMENDATION_VERSION,
+    Recommendation,
+    ranking_key,
+    recommend,
+)
 from .config import Settings
 from .model_manager import (
     DEEPSEEK_V41_ENGRAM_BYTES,
@@ -40,6 +46,7 @@ class CatalogModel(BaseModel):
     thumbnail_url: str
     commit: str | None = None
     spark: SparkOptimization = Field(default_factory=SparkOptimization)
+    recommendation: Recommendation = Field(default_factory=Recommendation)
 
 
 class CatalogPage(BaseModel):
@@ -105,9 +112,11 @@ class CatalogFitBatchResponse(BaseModel):
 
 def summary(data: dict) -> CatalogModel:
     repo_id = data.get("id") or data["modelId"]
+    spark = classify_spark(data)
     return CatalogModel(
         id=repo_id,
-        spark=classify_spark(data),
+        spark=spark,
+        recommendation=recommend(data, spark),
         author=data.get("author") or (repo_id.split("/")[0] if "/" in repo_id else "Hugging Face"),
         downloads=data.get("downloads") or 0,
         likes=data.get("likes") or 0,
@@ -215,7 +224,10 @@ class ModelBrowser:
     ) -> CatalogPage:
         # Cache the entire ranked shortlist, not individual pages, so pagination is
         # stable and classification is reused across controller restarts.
-        identity = json.dumps((CLASSIFIER_VERSION, query, task, library, access))
+        identity = json.dumps((
+            CLASSIFIER_VERSION, RECOMMENDATION_VERSION,
+            time.strftime("%Y-%m-%d", time.gmtime()), query, task, library, access,
+        ))
         digest = hashlib.sha256(identity.encode()).hexdigest()[:24]
         key = f"spark-ranking:{digest}"
         offset = 0
@@ -226,7 +238,7 @@ class ModelBrowser:
             if not parts[2].isdigit():
                 raise ValueError("Invalid Spark catalog offset")
             offset = int(parts[2])
-            if not 0 < offset < 192:
+            if not 0 < offset < 288:
                 raise ValueError("Invalid Spark catalog offset")
         cached = await asyncio.to_thread(self.persistent_cache.get_metadata, key)
         if cursor and not cached:
@@ -251,12 +263,13 @@ class ModelBrowser:
             if access:
                 base["gated"] = "true" if access == "gated" else "false"
             targeted = []
-            for tag in ("dgx-spark", "sm121"):
+            for tag in ("dgx-spark", "sm121", "exl3"):
                 targeted.append({**base, "filter": ",".join(filter(None, (library, tag)))})
             responses = await asyncio.gather(
                 self.fetch("/api/models", base),
                 self.fetch("/api/models", {**base, "search": "NVFP4", "sort": "downloads"}),
                 *(self.fetch("/api/models", params) for params in targeted),
+                self.fetch("/api/models", {**base, "sort": "downloads"}),
                 return_exceptions=True,
             )
             # A failed supplemental discovery must not take down regular search.
@@ -268,11 +281,15 @@ class ModelBrowser:
                     continue
                 for item in response[0]:
                     repo_id = item.get("id") or item.get("modelId", "")
-                    if index == 1 and query.casefold() not in repo_id.casefold():
+                    if query and query.casefold() not in repo_id.casefold():
                         continue
                     candidates.setdefault(repo_id, summary(item))
-            models = sorted(candidates.values(), key=lambda model: -model.spark.score)
-            note = f"Spark signals first · shortlist of {len(models)} models (up to 192 candidates)"
+            models = sorted(candidates.values(), key=ranking_key)
+            note = (
+                "Evidence → Spark signals → publisher → bounded popularity · "
+                f"shortlist of {len(models)} models (up to 288 candidates); "
+                "not a quality or speed benchmark"
+            )
             if any(isinstance(response, Exception) for response in responses[1:]):
                 note += " · some discovery sources unavailable"
             snapshot = {"models": [model.model_dump() for model in models], "note": note}

@@ -234,14 +234,14 @@ def test_spark_discovery_ranks_deduplicates_and_paginates_cached_shortlist(catal
     assert page["models"][0]["id"] == "acme/Qwen-NVFP4-DGX-Spark"
     assert page["models"][0]["spark"]["tier"] == "spark-targeted"
     assert "shortlist of 3" in page["ranking_note"]
-    assert len(requests) == 4
+    assert len(requests) == 6
     cursor = page["cursor"]
     second = client.get(url + "&cursor=" + cursor).json()
     assert second["models"][0]["id"] == "nvidia/Qwen-NVFP4"
     third = client.get(url + "&cursor=" + second["cursor"]).json()
     assert third["models"][0]["id"] == "popular/Qwen"
     assert third["cursor"] is None
-    assert len(requests) == 4
+    assert len(requests) == 6
     # A new browser instance reuses both classification and ordering from SQLite.
     from spark_cluster.catalog import ModelBrowser
 
