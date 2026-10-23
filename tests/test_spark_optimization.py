@@ -67,3 +67,19 @@ def test_deepinfer_and_sm100_are_not_sm121_compatibility_evidence():
     result = classify_spark({"id": "acme/model", "library_name": "DeepInfer"})
     assert result.score == 0
     assert any("does not establish SM121" in note for note in result.caveats)
+
+
+def test_recipe_with_no_checkpoint_files_does_not_outrank_downloadable_models():
+    result = classify_spark(
+        {
+            "id": "acme/Model-NVFP4-GB10-Recipe",
+            "tags": ["dgx-spark", "nvfp4"],
+            "siblings": [{"rfilename": "README.md"}, {"rfilename": "run.sh"}],
+        }
+    )
+    assert result.score == 0
+    assert result.tier == "metadata-only"
+
+
+def test_missing_optional_metadata_is_supported():
+    assert classify_spark({"id": "acme/model", "tags": None, "library_name": None}).score == 0

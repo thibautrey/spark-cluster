@@ -9,7 +9,8 @@ These are publisher-reported discovery signals, not runtime certifications or be
 NVFP4 metadata and exact tags are stronger signals than a repository name. An NVIDIA namespace
 adds a small preference to an NVFP4 candidate; vendor identity alone earns no preference.
 Generic Blackwell, FP4, FP8, AWQ, GPTQ, GGUF, MTP and base-model references do not establish
-Spark optimization. Explicit datacenter-only targets receive no boost. A conflicting
+Spark optimization. Repositories whose manifests report no recognized weights receive no boost.
+Explicit datacenter-only targets receive no boost. A conflicting
 quantization configuration suppresses an NVFP4 name or tag claim. GGUF candidates explain
 their separate runtime requirement.
 

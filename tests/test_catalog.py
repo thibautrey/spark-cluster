@@ -297,3 +297,26 @@ def test_explicit_sort_preserves_hub_order_while_adding_badges(catalog):
     ]
     assert response.json()["models"][1]["spark"]["score"] > 0
     assert len(requests) == 1
+
+
+def test_spark_ranking_cache_version_and_cursor_expiry(catalog, monkeypatch):
+    client, browser, requests = catalog
+    first = client.get("/api/v1/catalog/models").json()
+    assert first["models"][0]["spark"]["version"]
+    # Changing classifier rules cannot reuse a snapshot from older rules.
+    monkeypatch.setattr("spark_cluster.catalog.CLASSIFIER_VERSION", "new-rules")
+    client.get("/api/v1/catalog/models")
+    keys = browser.persistent_cache._connection.execute(
+        "SELECT cache_key FROM catalog_metadata_cache WHERE cache_key LIKE 'spark-ranking:%'"
+    ).fetchall()
+    assert len(keys) == 2
+    browser.persistent_cache._connection.execute(
+        "UPDATE catalog_metadata_cache SET expires_at=0 WHERE cache_key LIKE 'spark-ranking:%'"
+    )
+    browser.persistent_cache._connection.commit()
+    key = keys[-1][0].split(":")[1]
+    # No network call or silent reorder when a pagination snapshot has expired.
+    before = len(requests)
+    response = client.get("/api/v1/catalog/models", params={"cursor": f"spark-v1:{key}:1"})
+    assert response.status_code == 422
+    assert len(requests) == before

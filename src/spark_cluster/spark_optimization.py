@@ -4,7 +4,7 @@ import re
 
 from pydantic import BaseModel, Field
 
-CLASSIFIER_VERSION = "spark-signals-v1"
+CLASSIFIER_VERSION = "spark-signals-v2"
 
 
 class SparkOptimization(BaseModel):
@@ -24,6 +24,20 @@ def _normalized(value: str) -> str:
 def classify_spark(data: dict) -> SparkOptimization:
     repo_id = data.get("id") or data.get("modelId", "")
     # Do not use author, base_model tags or prose to attribute this checkpoint.
+    siblings = data.get("siblings")
+    if siblings and not any(
+        item.get("rfilename", "").endswith(
+            (".safetensors", ".gguf", ".bin", ".pt", ".pth", ".onnx", ".h5", ".msgpack")
+        )
+        for item in siblings
+    ):
+        return SparkOptimization(
+            tier="metadata-only",
+            label="No checkpoint files reported",
+            caveats=[
+                "Repository manifest contains no recognized model weights; it may be a recipe."
+            ],
+        )
     namespace, _, name = repo_id.partition("/")
     tags = {_normalized(tag) for tag in (data.get("tags") or []) if ":" not in tag}
     name = f"-{_normalized(name)}-"
