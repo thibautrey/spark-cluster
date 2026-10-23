@@ -37,7 +37,7 @@ The runtime is model-agnostic and works with Hugging Face models supported by th
 <table>
   <tr>
     <td width="50%"><img src="docs/screenshots/hardware-setup.jpg" alt="Visual hardware and cabling assistant"><br><strong>Guided hardware preparation</strong><br>Follow illustrated RJ45 and QSFP steps, inspect negotiated links, and correct the highlighted machine or port.</td>
-    <td width="50%"><img src="docs/screenshots/topology-cache.jpg" alt="Cluster topology and KV cache"><br><strong>Topology and cache health</strong><br>See node roles, fabric health, output rate, memory allocation, cache hit rate, and persistent tiers.</td>
+    <td width="50%"><img src="docs/screenshots/topology-cache.jpg" alt="Cluster topology"><br><strong>Cluster topology</strong><br>See node roles, fabric links, GPU activity, memory allocation, output rate, and temperature at a glance.</td>
   </tr>
   <tr>
     <td width="50%"><img src="docs/screenshots/model-library.jpg" alt="Model library and capacity check"><br><strong>Model library</strong><br>Inspect a Hugging Face repository, calculate fit, protect mutations with an admin token, and resume downloads.</td>
