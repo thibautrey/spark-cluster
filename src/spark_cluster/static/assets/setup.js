@@ -143,7 +143,7 @@ async function loadSetup(restore = false) {
   setupState = await api('/api/v1/setup', {headers: setupAuth()});
   const connected = setupState.connected_cluster;
   $('setup-mode').textContent = connected ? `CONTROLLER · ${connected.cluster_name}` : setupState.mode === 'demo' ? 'DEMO · simulated machines' : setupState.enabled ? 'LIVE · SSH bootstrap' : 'Setup disabled';
-  $('setup-access').textContent = connected ? `This dashboard controls ${connected.cluster_name} through ${connected.url}.` : setupState.enabled ? (setupState.mode === 'demo' ? 'Simulated discovery and installation. No machine is modified.' : 'Authenticated bootstrap connected. Use a trusted LAN.') : 'Enter a bridge address above, or enable SETUP_ENABLED to configure new machines.';
+  $('setup-access').textContent = connected ? `${connected.cluster_name} connected.` : setupState.enabled ? (setupState.mode === 'demo' ? 'Simulated discovery and installation. No machine is modified.' : 'Ready to configure machines.') : 'Token required to make changes.';
   if (restore && setupState.jobs.length) {
     const job = setupState.jobs[0];
     $('setup-name').value = job.request.name;
@@ -256,7 +256,7 @@ $('setup-new').addEventListener('click', () => { setupJob = null; setupSelection
 loadSetup(true).catch(error => {
   if (error.message === 'Invalid model administration token') {
     $('setup-mode').textContent = 'ADMIN TOKEN REQUIRED';
-    $('setup-access').textContent = 'Enter the administration token to view or change controller setup. Cluster metrics will appear after a bridge is attached.';
+    $('setup-access').textContent = 'Enter the controller token to make changes.';
     return;
   }
   setupError(error.message);
