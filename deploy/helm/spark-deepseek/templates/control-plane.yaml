@@ -23,17 +23,35 @@ spec:
             - { name: SPARK_DEEPSEEK_RUNTIME_CONTEXT_LENGTH, value: {{ .Values.runtime.maxModelLen | quote }} }
             - { name: SPARK_DEEPSEEK_RUNTIME_TENSOR_PARALLEL, value: {{ .Values.runtime.tensorParallelSize | quote }} }
             - { name: SPARK_DEEPSEEK_RUNTIME_PIPELINE_PARALLEL, value: {{ .Values.runtime.pipelineParallelSize | quote }} }
+            - { name: SPARK_DEEPSEEK_OPENAI_API_BASE, value: {{ .Values.runtime.openAIBaseUrl | quote }} }
+            - { name: SPARK_DEEPSEEK_MODEL_CACHE_PATH, value: {{ .Values.models.mountPath | quote }} }
+            {{- if .Values.models.hfTokenSecret }}
+            - name: SPARK_DEEPSEEK_HF_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ .Values.models.hfTokenSecret }}, key: token } }
+            {{- end }}
+            {{- if .Values.models.adminTokenSecret }}
+            - name: SPARK_DEEPSEEK_MODEL_ADMIN_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ .Values.models.adminTokenSecret }}, key: token } }
+            {{- end }}
             - name: SPARK_DEEPSEEK_INGEST_TOKEN
               valueFrom: { secretKeyRef: { name: spark-deepseek-ingest, key: token } }
           ports: [{ name: http, containerPort: 8080 }]
           readinessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 3, periodSeconds: 5 }
           livenessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 10, periodSeconds: 15 }
-          volumeMounts: [{ name: data, mountPath: /data }]
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: models, mountPath: {{ .Values.models.mountPath }} }
           resources: {{- toYaml .Values.resources.controlPlane | nindent 12 }}
       volumes:
         - name: data
           {{- if .Values.controlPlane.persistence.enabled }}
           persistentVolumeClaim: { claimName: spark-deepseek-data }
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: models
+          {{- if .Values.models.persistence.enabled }}
+          persistentVolumeClaim: { claimName: {{ default "spark-deepseek-models" .Values.models.persistence.existingClaim }} }
           {{- else }}
           emptyDir: {}
           {{- end }}
@@ -58,4 +76,17 @@ spec:
   storageClassName: {{ .Values.controlPlane.persistence.storageClass }}
   {{- end }}
   resources: { requests: { storage: {{ .Values.controlPlane.persistence.size }} } }
+{{- end }}
+{{- if and .Values.models.persistence.enabled (not .Values.models.persistence.existingClaim) }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: spark-deepseek-models
+spec:
+  accessModes: {{- toYaml .Values.models.persistence.accessModes | nindent 4 }}
+  {{- if .Values.models.persistence.storageClass }}
+  storageClassName: {{ .Values.models.persistence.storageClass }}
+  {{- end }}
+  resources: { requests: { storage: {{ .Values.models.persistence.size }} } }
 {{- end }}

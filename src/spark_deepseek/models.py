@@ -89,3 +89,77 @@ class CapacityPlan(BaseModel):
     total_required_gib: float
     usable_per_node_gib: float
     minimum_nodes: int
+
+
+class ModelFitRequest(BaseModel):
+    repo_id: str = Field(min_length=1, max_length=200)
+    revision: str = Field(default="main", min_length=1, max_length=200)
+    bits_per_weight: float = Field(default=4, gt=0, le=32)
+    context_length: int = Field(default=131072, gt=0, le=1_048_576)
+    concurrent_sequences: int = Field(default=1, gt=0, le=1024)
+
+
+class ModelFitPlan(BaseModel):
+    repo_id: str
+    revision: str
+    architecture: str | None = None
+    parameter_count: int | None = None
+    repository_bytes: int
+    weight_bytes: int
+    weights_gib: float
+    kv_cache_gib: float
+    runtime_overhead_gib: float
+    total_required_gib: float
+    cluster_nodes: int
+    usable_per_node_gib: float
+    usable_cluster_gib: float
+    minimum_nodes: int
+    headroom_gib: float
+    memory_fits: bool
+    storage_available_gib: float
+    storage_fits: bool
+    fits: bool
+    confidence: Literal["architecture", "parameters", "repository"]
+    notes: list[str] = Field(default_factory=list)
+
+
+class ModelDownloadRequest(ModelFitRequest):
+    allow_oversized: bool = False
+
+
+DownloadStatus = Literal["queued", "resolving", "downloading", "completed", "failed"]
+
+
+class DownloadJob(BaseModel):
+    id: str
+    repo_id: str
+    revision: str
+    status: DownloadStatus = "queued"
+    total_bytes: int = 0
+    downloaded_bytes: int = 0
+    progress: float = Field(default=0, ge=0, le=100)
+    target_path: str
+    staging_path: str
+    error: str | None = None
+    attempts: int = 0
+    fit: ModelFitPlan
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class LocalModel(BaseModel):
+    id: str
+    revision: str | None = None
+    source: Literal["managed", "huggingface-cache", "runtime"]
+    path: str | None = None
+    size_bytes: int = 0
+    downloaded_at: datetime | None = None
+    loaded: bool = False
+
+
+class RuntimeEndpoint(BaseModel):
+    base_url: str
+    models_url: str
+    chat_completions_url: str
+    status: Literal["ready", "unreachable"]
+    loaded_model_ids: list[str] = Field(default_factory=list)

@@ -18,6 +18,8 @@
         </a>
         <nav>
           <a class="active" href="#overview"><span>⌁</span>Overview</a>
+          <a href="#api"><span>↗</span>API endpoint</a>
+          <a href="#models"><span>⬡</span>Models</a>
           <a href="#topology"><span>◇</span>Topology</a>
           <a href="#cache"><span>◫</span>KV cache</a>
           <a href="#memory"><span>▤</span>Memory</a>
@@ -44,6 +46,16 @@
           <article class="metric"><span>Prefix reuse</span><strong><b id="prefix-reuse">—</b><small> tokens</small></strong><div class="stack"><i></i><i></i><i></i><i></i></div><footer>avoided recomputation</footer></article>
         </section>
 
+        <section class="panel api-panel" id="api">
+          <div class="api-identity">
+            <div class="api-icon">API</div>
+            <div><p class="eyebrow">OPENAI COMPATIBLE</p><h2>Inference endpoint</h2></div>
+            <span class="pill" id="api-status">checking</span>
+          </div>
+          <div class="endpoint-box"><code id="api-endpoint">Loading endpoint…</code><button id="copy-endpoint" type="button">Copy</button></div>
+          <div class="api-routes"><span><b>Models</b><code id="api-models-route">—</code></span><span><b>Chat completions</b><code id="api-chat-route">—</code></span></div>
+        </section>
+
         <section class="grid-main">
           <article class="panel topology-panel" id="topology">
             <div class="panel-head"><div><p class="eyebrow">FABRIC</p><h2>Cluster topology</h2></div><span class="pill" id="node-count">0 nodes</span></div>
@@ -60,6 +72,36 @@
         <section class="panel memory-panel" id="memory">
           <div class="panel-head"><div><p class="eyebrow">UNIFIED MEMORY</p><h2>Node allocation</h2></div><div class="segmented"><button class="active">Allocation</button><button>Utilization</button></div></div>
           <div class="memory-grid" id="memory-grid"></div>
+        </section>
+
+        <section class="panel models-panel" id="models">
+          <div class="panel-head">
+            <div><p class="eyebrow">MODEL LIBRARY</p><h2>Local models</h2></div>
+            <span class="pill" id="model-count">0 models</span>
+          </div>
+          <div class="models-layout">
+            <div class="model-inventory" id="local-models">
+              <div class="empty-state"><b>No local model found</b><span>Add one from Hugging Face.</span></div>
+            </div>
+            <form class="model-form" id="model-form">
+              <div class="form-title"><span>＋</span><div><b>Add from Hugging Face</b><small>Inspect fit before downloading</small></div></div>
+              <label>Model ID<input id="repo-id" name="repo_id" placeholder="deepseek-ai/DeepSeek-R1" required /></label>
+              <div class="form-row">
+                <label>Revision<input id="revision" name="revision" value="main" /></label>
+                <label>Weight bits<select id="weight-bits" name="bits"><option value="4">4-bit</option><option value="8">8-bit</option><option value="16">BF16 / FP16</option></select></label>
+              </div>
+              <div class="form-row">
+                <label>Context<select id="context-length" name="context"><option value="131072">128k</option><option value="262144">256k</option><option value="524288" selected>512k</option></select></label>
+                <label>Concurrency<input id="concurrency" name="concurrency" type="number" min="1" max="1024" value="1" /></label>
+              </div>
+              <div class="fit-result neutral" id="fit-result"><span class="fit-symbol">?</span><div><b>Run a fit check</b><small>Weights, KV cache, runtime overhead, nodes and storage.</small></div></div>
+              <label class="override"><input id="allow-oversized" type="checkbox" /> Allow download when the model does not fit</label>
+              <label>Admin token <span class="optional">optional</span><input id="admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label>
+              <div class="form-actions"><button class="secondary" id="check-fit" type="button">Check fit</button><button class="primary" id="download-model" type="submit" disabled>Download model</button></div>
+            </form>
+          </div>
+          <div class="downloads-head"><p class="eyebrow">DOWNLOADS</p><span>Automatic resume is enabled</span></div>
+          <div class="download-list" id="download-list"><div class="empty-downloads">No downloads yet.</div></div>
         </section>
       </main>
     </div>

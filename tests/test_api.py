@@ -11,6 +11,8 @@ def make_client(tmp_path):
             database_path=tmp_path / "test.db",
             sample_interval_seconds=0.05,
             cluster_name="test-cluster",
+            model_cache_path=tmp_path / "models",
+            openai_api_base="http://127.0.0.1:9/v1",
         )
     )
     return TestClient(app)
@@ -40,10 +42,20 @@ def test_history_metrics_and_capacity(tmp_path):
         assert result.status_code == 200
         assert result.json()["minimum_nodes"] >= 1
 
+        endpoint = client.get("/api/v1/runtime")
+        assert endpoint.status_code == 200
+        assert endpoint.json()["base_url"] == "http://127.0.0.1:9/v1"
+        assert endpoint.json()["chat_completions_url"].endswith("/chat/completions")
+
 
 def test_ingest_token_is_enforced(tmp_path):
     app = create_app(
-        Settings(mode="live", database_path=tmp_path / "secure.db", ingest_token="secret")
+        Settings(
+            mode="live",
+            database_path=tmp_path / "secure.db",
+            model_cache_path=tmp_path / "models",
+            ingest_token="secret",
+        )
     )
     with TestClient(app) as client:
         response = client.post("/api/v1/nodes", json={})
@@ -51,7 +63,13 @@ def test_ingest_token_is_enforced(tmp_path):
 
 
 def test_first_agent_seeds_live_cluster(tmp_path):
-    app = create_app(Settings(mode="live", database_path=tmp_path / "live.db"))
+    app = create_app(
+        Settings(
+            mode="live",
+            database_path=tmp_path / "live.db",
+            model_cache_path=tmp_path / "models",
+        )
+    )
     node = {
         "id": "spark-1",
         "hostname": "spark-1",
@@ -65,3 +83,20 @@ def test_first_agent_seeds_live_cluster(tmp_path):
         response = client.post("/api/v1/nodes", json=node)
         assert response.status_code == 200
         assert response.json()["nodes"][0]["id"] == "spark-1"
+
+
+def test_model_mutations_can_require_separate_admin_token(tmp_path):
+    app = create_app(
+        Settings(
+            mode="live",
+            database_path=tmp_path / "models.db",
+            model_cache_path=tmp_path / "models",
+            model_admin_token="model-secret",
+        )
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/models/download",
+            json={"repo_id": "acme/model"},
+        )
+        assert response.status_code == 401

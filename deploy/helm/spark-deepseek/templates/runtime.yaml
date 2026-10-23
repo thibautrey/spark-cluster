@@ -10,6 +10,15 @@ spec:
     - { name: ray, port: 6379, targetPort: ray }
     - { name: api, port: 8000, targetPort: api }
 ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-deepseek-openai
+spec:
+  type: {{ .Values.runtime.service.type }}
+  selector: { app.kubernetes.io/name: spark-deepseek-runtime, app.kubernetes.io/component: head }
+  ports: [{ name: openai, port: {{ .Values.runtime.service.port }}, targetPort: api }]
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -56,9 +65,16 @@ spec:
           volumeMounts:
             - { name: lmcache-config, mountPath: /etc/lmcache }
             - { name: lmcache, mountPath: /var/lib/lmcache }
+            - { name: models, mountPath: {{ .Values.models.mountPath }}, readOnly: true }
       volumes:
         - { name: lmcache-config, configMap: { name: spark-deepseek-runtime } }
         - { name: lmcache, hostPath: { path: {{ .Values.runtime.cache.hostPath }}, type: DirectoryOrCreate } }
+        - name: models
+          {{- if .Values.models.persistence.enabled }}
+          persistentVolumeClaim: { claimName: {{ default "spark-deepseek-models" .Values.models.persistence.existingClaim }} }
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
       nodeSelector: {{- toYaml .Values.runtime.nodeSelector | nindent 8 }}
       tolerations: {{- toYaml .Values.runtime.tolerations | nindent 8 }}
 ---
@@ -95,9 +111,16 @@ spec:
           volumeMounts:
             - { name: lmcache-config, mountPath: /etc/lmcache }
             - { name: lmcache, mountPath: /var/lib/lmcache }
+            - { name: models, mountPath: {{ .Values.models.mountPath }}, readOnly: true }
       volumes:
         - { name: lmcache-config, configMap: { name: spark-deepseek-runtime } }
         - { name: lmcache, hostPath: { path: {{ .Values.runtime.cache.hostPath }}, type: DirectoryOrCreate } }
+        - name: models
+          {{- if .Values.models.persistence.enabled }}
+          persistentVolumeClaim: { claimName: {{ default "spark-deepseek-models" .Values.models.persistence.existingClaim }} }
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
       nodeSelector: {{- toYaml .Values.runtime.nodeSelector | nindent 8 }}
       tolerations: {{- toYaml .Values.runtime.tolerations | nindent 8 }}
 {{- end }}

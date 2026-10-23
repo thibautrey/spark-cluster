@@ -25,6 +25,17 @@ agent:
   nodeSelector: {}
   tolerations: []
 
+models:
+  mountPath: /models
+  hfTokenSecret: ""
+  adminTokenSecret: ""
+  persistence:
+    enabled: true
+    existingClaim: ""
+    size: 1Ti
+    storageClass: ""
+    accessModes: [ReadWriteMany]
+
 runtime:
   enabled: false
   image:
@@ -37,6 +48,10 @@ runtime:
   tensorParallelSize: 4
   pipelineParallelSize: 1
   gpuMemoryUtilization: 0.82
+  openAIBaseUrl: http://spark-deepseek-openai:8000/v1
+  service:
+    type: ClusterIP
+    port: 8000
   cache:
     cpuGiB: 32
     diskGiB: 1536

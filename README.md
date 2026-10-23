@@ -16,9 +16,49 @@ cache storage, per-node telemetry, capacity planning, and a live cluster dashboa
 - **Cache visibility** — utilization, hit/miss ratios, latency, persistence state, and prefix reuse.
 - **Open telemetry** — JSON APIs, WebSocket updates, Prometheus metrics, and a lightweight node agent.
 - **Capacity planning** — estimate weight, runtime, and KV memory before changing a deployment.
+- **Model library** — inspect Hugging Face repositories, verify cluster fit, download with live progress,
+  and automatically resume interrupted transfers.
+- **OpenAI endpoint discovery** — display and copy the configured `/v1` endpoint and show models that
+  are currently loaded by the inference runtime.
 
 The dashboard is responsive and has no frontend build step. The control plane stores a bounded history
 in SQLite WAL mode and exposes the same snapshot used by the UI through `/api/v1/snapshot`.
+
+## OpenAI-compatible endpoint
+
+The dashboard shows the exact base URL clients should use. Configure it with
+`SPARK_DEEPSEEK_OPENAI_API_BASE`:
+
+```bash
+export OPENAI_BASE_URL=http://spark-deepseek.example.com/v1
+export OPENAI_API_KEY=unused
+curl "$OPENAI_BASE_URL/models"
+```
+
+The control plane probes `<base-url>/models`, marks the endpoint ready when it responds, and merges the
+returned model IDs into the local model inventory. Chat completions use
+`<base-url>/chat/completions`.
+
+## Model library and fit check
+
+Enter a Hugging Face model ID in the dashboard, select weight precision, context size, and concurrency,
+then run **Check fit**. The preflight reads repository metadata without downloading model weights and
+reports:
+
+- repository download size and free model-cache storage;
+- estimated weight memory at the selected precision;
+- architecture-aware KV memory, including DeepSeek MLA metadata when present;
+- runtime overhead, usable cluster memory, minimum node count, and remaining headroom.
+
+Downloads use Hugging Face's resumable snapshot cache. Jobs, attempts, progress, fit results, and errors
+are persisted in SQLite. An interrupted `queued`, `resolving`, or `downloading` job is requeued when the
+control plane restarts, while completed files and `.incomplete` shards are reused. Failed jobs expose a
+one-click retry. Set `HF_TOKEN` through `SPARK_DEEPSEEK_HF_TOKEN` for gated or private repositories.
+Set `SPARK_DEEPSEEK_MODEL_ADMIN_TOKEN` to require a bearer token for download and retry actions; the
+dashboard accepts it in the model form and keeps it in the page only.
+
+Managed models are stored under `SPARK_DEEPSEEK_MODEL_CACHE_PATH` and are listed alongside models found
+in the standard Hugging Face cache and models reported by the live OpenAI-compatible runtime.
 
 ## Quick start
 
@@ -95,6 +135,12 @@ Each runtime pod requests one NVIDIA GPU and anti-affinity places the head and w
 hosts. The LMCache directory is mounted from each node at `/var/lib/spark-deepseek/lmcache`, preserving
 cached blocks when an engine pod restarts. Set a dedicated storage path in production.
 
+The chart provisions a shared model-cache PVC mounted read-write by the control plane and read-only by
+the vLLM head and workers. Set `models.persistence.existingClaim` when using an existing RWX volume and
+`models.hfTokenSecret` to the name of a secret whose `token` key contains a Hugging Face access token.
+`models.adminTokenSecret` can similarly protect model mutations with a separate bearer token.
+Set `runtime.openAIBaseUrl` to the URL clients can reach.
+
 Set `runtime.cache.remoteUrl` to an LMCache-compatible remote backend when cache blocks should be
 reused across nodes. `runtime.cache.remoteSerde` selects its serialization format; local NVMe remains
 the durable node-level tier.
@@ -112,6 +158,12 @@ not in the dashboard.
 | `POST /api/v1/nodes` | Node-agent telemetry ingestion |
 | `POST /api/v1/snapshot` | Full collector snapshot ingestion |
 | `POST /api/v1/capacity` | Memory and node-count estimate |
+| `GET /api/v1/runtime` | OpenAI base URL, routes, status, and loaded model IDs |
+| `GET /api/v1/models` | Managed, Hugging Face-cached, and runtime-loaded models |
+| `POST /api/v1/models/fit` | Hugging Face metadata and cluster fit preflight |
+| `POST /api/v1/models/download` | Queue a resumable model download |
+| `GET /api/v1/downloads` | Download progress, attempts, and errors |
+| `POST /api/v1/downloads/{id}/retry` | Resume a failed download job |
 | `WS /api/v1/stream` | Live dashboard updates |
 | `GET /metrics` | Prometheus exposition |
 
@@ -130,6 +182,12 @@ All control-plane settings use the `SPARK_DEEPSEEK_` prefix:
 | `HISTORY_RETENTION_HOURS` | `24` | Stored history window |
 | `INGEST_TOKEN` | unset | Bearer token required for telemetry writes |
 | `CLUSTER_NAME` | `gb10-lab` | Dashboard cluster label |
+| `OPENAI_API_BASE` | `http://localhost:8000/v1` | OpenAI-compatible base URL shown in the UI |
+| `MODEL_CACHE_PATH` | `./models` | Managed Hugging Face model directory |
+| `HF_TOKEN` | unset | Access token for gated or private Hugging Face models |
+| `MODEL_ADMIN_TOKEN` | unset | Bearer token required for download and retry actions |
+| `HF_DOWNLOAD_WORKERS` | `4` | Parallel Hugging Face file transfers per job |
+| `MODEL_USABLE_MEMORY_FRACTION` | `0.82` | Per-node memory envelope used by fit checks |
 
 ## Development
 

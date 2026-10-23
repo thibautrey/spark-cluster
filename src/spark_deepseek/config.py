@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     runtime_context_length: int = 524288
     runtime_tensor_parallel: int = 4
     runtime_pipeline_parallel: int = 1
+    openai_api_base: str = "http://localhost:8000/v1"
+    model_cache_path: Path = Path("./models")
+    hf_token: str | None = None
+    model_admin_token: str | None = None
+    hf_download_workers: int = 4
+    model_usable_memory_fraction: float = 0.82
+    fallback_node_count: int = 1
+    fallback_node_memory_gib: float = 128
 
     @property
     def cors_origin_list(self) -> list[str]:

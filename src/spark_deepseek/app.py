@@ -11,7 +11,24 @@ from fastapi.staticfiles import StaticFiles
 
 from .capacity import calculate_capacity
 from .config import Settings
-from .models import CapacityPlan, CapacityRequest, ClusterSnapshot, ModelRuntime, NodeSnapshot
+from .model_manager import (
+    ModelAlreadyInstalled,
+    ModelDoesNotFit,
+    ModelManager,
+)
+from .models import (
+    CapacityPlan,
+    CapacityRequest,
+    ClusterSnapshot,
+    DownloadJob,
+    LocalModel,
+    ModelDownloadRequest,
+    ModelFitPlan,
+    ModelFitRequest,
+    ModelRuntime,
+    NodeSnapshot,
+    RuntimeEndpoint,
+)
 from .prometheus import render_metrics
 from .simulator import ClusterSimulator
 from .store import SnapshotStore
@@ -57,15 +74,19 @@ class Runtime:
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     runtime = Runtime(settings)
+    model_manager = ModelManager(settings, runtime.store, runtime)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await runtime.start()
+        await model_manager.start()
         yield
+        await model_manager.stop()
         await runtime.stop()
 
     app = FastAPI(title=settings.title, version="0.1.0", lifespan=lifespan)
     app.state.runtime = runtime
+    app.state.model_manager = model_manager
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
@@ -80,6 +101,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         expected = settings.ingest_token
         if expected and authorization != f"Bearer {expected}":
             raise HTTPException(status_code=401, detail="Invalid ingest token")
+
+    def require_model_token(authorization: str | None = Header(default=None)) -> None:
+        expected = settings.model_admin_token
+        if expected and authorization != f"Bearer {expected}":
+            raise HTTPException(status_code=401, detail="Invalid model administration token")
 
     @app.get("/", include_in_schema=False)
     async def index() -> FileResponse:
@@ -145,6 +171,65 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/v1/capacity", response_model=CapacityPlan)
     async def capacity(request: CapacityRequest) -> CapacityPlan:
         return calculate_capacity(request)
+
+    @app.get("/api/v1/runtime", response_model=RuntimeEndpoint)
+    async def runtime_endpoint() -> RuntimeEndpoint:
+        return await model_manager.runtime_endpoint()
+
+    @app.get("/api/v1/models", response_model=list[LocalModel])
+    async def local_models() -> list[LocalModel]:
+        return await model_manager.local_models()
+
+    @app.post("/api/v1/models/fit", response_model=ModelFitPlan)
+    async def model_fit(request: ModelFitRequest) -> ModelFitPlan:
+        try:
+            return await model_manager.fit(request)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except Exception as error:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Hugging Face metadata lookup failed: {model_manager.safe_error(error)}",
+            ) from error
+
+    @app.post(
+        "/api/v1/models/download",
+        response_model=DownloadJob,
+        status_code=202,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def download_model(request: ModelDownloadRequest) -> DownloadJob:
+        try:
+            return await model_manager.enqueue(request)
+        except ModelDoesNotFit as error:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": str(error), "fit": error.fit.model_dump(mode="json")},
+            ) from error
+        except ModelAlreadyInstalled as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        except Exception as error:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Hugging Face metadata lookup failed: {model_manager.safe_error(error)}",
+            ) from error
+
+    @app.get("/api/v1/downloads", response_model=list[DownloadJob])
+    async def downloads() -> list[DownloadJob]:
+        return await model_manager.downloads()
+
+    @app.post(
+        "/api/v1/downloads/{job_id}/retry",
+        response_model=DownloadJob,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def retry_download(job_id: str) -> DownloadJob:
+        try:
+            return await model_manager.retry(job_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Download job not found") from error
 
     @app.get("/metrics", response_class=PlainTextResponse)
     async def metrics() -> str:
