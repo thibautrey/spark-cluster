@@ -21,6 +21,7 @@ from spark_cluster.setup_models import DiscoveryRequest, SetupRequest
 from spark_cluster.setup_scripts import chart_archive, registry_configuration
 from spark_cluster.store import SnapshotStore
 
+
 class SectionTree(HTMLParser):
     def __init__(self):
         super().__init__()
