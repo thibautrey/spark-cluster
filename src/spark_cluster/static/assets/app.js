@@ -660,28 +660,40 @@ function connectLogs() {
 }
 
 let libraryRefreshRunning = false;
+let modelInventoryRefreshRunning = false;
+
+async function refreshModelInventory() {
+  if (modelInventoryRefreshRunning) return;
+  modelInventoryRefreshRunning = true;
+  try {
+    renderModels(await api('/api/v1/models'));
+  } catch {
+    $('local-model-count').textContent = '!';
+    $('local-model-count').title = 'Inventory is temporarily unavailable';
+  } finally {
+    modelInventoryRefreshRunning = false;
+  }
+}
 
 async function refreshLibrary() {
   if (libraryRefreshRunning) return;
   libraryRefreshRunning = true;
-  const downloadsRequest = Promise.all([api('/api/v1/downloads'), api('/api/v1/controller/huggingface')]).then(([downloads, status]) => {
-    hfTokenStatus = status;
-    renderDownloads(downloads);
-    document.dispatchEvent(new CustomEvent('library-updated', {detail: downloads}));
-  }).catch(() => {});
-  try {
-    const state = await api('/api/v1/control');
-    renderEndpoint(state.runtime);
-    renderModels(state.models);
-    renderLaunches(state.launches);
-    $('launch-mode').textContent = state.runtime_control_mode;
-  } catch (error) {
-    $('api-status').textContent = 'control plane error';
-    $('api-status').className = 'pill unreachable';
-  } finally {
-    await downloadsRequest;
-    libraryRefreshRunning = false;
-  }
+  void refreshModelInventory();
+  const requests = [
+    Promise.all([api('/api/v1/downloads'), api('/api/v1/controller/huggingface')]).then(([downloads, status]) => {
+      hfTokenStatus = status;
+      renderDownloads(downloads);
+      document.dispatchEvent(new CustomEvent('library-updated', {detail: downloads}));
+    }),
+    api('/api/v1/runtime').then(renderEndpoint).catch(() => {
+      $('api-status').textContent = 'runtime unavailable';
+      $('api-status').className = 'pill unreachable';
+    }),
+    api('/api/v1/launches').then(renderLaunches),
+    api('/healthz').then(state => { $('launch-mode').textContent = state.runtime_control_mode; }),
+  ];
+  await Promise.allSettled(requests);
+  libraryRefreshRunning = false;
 }
 
 function metricValue(value, suffix = '') {
