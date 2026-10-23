@@ -1,0 +1,41 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="img-src 'none'; connect-src 'none'">
+<title>Model README rendering checks</title>
+<h1>Model README rendering checks</h1><pre id="results"></pre>
+<script src="../../src/spark_cluster/static/assets/vendor/marked.js"></script>
+<script src="../../src/spark_cluster/static/assets/vendor/purify.min.js"></script>
+<script src="../../src/spark_cluster/static/assets/model-readme.js"></script>
+<script>
+// Serve the repository root with python -m http.server and open this fixture.
+const model = {id: 'owner/model', revision: 'rev/test', readme_path: 'docs/README.md'};
+const output = document.getElementById('results');
+let passed = 0;
+function check(name, condition) {
+  if (!condition) throw new Error(name);
+  passed++; output.textContent += `PASS ${name}\n`;
+}
+function render(text) {
+  const div = document.createElement('div'); div.innerHTML = renderModelReadme(text, model); return div;
+}
+try {
+  const doc = render('---\ntags: [test]\n---\n# Model\n\n**Bold** and `inline`\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```python\nprint("<safe>")\n```\n\n- One\n- Two\n\n> Note');
+  check('headings and hidden YAML metadata', doc.querySelector('h1').textContent === 'Model' && !doc.textContent.includes('tags:'));
+  check('emphasis and inline code', doc.querySelector('strong').textContent === 'Bold' && doc.querySelector('code').textContent === 'inline');
+  check('GFM table', doc.querySelectorAll('th').length === 2 && doc.querySelectorAll('td').length === 2);
+  check('fenced code remains literal and keyboard scrollable', doc.querySelector('pre code').textContent.includes('<safe>') && doc.querySelector('pre').tabIndex === 0);
+  check('lists and blockquotes', doc.querySelectorAll('li').length === 2 && !!doc.querySelector('blockquote'));
+  const links = render('[Guide](../guide.md) ![Diagram](./images/network.png) [External](https://example.com)');
+  check('relative links follow repository revision', links.querySelector('a').href === 'https://huggingface.co/owner/model/blob/rev%2Ftest/guide.md');
+  check('relative images use raw Hub files', links.querySelector('img').getAttribute('src') === 'https://huggingface.co/owner/model/resolve/rev%2Ftest/docs/images/network.png');
+  check('external link protection', links.querySelector('a').rel === 'noopener noreferrer' && links.querySelector('a').target === '_blank');
+  const unsafe = render('<script>window.compromised=true<\/script><img src="x" onerror="window.compromised=true"><a href="javascript:alert(1)">bad</a><iframe src="https://evil.test"></iframe><form><input></form><svg onload="alert(1)"></svg><div style="position:fixed">text</div>\n\n![bad](data:image/png;base64,abc) [local](file:///etc/passwd)');
+  check('active HTML and styles removed', !unsafe.querySelector('script,iframe,form,input,svg,[onerror],[onload],[style]'));
+  check('unsafe URLs removed', [...unsafe.querySelectorAll('a,img')].every(el => !/^(javascript|data|file):/i.test(el.getAttribute('href') || el.getAttribute('src') || '')));
+  check('no code executed', !window.compromised);
+  check('empty README supported', render('').textContent === '');
+  output.textContent += `\n${passed} checks passed`; document.title = `${passed} README checks passed`;
+} catch (error) {
+  output.textContent += `FAIL ${error.message}`; document.title = 'README checks FAILED'; throw error;
+}
+</script>

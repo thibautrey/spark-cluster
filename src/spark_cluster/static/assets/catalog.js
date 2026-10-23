@@ -92,7 +92,7 @@ function sparkBadge(model, detail = false) {
 function catalogReadme(model) {
   const path = model.readme_path || 'README.md';
   const content = model.readme || 'This repository does not expose a root README.md file.';
-  return `<section class="catalog-readme"><div class="catalog-readme-head"><div><p class="eyebrow">Repository documentation</p><h4>README</h4></div><span>${escapeHtml(path)}</span></div><pre tabindex="0">${escapeHtml(content)}</pre>${model.readme_truncated ? '<p class="catalog-readme-note">README truncated to 512 KiB. Open the model card to read the complete file.</p>' : ''}</section>`;
+  return `<section class="catalog-readme"><div class="catalog-readme-head"><div><p class="eyebrow">Repository documentation</p><h4>README</h4></div><span>${escapeHtml(path)}</span></div><article class="model-markdown">${renderModelReadme(content, model)}</article>${model.readme_truncated ? '<p class="catalog-readme-note">README truncated to 512 KiB. Open the model card to read the complete file.</p>' : ''}</section>`;
 }
 
 function recommendationBadge(model, detail = false) {

@@ -226,8 +226,6 @@ body.bottom-sheet-open{overflow:hidden}
 .catalog-readme-head h4{margin:3px 0 0;font-size:14px}
 .catalog-readme-head .eyebrow{margin:0;color:#658071;font-size:8px;text-transform:uppercase;letter-spacing:.12em}
 .catalog-readme-head>span{max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#6f887a;font:9px DM Mono}
-.catalog-readme pre{max-height:430px;margin:0;padding:16px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #20342a;border-radius:8px;background:#070d0b;color:#b8c7bf;font:10px/1.7 DM Mono;tab-size:2}
-.catalog-readme pre:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 .catalog-readme-note{margin:10px 0 0;color:var(--amber);font-size:9px}
 .mcp-access{display:grid;gap:12px;margin-top:18px;padding-top:18px;border-top:1px solid #26352f}
 .mcp-access h3{margin:3px 0 6px;font-size:16px}
@@ -249,3 +247,23 @@ body.bottom-sheet-open{overflow:hidden}
 @media(max-width:700px){.cluster-switch select{min-width:130px}.cluster-fleet-head{align-items:flex-start;flex-direction:column}}
 
 .hf-token-form{margin:12px 0 18px;padding:18px;border:1px solid #486047;border-radius:12px;background:#142019;display:grid;gap:12px}.hf-token-form[hidden]{display:none}.hf-token-form p,.hf-token-form small{color:var(--muted);line-height:1.6;margin:6px 0}.hf-token-form a{color:var(--green)}.hf-token-fields{display:flex;align-items:end;gap:12px;flex-wrap:wrap}.hf-token-fields label{flex:1;min-width:200px}.hf-token-fields input{width:100%}.hf-token-fields button{white-space:nowrap}.hf-token-fields label[hidden]{display:none}#hf-token-message:empty{display:none}#hf-token-saved{color:var(--green);line-height:1.6}
+
+/* Model cards keep their document hierarchy inside the detail sheet. */
+.model-markdown{min-width:0;color:#c4d4cb;font:14px/1.7 Inter,system-ui,sans-serif;overflow-wrap:anywhere}
+.model-markdown>:first-child{margin-top:0}.model-markdown>:last-child{margin-bottom:0}
+.model-markdown :is(h1,h2,h3,h4,h5,h6){color:#edf6f0;line-height:1.3;margin:1.5em 0 .6em;font-weight:650}
+.model-markdown h1{font-size:26px}.model-markdown h2{font-size:21px;border-bottom:1px solid #294238;padding-bottom:.4em}
+.model-markdown h3{font-size:18px}.model-markdown :is(h4,h5,h6){font-size:15px}
+.model-markdown p{margin:.85em 0}.model-markdown a{color:var(--cyan);text-decoration:underline;text-underline-offset:3px}
+.model-markdown :is(ul,ol){padding-left:1.6em}.model-markdown li+li{margin-top:.25em}
+.model-markdown img{max-width:100%;height:auto;border-radius:6px;vertical-align:middle}
+.model-markdown pre{max-height:560px;overflow:auto;padding:16px;border:1px solid #294238;border-radius:8px;background:#070d0b;white-space:pre;font:12px/1.7 'DM Mono',monospace}
+.model-markdown code{font-family:'DM Mono',monospace;font-size:.88em;background:#14231b;padding:.15em .35em;border-radius:4px}
+.model-markdown pre code{font-size:inherit;background:none;padding:0;border:0}
+.model-markdown pre:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.model-markdown blockquote{margin:1em 0;padding:.2em 1em;border-left:3px solid var(--cyan);background:#112119;color:#a8bfb1}
+.model-markdown table{display:block;max-width:100%;overflow:auto;border-collapse:collapse;margin:1em 0;font-size:12px}
+.model-markdown :is(th,td){padding:9px 12px;border:1px solid #294238;text-align:left}
+.model-markdown th{color:#edf6f0;background:#14231b}.model-markdown tbody tr:nth-child(even){background:#0d1913}
+.model-markdown hr{border:0;border-top:1px solid #294238;margin:1.5em 0}
+.model-markdown details{padding:10px 12px;border:1px solid #294238;border-radius:6px}.model-markdown summary{cursor:pointer;font-weight:600}
