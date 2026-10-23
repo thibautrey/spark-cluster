@@ -107,11 +107,13 @@ function render(snapshot) {
 
 function renderTopology(nodes) {
   $('topology-map').innerHTML = '<div class="fabric-line"></div>' + nodes.map(node => `
-    <div class="node">
-      <div class="node-top"><span class="node-icon">${node.role === 'head' ? 'H' : 'W'}</span><i class="node-state"></i></div>
+    <div class="node ${escapeHtml(node.status)}">
+      <div class="node-top"><span class="node-icon">${node.role === 'head' ? 'H' : 'W'}</span><i class="node-state ${escapeHtml(node.status)}" title="${escapeHtml(node.status)}"></i></div>
       <h3>${escapeHtml(node.hostname)}</h3><p>${escapeHtml(node.role.toUpperCase())} · ${escapeHtml(node.address)}</p>
       <div class="node-stats"><span>GPU<b>${node.gpu_utilization.toFixed(0)}%</b></span><span>MEM<b>${node.memory.used_gib.toFixed(0)} / ${node.memory.total_gib.toFixed(0)}</b></span><span>OUTPUT<b>${node.output_tokens_per_second.toFixed(0)} t/s</b></span><span>TEMP<b>${node.temperature_c.toFixed(0)}°C</b></span></div>
     </div>`).join('');
+  const states = [['healthy', 'green', 'Healthy'], ['degraded', 'amber', 'Degraded'], ['offline', 'muted', 'Offline']];
+  $('topology-statuses').innerHTML = states.filter(([status]) => nodes.some(node => node.status === status)).map(([, className, label]) => `<span><i class="${className}"></i>${label}</span>`).join('');
 }
 
 function renderCache(tiers) {
