@@ -437,6 +437,7 @@ class RuntimeDeploymentService:
             self.settings.runtime_head_deployment,
             {
                 "spec": {
+                    "replicas": 1,
                     "template": {
                         "metadata": {
                             "annotations": {

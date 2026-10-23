@@ -11,6 +11,7 @@ controlPlane:
   service:
     type: ClusterIP
     port: 8080
+    nodePort: null
   persistence:
     enabled: true
     size: 5Gi
@@ -40,6 +41,8 @@ models:
 
 runtime:
   enabled: false
+  deferStart: false
+  hostNetwork: false
   image:
     repository: nvcr.io/nvidia/vllm
     tag: 25.09-py3

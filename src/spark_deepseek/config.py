@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     runtime_pod_selector: str = "app.kubernetes.io/name=spark-deepseek-runtime"
     runtime_head_deployment: str = "spark-deepseek-runtime-head"
     runtime_worker_statefulset: str = "spark-deepseek-runtime-worker"
+    setup_enabled: bool = False
+    setup_state_path: Path = Path("./setup-state")
+    setup_ssh_identity: Path | None = None
+    setup_ssh_config: Path | None = None
+    setup_image_repository: str = "ghcr.io/thibautrey/spark-deepseek"
+    setup_image_tag: str = "latest"
 
     @property
     def cors_origin_list(self) -> list[str]:

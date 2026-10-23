@@ -17,6 +17,8 @@ from .cluster_control import (
     RuntimeLogService,
 )
 from .config import Settings
+from .cluster_setup import ClusterSetupService, SetupFailure
+from .setup_models import DiscoveryRequest, SetupRequest
 from .model_manager import (
     ModelAlreadyInstalled,
     ModelDoesNotFit,
@@ -88,6 +90,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     deployment_service = RuntimeDeploymentService(
         settings, runtime.store, model_manager, log_service
     )
+    setup_service = ClusterSetupService(settings, runtime.store)
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -95,7 +98,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await model_manager.start()
         await log_service.start()
         await deployment_service.start()
+        await setup_service.start()
         yield
+        await setup_service.stop()
         await deployment_service.stop()
         await log_service.stop()
         await model_manager.stop()
@@ -106,6 +111,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.model_manager = model_manager
     app.state.log_service = log_service
     app.state.deployment_service = deployment_service
+    app.state.setup_service = setup_service
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
@@ -125,6 +131,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         expected = settings.model_admin_token
         if expected and authorization != f"Bearer {expected}":
             raise HTTPException(status_code=401, detail="Invalid model administration token")
+
+    @app.exception_handler(SetupFailure)
+    async def setup_failure(_, error: SetupFailure):
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=409, content={"detail": str(error)})
+
+    @app.get("/api/v1/setup", dependencies=[Depends(require_model_token)])
+    async def setup_state():
+        return await setup_service.state()
+
+    @app.post("/api/v1/setup/discover", dependencies=[Depends(require_model_token)])
+    async def discover_nodes(request: DiscoveryRequest):
+        return await setup_service.discover(request)
+
+    @app.post("/api/v1/setup/check", dependencies=[Depends(require_model_token)])
+    async def setup_check(request: SetupRequest):
+        checks = await setup_service.preflight(request)
+        return {"checks": checks, "nodes": request.nodes}
+
+    @app.post("/api/v1/setup/jobs", status_code=202,
+              dependencies=[Depends(require_model_token)])
+    async def start_setup(request: SetupRequest):
+        return await setup_service.launch(request)
+
+    @app.post("/api/v1/setup/jobs/{job_id}/resume", status_code=202,
+              dependencies=[Depends(require_model_token)])
+    async def resume_setup(job_id: str):
+        try:
+            return await setup_service.resume(job_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Setup job not found") from error
 
     @app.get("/", include_in_schema=False)
     async def index() -> FileResponse:

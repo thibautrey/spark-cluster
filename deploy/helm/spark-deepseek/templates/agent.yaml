@@ -12,6 +12,8 @@ spec:
       labels: { app.kubernetes.io/name: spark-deepseek, app.kubernetes.io/component: agent }
     spec:
       hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      runtimeClassName: nvidia
       containers:
         - name: agent
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"

@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .models import ClusterSnapshot, DownloadJob, ModelLaunchJob, RuntimeLog
+from .setup_models import SetupJob
 
 
 class SnapshotStore:
@@ -33,6 +34,34 @@ class SnapshotStore:
             "CREATE TABLE IF NOT EXISTS model_launches (id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
         )
         self._connection.commit()
+
+        self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS cluster_setups (id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+        )
+        self._connection.commit()
+
+    def save_setup_job(self, job: SetupJob) -> None:
+        with self._lock:
+            self._connection.execute(
+                "INSERT OR REPLACE INTO cluster_setups(id, payload) VALUES (?, ?)",
+                (job.id, job.model_dump_json()),
+            )
+            self._connection.commit()
+
+    def get_setup_job(self, job_id: str) -> SetupJob | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT payload FROM cluster_setups WHERE id = ?", (job_id,)
+            ).fetchone()
+        return SetupJob.model_validate_json(row[0]) if row else None
+
+    def list_setup_jobs(self) -> list[SetupJob]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT payload FROM cluster_setups "
+                "ORDER BY json_extract(payload, '$.created_at') DESC LIMIT 50"
+            ).fetchall()
+        return [SetupJob.model_validate_json(row[0]) for row in rows]
 
     def append(self, snapshot: ClusterSnapshot) -> None:
         with self._lock:

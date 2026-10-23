@@ -8,6 +8,8 @@ cache storage, per-node telemetry, capacity planning, and a live cluster dashboa
 
 ## What it provides
 
+- **Guided cluster setup** — discover LAN machines, verify SSH and GB10 compatibility, configure roles,
+  install cluster services, diagnose failures and resume interrupted setup from the dashboard.
 - **Distributed inference** — a Ray-backed vLLM runtime with tensor and pipeline parallel settings.
 - **Long-context configuration** — first-class 128k, 256k, and 512k deployment profiles.
 - **Restart-resilient KV cache** — GPU, unified memory, local NVMe, and shared-cache tiers through
@@ -26,6 +28,14 @@ cache storage, per-node telemetry, capacity planning, and a live cluster dashboa
 
 The dashboard is responsive and has no frontend build step. The control plane stores a bounded history
 in SQLite WAL mode and exposes the same snapshot used by the UI through `/api/v1/snapshot`.
+
+## Guided setup
+
+Open **Cluster setup** for a step-by-step assistant: discover machines → configure roles and NVIDIA
+Sync fabric → run diagnostics → install services → open the cluster dashboard. It automates k3s,
+GPU scheduling, shared model storage and idle inference resources over verified SSH connections.
+The same flow is available in demo mode. See the [setup guide](docs/cluster-setup.md) for access
+preparation, network requirements, installation details and recovery.
 
 ## OpenAI-compatible endpoint
 
@@ -225,6 +235,12 @@ All control-plane settings use the `SPARK_DEEPSEEK_` prefix:
 | `RUNTIME_CONTROL_MODE` | `auto` | `kubernetes`, `demo`, or automatic detection |
 | `RUNTIME_LOG_RETENTION` | `10000` | Maximum persisted runtime log lines |
 | `RUNTIME_POD_SELECTOR` | runtime label | Kubernetes selector used by the log collector |
+| `SETUP_ENABLED` | `false` | Explicitly enable live LAN discovery and SSH provisioning |
+| `SETUP_STATE_PATH` | `./setup-state` | Verified setup host keys |
+| `SETUP_SSH_IDENTITY` | unset | Existing SSH private key path on the bootstrap host |
+| `SETUP_SSH_CONFIG` | unset | Optional dedicated OpenSSH client configuration |
+| `SETUP_IMAGE_REPOSITORY` | `ghcr.io/thibautrey/spark-deepseek` | Dashboard/agent image installed by setup |
+| `SETUP_IMAGE_TAG` | `latest` | Published dashboard/agent image version |
 
 ## Development
 

@@ -15,7 +15,7 @@ async function api(path, options = {}) {
   const response = await fetch(path, {...options, headers: {'Content-Type': 'application/json', ...(options.headers || {})}});
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const detail = typeof body.detail === 'string' ? body.detail : body.detail?.message || `Request failed (${response.status})`;
+    const detail = typeof body.detail === 'string' ? body.detail : Array.isArray(body.detail) ? body.detail.map(item => item.msg).join('; ') : body.detail?.message || `Request failed (${response.status})`;
     const error = new Error(detail);
     error.payload = body;
     throw error;

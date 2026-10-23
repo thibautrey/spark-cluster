@@ -13,3 +13,4 @@ models/
 coverage.xml
 .coverage
 htmlcov/
+setup-state/

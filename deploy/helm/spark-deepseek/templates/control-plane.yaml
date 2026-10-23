@@ -12,6 +12,9 @@ spec:
       labels: { app.kubernetes.io/name: spark-deepseek, app.kubernetes.io/component: control-plane }
     spec:
       serviceAccountName: spark-deepseek
+      securityContext:
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: control-plane
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -70,7 +73,13 @@ metadata:
 spec:
   type: {{ .Values.controlPlane.service.type }}
   selector: { app.kubernetes.io/name: spark-deepseek, app.kubernetes.io/component: control-plane }
-  ports: [{ name: http, port: {{ .Values.controlPlane.service.port }}, targetPort: http }]
+  ports:
+    - name: http
+      port: {{ .Values.controlPlane.service.port }}
+      targetPort: http
+      {{- if and (eq .Values.controlPlane.service.type "NodePort") .Values.controlPlane.service.nodePort }}
+      nodePort: {{ .Values.controlPlane.service.nodePort }}
+      {{- end }}
 {{- if .Values.controlPlane.persistence.enabled }}
 ---
 apiVersion: v1
