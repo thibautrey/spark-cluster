@@ -90,8 +90,11 @@ function render(snapshot) {
   $('hit-rate').textContent = snapshot.cache_hit_rate.toFixed(1);
   $('hit-ring').style.background = `conic-gradient(var(--green) ${snapshot.cache_hit_rate}%,#202a38 0)`;
   $('memory-used').textContent = Math.round(memoryUsed);
-  $('memory-total').textContent = `${Math.round(memoryTotal)} GiB total · ${pct(memoryUsed, memoryTotal).toFixed(0)}% allocated`;
-  $('memory-bar').style.width = `${pct(memoryUsed, memoryTotal)}%`;
+  $('memory-total').textContent = ` / ${Math.round(memoryTotal)} GiB`;
+  const memoryPercent = pct(memoryUsed, memoryTotal);
+  $('memory-total').title = `${memoryPercent.toFixed(0)}% allocated`;
+  $('memory-bar').style.width = `${memoryPercent}%`;
+  $('memory-bar').parentElement.setAttribute('aria-valuenow', memoryPercent.toFixed(0));
   $('prefix-reuse').textContent = formatNumber(snapshot.prefix_reuse_tokens);
   $('node-count').textContent = `${snapshot.nodes.length} nodes`;
   renderTopology(snapshot.nodes);

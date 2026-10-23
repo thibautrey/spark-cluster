@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=download-card-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=overview-compact-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -91,10 +91,10 @@
         </section>
 
         <section class="metrics" id="overview" data-route-view="overview">
-          <article class="metric"><span>Cluster output</span><strong><b id="output-tps">—</b><small> tok/s</small></strong><canvas id="throughput-spark" width="180" height="42"></canvas><footer><em>↗</em> live generation rate</footer></article>
-          <article class="metric accent"><span>KV cache hit rate</span><strong><b id="hit-rate">—</b><small>%</small></strong><div class="ring" id="hit-ring"><span></span></div><footer><em>↗</em> across all tiers</footer></article>
-          <article class="metric"><span>Unified memory</span><strong><b id="memory-used">—</b><small> GiB</small></strong><div class="bar"><i id="memory-bar"></i></div><footer><span id="memory-total">— GiB total</span></footer></article>
-          <article class="metric"><span>Prefix reuse</span><strong><b id="prefix-reuse">—</b><small> tokens</small></strong><div class="stack"><i></i><i></i><i></i><i></i></div><footer>avoided recomputation</footer></article>
+          <article class="metric"><span>Cluster output</span><strong><b id="output-tps">—</b><small> tok/s</small></strong><canvas id="throughput-spark" width="180" height="42"></canvas></article>
+          <article class="metric accent"><span>KV cache hit rate</span><strong><b id="hit-rate">—</b><small>%</small></strong><div class="ring" id="hit-ring"><span></span></div></article>
+          <article class="metric"><span>Unified memory</span><strong><b id="memory-used">—</b><small id="memory-total"> / — GiB</small></strong><div class="bar" role="progressbar" aria-label="Unified memory allocated" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="memory-bar"></i></div></article>
+          <article class="metric"><span>Prefix reuse</span><strong><b id="prefix-reuse">—</b><small> tokens</small></strong></article>
         </section>
 
         <section class="panel api-panel" id="api" data-route-view="api">
@@ -326,7 +326,7 @@
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=download-card-v1"></script>
+    <script src="/assets/app.js?v=overview-compact-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>

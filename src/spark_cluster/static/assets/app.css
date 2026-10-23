@@ -355,6 +355,9 @@ body[data-route="api"] .api-panel{display:grid!important;grid-template-columns:r
 /* One truthful stream badge replaces the decorative live label and timestamp. */
 .live.connecting{color:#93a0b0;border-color:#394453;background:#151c27}.live.connecting i{background:#8491a3}.live.reconnecting{color:var(--amber);border-color:#5b4b25;background:#251e0f}.live.reconnecting i{background:var(--amber)}
 
+/* Overview cards show the metric once and keep only data-driven visuals. */
+.metric{min-height:126px}.metric strong{margin-top:14px}#throughput-spark{bottom:6px;height:40px}.ring{top:45px;width:56px;height:56px}.ring:after{width:42px;height:42px}.bar{top:94px}
+
 /* Suggest Hub authentication without keeping credentials fields on the page. */
 .hf-token-prompt{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;margin:0 0 10px;padding:9px 11px;border:1px solid #30473c;border-radius:8px;background:#101d18;color:#c8d7cf;text-align:left;cursor:pointer}.hf-token-prompt[hidden]{display:none}.hf-token-prompt>span:first-child{display:grid;place-items:center;width:30px;height:30px;border:1px solid #365e4c;border-radius:7px;background:#152a21;color:var(--green);font:9px DM Mono}.hf-token-prompt b,.hf-token-prompt small{display:block}.hf-token-prompt b{font-size:10px}.hf-token-prompt small{margin-top:2px;color:#788e83;font-size:8px}.hf-token-prompt strong{color:var(--green);font-size:9px}.hf-token-sheet-panel{width:min(760px,calc(100vw - 56px));height:auto;max-height:min(76vh,680px)}.hf-token-sheet-content{grid-template-columns:1fr;margin:0;padding:22px 24px 26px;border:0;border-radius:0;background:transparent;overflow:auto}.hf-token-sheet-content .hf-token-fields{margin-top:4px}
 @media(max-width:700px){.hf-token-prompt strong{font-size:0}.hf-token-prompt strong::after{content:'Add';font-size:9px}.hf-token-sheet-panel{width:100vw;max-height:calc(100dvh - 8px)}.hf-token-sheet-content{padding:20px 16px 26px}}
