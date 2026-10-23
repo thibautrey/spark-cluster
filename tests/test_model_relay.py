@@ -185,3 +185,27 @@ async def test_attached_cluster_download_is_queued_on_the_controller(tmp_path):
     assert response.status_code == 200
     assert response.json()["storage_fits"] is False
     assert response.json()["fits"] is False
+
+
+@pytest.mark.asyncio
+async def test_model_deletion_propagates_to_controller_and_cluster_storage(tmp_path):
+    controller = create_app(
+        settings(
+            tmp_path,
+            "controller-delete",
+            remote_cluster_url="http://192.168.50.10:30080",
+        )
+    )
+    bridge = create_app(settings(tmp_path, "bridge-delete"))
+    controller_job = staged_job(controller, b"controller-copy")
+    cluster_job = staged_job(bridge, b"cluster-copy")
+    controller.state.model_relay.transport = httpx.ASGITransport(app=bridge)
+
+    result = await controller.state.model_manager.delete_model("acme/model")
+
+    assert result.controller_deleted is True
+    assert result.cluster_deleted is True
+    assert not (controller.state.settings.model_cache_path / "acme" / "model").exists()
+    assert not (bridge.state.settings.model_cache_path / "acme" / "model").exists()
+    assert controller.state.runtime.store.get_download(controller_job.id).status == "deleted"
+    assert bridge.state.runtime.store.get_download(cluster_job.id).status == "deleted"

@@ -8,6 +8,9 @@ let launchPerformance = null;
 let logEntries = [];
 const downloadSamples = new Map();
 let logsPaused = false;
+let pendingModelAction = null;
+let actionSheetOpener = null;
+let actionSheetCloseTimer = null;
 
 const formatNumber = (value) => value >= 1e9 ? `${(value / 1e9).toFixed(1)}B` : value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : value >= 1e3 ? `${(value / 1e3).toFixed(1)}k` : `${Math.round(value)}`;
 const formatBytes = (value) => value >= 2 ** 30 ? `${(value / 2 ** 30).toFixed(1)} GiB` : value >= 2 ** 20 ? `${(value / 2 ** 20).toFixed(1)} MiB` : `${Math.round(value / 1024)} KiB`;
@@ -136,7 +139,7 @@ function renderModels(models) {
     <article class="model-card">
       <span class="model-glyph">M</span>
       <div><h3>${escapeHtml(model.id)}</h3><p>${escapeHtml(model.source)} · ${formatBytes(model.size_bytes)}${model.revision ? ` · ${escapeHtml(model.revision)}` : ''}</p></div>
-      <span class="model-state ${model.loaded ? 'loaded' : ''}">${model.loaded ? '● loaded' : '○ local'}</span>
+      <div class="model-card-actions"><span class="model-state ${model.loaded ? 'loaded' : ''}">${model.loaded ? '● loaded' : '○ local'}</span>${model.source === 'managed' ? `<button class="model-delete danger" type="button" data-model-action="delete" data-repo-id="${escapeHtml(model.id)}" ${model.loaded ? 'disabled title="Stop the runtime before deleting this model"' : ''}>Delete</button>` : ''}</div>
     </article>`).join('');
 }
 
@@ -148,16 +151,16 @@ function updateLaunchModelOptions(models) {
   if (managed.some(model => model.id === selected)) select.value = selected;
 }
 
-const activeDownloadStatuses = new Set(['queued', 'resolving', 'downloading', 'preparing-transfer', 'distributing']);
+const activeDownloadStatuses = new Set(['queued', 'resolving', 'downloading', 'paused', 'preparing-transfer', 'distributing']);
 
 function downloadPhase(job) {
   if (['queued', 'resolving'].includes(job.status)) return 0;
-  if (job.status === 'downloading') return 1;
+  if (['downloading', 'paused'].includes(job.status)) return 1;
   return 2;
 }
 
 function downloadPhaseLabel(job) {
-  return ({queued: 'Queued', resolving: 'Resolving repository', downloading: 'Downloading from Hugging Face', 'preparing-transfer': 'Preparing LAN delivery', distributing: 'Distributing to cluster'})[job.status] || job.status;
+  return ({queued: 'Queued', resolving: 'Resolving repository', downloading: 'Downloading from Hugging Face', paused: 'Download paused', 'preparing-transfer': 'Preparing LAN delivery', distributing: 'Distributing to cluster'})[job.status] || job.status;
 }
 
 function downloadRate(job) {
@@ -196,18 +199,20 @@ function renderActiveDownloads(downloads) {
   for (const id of downloadSamples.keys()) if (!activeIds.has(id)) downloadSamples.delete(id);
   $('active-download-list').innerHTML = active.map(job => {
     const distributing = job.status === 'distributing';
+    const paused = job.status === 'paused';
     const progress = distributing ? job.transfer_progress : job.progress;
     const currentBytes = distributing ? job.transferred_bytes : job.downloaded_bytes;
-    const rate = downloadRate(job);
+    const rate = paused ? 0 : downloadRate(job);
     const remaining = Math.max(0, job.total_bytes - currentBytes);
     const destination = job.destination === 'cluster' ? 'Cluster storage' : 'Controller storage';
     const finalStage = job.destination === 'cluster' ? 'Distribute' : 'Install';
     const phase = downloadPhase(job);
-    return `<article class="active-download-card">
+    return `<article class="active-download-card ${paused ? 'paused' : ''}">
       <div class="active-download-identity"><span class="active-download-icon">↓</span><div><p>${escapeHtml(downloadPhaseLabel(job))}</p><h4>${escapeHtml(job.repo_id)}</h4><small>${escapeHtml(job.message || job.status)}</small></div><span class="active-download-status">${escapeHtml(job.status.replaceAll('-', ' '))}</span></div>
       <div class="active-download-progress"><div><i style="width:${progress}%"></i></div><b>${progress.toFixed(2)}%</b></div>
-      <div class="active-download-stats"><span><small>Transferred</small><b>${formatBytes(currentBytes)} <em>/ ${formatBytes(job.total_bytes)}</em></b></span><span><small>Current speed</small><b>${rate ? `${formatBytes(rate)}/s` : 'Measuring…'}</b></span><span><small>Estimated time</small><b>${rate ? formatDuration(remaining / rate) : 'Calculating…'}</b></span><span><small>Destination</small><b>${destination}</b></span></div>
+      <div class="active-download-stats"><span><small>Transferred</small><b>${formatBytes(currentBytes)} <em>/ ${formatBytes(job.total_bytes)}</em></b></span><span><small>Current speed</small><b>${paused ? 'Paused' : rate ? `${formatBytes(rate)}/s` : 'Measuring…'}</b></span><span><small>Estimated time</small><b>${paused ? 'Paused' : rate ? formatDuration(remaining / rate) : 'Calculating…'}</b></span><span><small>Destination</small><b>${destination}</b></span></div>
       <div class="active-download-phases">${['Resolve', 'Download', finalStage].map((label, index) => `<span class="${index < phase ? 'done' : index === phase ? 'active' : ''}"><i>${index < phase ? '✓' : index + 1}</i>${label}</span>`).join('')}</div>
+      <div class="active-download-actions"><button class="download-control" type="button" data-download-action="${paused ? 'resume' : 'pause'}" data-job-id="${escapeHtml(job.id)}" data-repo-id="${escapeHtml(job.repo_id)}">${paused ? 'Resume' : 'Pause'}</button><button class="download-control danger" type="button" data-download-action="cancel" data-job-id="${escapeHtml(job.id)}" data-repo-id="${escapeHtml(job.repo_id)}">Cancel &amp; remove files</button></div>
     </article>`;
   }).join('');
 }
@@ -412,6 +417,105 @@ async function refreshLibrary() {
   }
 }
 
+function openModelActionSheet(action, target, opener) {
+  clearTimeout(actionSheetCloseTimer);
+  pendingModelAction = {action, ...target};
+  actionSheetOpener = opener;
+  const model = localModels.find(item => item.id === target.repoId);
+  const configurations = {
+    pause: {
+      eyebrow: 'DOWNLOAD CONTROL',
+      title: 'Pause this model download?',
+      description: 'The transfer stops immediately while keeping every completed and partial file ready for resume.',
+      icon: 'Ⅱ',
+      confirm: 'Pause download',
+      impact: ['Network transfer is suspended', 'Partial files stay on the controller and cluster node', 'Resume continues from preserved data'],
+    },
+    resume: {
+      eyebrow: 'DOWNLOAD CONTROL',
+      title: 'Resume this model download?',
+      description: 'The controller and cluster continue from the files already present instead of starting over.',
+      icon: '▶',
+      confirm: 'Resume download',
+      impact: ['Existing progress is preserved', 'Internet or LAN transfer restarts', 'Cluster distribution resumes automatically'],
+    },
+    cancel: {
+      eyebrow: 'DESTRUCTIVE ACTION',
+      title: 'Cancel and remove this download?',
+      description: 'The transfer stops and its partial files are removed from the controller and attached cluster storage.',
+      icon: '×',
+      confirm: 'Cancel and remove files',
+      danger: true,
+      impact: ['The running transfer is terminated', 'Partial controller files are deleted', 'Partial cluster-node files are deleted'],
+    },
+    delete: {
+      eyebrow: 'DESTRUCTIVE ACTION',
+      title: 'Delete this model everywhere?',
+      description: `This removes ${model ? formatBytes(model.size_bytes) : 'the model files'} from the controller and every attached cluster storage location.`,
+      icon: '⌫',
+      confirm: 'Delete model everywhere',
+      danger: true,
+      impact: ['Controller model files are deleted', 'The managed cluster copy is deleted', 'A running model must be stopped first'],
+    },
+  };
+  const configuration = configurations[action];
+  $('action-sheet-eyebrow').textContent = configuration.eyebrow;
+  $('action-sheet-title').textContent = configuration.title;
+  $('action-sheet-model').textContent = target.repoId;
+  $('action-sheet-description').textContent = configuration.description;
+  $('action-sheet-icon').textContent = configuration.icon;
+  $('action-sheet-impact').innerHTML = configuration.impact.map(item => `<span><i>✓</i>${escapeHtml(item)}</span>`).join('');
+  $('action-sheet-confirm').textContent = configuration.confirm;
+  $('action-sheet-confirm').className = configuration.danger ? 'danger' : 'primary';
+  $('action-sheet-error').hidden = true;
+  $('action-admin-token').value = $('admin-token').value;
+  $('action-sheet').hidden = false;
+  document.body.classList.add('bottom-sheet-open');
+  requestAnimationFrame(() => {
+    $('action-sheet').classList.add('open');
+    $('action-sheet-close').focus({preventScroll: true});
+  });
+}
+
+function closeModelActionSheet() {
+  if ($('action-sheet').hidden) return;
+  $('action-sheet').classList.remove('open');
+  document.body.classList.remove('bottom-sheet-open');
+  const opener = actionSheetOpener;
+  pendingModelAction = null;
+  actionSheetCloseTimer = setTimeout(() => {
+    $('action-sheet').hidden = true;
+    if (opener?.isConnected) opener.focus({preventScroll: true});
+  }, 220);
+}
+
+async function confirmModelAction() {
+  if (!pendingModelAction) return;
+  const action = pendingModelAction;
+  const button = $('action-sheet-confirm');
+  button.disabled = true;
+  $('action-sheet-cancel').disabled = true;
+  $('action-sheet-error').hidden = true;
+  const originalLabel = button.textContent;
+  button.textContent = 'Applying…';
+  try {
+    const path = action.action === 'delete'
+      ? `/api/v1/model-management/models/${action.repoId.split('/').map(encodeURIComponent).join('/')}`
+      : `/api/v1/downloads/${encodeURIComponent(action.jobId)}/${action.action}`;
+    await api(path, {method: action.action === 'delete' ? 'DELETE' : 'POST', headers: authHeaders($('action-admin-token').value)});
+    $('admin-token').value = $('action-admin-token').value;
+    await refreshLibrary();
+    closeModelActionSheet();
+  } catch (error) {
+    $('action-sheet-error').textContent = error.message;
+    $('action-sheet-error').hidden = false;
+    button.textContent = originalLabel;
+  } finally {
+    button.disabled = false;
+    $('action-sheet-cancel').disabled = false;
+  }
+}
+
 function fitPayload() {
   return {
     repo_id: $('repo-id').value.trim(),
@@ -423,8 +527,8 @@ function fitPayload() {
   };
 }
 
-function authHeaders() {
-  const token = $('admin-token').value.trim();
+function authHeaders(tokenOverride = '') {
+  const token = tokenOverride.trim() || $('admin-token').value.trim();
   return token ? {Authorization: `Bearer ${token}`} : {};
 }
 
@@ -535,6 +639,26 @@ $('download-list').addEventListener('click', async event => {
     button.textContent = 'Failed';
     button.title = error.message;
   }
+});
+$('active-download-list').addEventListener('click', event => {
+  const button = event.target.closest('[data-download-action]');
+  if (!button) return;
+  openModelActionSheet(button.dataset.downloadAction, {
+    jobId: button.dataset.jobId,
+    repoId: button.dataset.repoId,
+  }, button);
+});
+$('local-models').addEventListener('click', event => {
+  const button = event.target.closest('[data-model-action="delete"]');
+  if (!button || button.disabled) return;
+  openModelActionSheet('delete', {repoId: button.dataset.repoId}, button);
+});
+$('action-sheet-confirm').addEventListener('click', confirmModelAction);
+$('action-sheet-cancel').addEventListener('click', closeModelActionSheet);
+$('action-sheet-close').addEventListener('click', closeModelActionSheet);
+$('action-sheet-backdrop').addEventListener('click', closeModelActionSheet);
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !$('action-sheet').hidden) closeModelActionSheet();
 });
 
 $('launch-model').addEventListener('change', async () => {

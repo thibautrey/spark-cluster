@@ -19,7 +19,7 @@ function openCatalogSheet(opener, title = 'Model details') {
   if (opener) catalogSheetOpener = opener;
   $('catalog-sheet-title').textContent = title;
   $('catalog-sheet').hidden = false;
-  document.body.classList.add('catalog-sheet-open');
+  document.body.classList.add('bottom-sheet-open');
   requestAnimationFrame(() => {
     $('catalog-sheet').classList.add('open');
     if (wasHidden) $('catalog-sheet-close').focus({preventScroll: true});
@@ -30,7 +30,7 @@ function closeCatalogSheet() {
   if ($('catalog-sheet').hidden) return;
   ++detailRequest;
   $('catalog-sheet').classList.remove('open');
-  document.body.classList.remove('catalog-sheet-open');
+  document.body.classList.remove('bottom-sheet-open');
   const opener = catalogSheetOpener;
   catalogSheetCloseTimer = setTimeout(() => {
     $('catalog-sheet').hidden = true;

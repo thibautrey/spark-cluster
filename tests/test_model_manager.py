@@ -340,6 +340,87 @@ async def test_download_job_completes_and_model_is_in_inventory(tmp_path, monkey
         store.close()
 
 
+@pytest.mark.asyncio
+async def test_download_can_pause_resume_and_cancel_without_losing_control(tmp_path):
+    settings = Settings(model_cache_path=tmp_path / "models")
+    store = SnapshotStore(tmp_path / "state.db")
+    runtime = SimpleNamespace(latest=ClusterSimulator("test").snapshot())
+    manager = ModelManager(settings, store, runtime)
+    plan = build_fit_plan(
+        ModelFitRequest(repo_id="acme/model"),
+        metadata(),
+        runtime.latest,
+        settings,
+    )
+    staging = settings.model_cache_path / ".partial" / "job-1"
+    staging.mkdir(parents=True)
+    (staging / "partial.bin").write_bytes(b"partial")
+    job = DownloadJob(
+        id="job-1",
+        repo_id="acme/model",
+        revision="main",
+        status="queued",
+        target_path=str(settings.model_cache_path / "acme" / "model"),
+        staging_path=str(staging),
+        fit=plan,
+    )
+    store.save_download(job)
+
+    paused = await manager.pause(job.id)
+    assert paused.status == "paused"
+    assert (staging / "partial.bin").exists()
+    resumed = await manager.resume(job.id)
+    assert resumed.status == "queued"
+    assert await manager.queue.get() == job.id
+    manager.queue.task_done()
+    await manager.pause(job.id)
+    cancelled = await manager.cancel(job.id)
+    assert cancelled.status == "cancelled"
+    assert not staging.exists()
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_delete_managed_model_removes_files_and_marks_history(tmp_path):
+    settings = Settings(
+        model_cache_path=tmp_path / "models",
+        openai_api_base="http://127.0.0.1:9/v1",
+    )
+    store = SnapshotStore(tmp_path / "state.db")
+    runtime = SimpleNamespace(latest=ClusterSimulator("test").snapshot())
+    manager = ModelManager(settings, store, runtime)
+    plan = build_fit_plan(
+        ModelFitRequest(repo_id="acme/model"),
+        metadata(),
+        runtime.latest,
+        settings,
+    )
+    target = settings.model_cache_path / "acme" / "model"
+    target.mkdir(parents=True)
+    (target / "weights.bin").write_bytes(b"model-data")
+    (target / ".spark-cluster.json").write_text("{}")
+    store.save_download(
+        DownloadJob(
+            id="job-1",
+            repo_id="acme/model",
+            revision="main",
+            status="completed",
+            target_path=str(target),
+            staging_path=str(settings.model_cache_path / ".partial" / "job-1"),
+            fit=plan,
+        )
+    )
+
+    result = await manager.delete_model("acme/model")
+    assert result.status == "deleted"
+    assert result.controller_deleted is True
+    assert result.cluster_deleted is True
+    assert result.freed_bytes > 0
+    assert not target.exists()
+    assert store.get_download("job-1").status == "deleted"
+    store.close()
+
+
 def test_kv_head_replication_is_not_divided_by_tensor_parallel(tmp_path):
     from spark_cluster.model_manager import _node_requirement
 

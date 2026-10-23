@@ -11,7 +11,7 @@ from urllib.parse import quote
 import httpx
 
 from .config import Settings
-from .models import ControllerModelImportRequest, DownloadJob
+from .models import ControllerModelImportRequest, DownloadJob, ModelMutationResult
 from .remote_cluster import signed_controller_headers, validated_cluster_url
 from .store import SnapshotStore
 
@@ -127,6 +127,66 @@ class ModelRelay:
             raise FileNotFoundError(relative_path)
         return path
 
+    def remove_manifest(self, job_id: str) -> None:
+        self._manifest_path(job_id).unlink(missing_ok=True)
+
+    async def _remote_job_action(self, job: DownloadJob, action: str) -> bool:
+        if not self.settings.remote_cluster_url:
+            return False
+        path = f"/api/v1/downloads/{job.id}/{action}"
+        async with httpx.AsyncClient(
+            base_url=self.settings.remote_cluster_url,
+            transport=self.transport,
+            timeout=30,
+            trust_env=False,
+        ) as client:
+            response = await client.post(
+                path,
+                headers=signed_controller_headers(self._token(), "POST", path),
+            )
+            if response.status_code == 404:
+                return False
+            response.raise_for_status()
+            return True
+
+    async def pause_remote(self, job: DownloadJob) -> bool:
+        return await self._remote_job_action(job, "pause")
+
+    async def resume_remote(self, job: DownloadJob) -> bool:
+        return await self._remote_job_action(job, "resume")
+
+    async def cancel_remote(self, job: DownloadJob) -> bool:
+        return await self._remote_job_action(job, "cancel")
+
+    async def delete_remote_model(self, repo_id: str) -> ModelMutationResult:
+        if not self.settings.remote_cluster_url:
+            return ModelMutationResult(
+                repo_id=repo_id,
+                status="not-found",
+                message="No attached cluster",
+            )
+        encoded = quote(repo_id, safe="/")
+        path = f"/api/v1/model-management/models/{encoded}"
+        async with httpx.AsyncClient(
+            base_url=self.settings.remote_cluster_url,
+            transport=self.transport,
+            timeout=60,
+            trust_env=False,
+        ) as client:
+            response = await client.delete(
+                path,
+                headers=signed_controller_headers(self._token(), "DELETE", path),
+            )
+            if response.status_code == 404:
+                return ModelMutationResult(
+                    repo_id=repo_id,
+                    status="not-found",
+                    message="Model was not present in cluster storage",
+                )
+            response.raise_for_status()
+            result = ModelMutationResult.model_validate(response.json())
+            return result.model_copy(update={"cluster_deleted": result.controller_deleted or result.cluster_deleted})
+
     def _verify_manifest(self, manifest: dict, job: DownloadJob) -> None:
         signature = str(manifest.pop("signature", ""))
         expected = hmac.new(
@@ -141,7 +201,7 @@ class ModelRelay:
         ):
             raise RuntimeError("Controller model manifest does not match this transfer")
 
-    async def distribute(self, job: DownloadJob) -> None:
+    async def distribute(self, job: DownloadJob) -> bool:
         if not self.settings.remote_cluster_url or not job.controller_url:
             raise RuntimeError("No attached cluster or reachable controller URL for model relay")
         manifest = await self.prepare_manifest(job)
@@ -185,13 +245,20 @@ class ModelRelay:
                 )
                 response.raise_for_status()
                 remote = DownloadJob.model_validate(response.json())
+                job.status = "paused" if remote.status == "paused" else "distributing"
                 job.transfer_progress = remote.progress
                 job.transferred_bytes = remote.downloaded_bytes
                 job.message = remote.message
                 job.updated_at = datetime.now(UTC)
                 await asyncio.to_thread(self.store.save_download, job)
                 if remote.status == "completed":
-                    return
+                    return True
+                if remote.status in {"cancelled", "deleted"}:
+                    job.status = "cancelled"
+                    job.message = "Cluster model transfer was cancelled"
+                    job.updated_at = datetime.now(UTC)
+                    await asyncio.to_thread(self.store.save_download, job)
+                    return False
                 if remote.status == "failed":
                     raise RuntimeError(remote.error or "Cluster model copy failed")
                 await asyncio.sleep(1)

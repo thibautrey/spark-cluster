@@ -1,9 +1,12 @@
 import asyncio
+import contextlib
 import json
 import math
 import os
 import re
+import signal
 import shutil
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -25,6 +28,7 @@ from .models import (
     ModelDownloadRequest,
     ModelFitPlan,
     ModelFitRequest,
+    ModelMutationResult,
     RuntimeEndpoint,
 )
 from .store import SnapshotStore
@@ -698,6 +702,8 @@ class ModelManager:
         self.relay = relay
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.worker: asyncio.Task | None = None
+        self._active_tasks: dict[str, asyncio.Task] = {}
+        self._active_processes: dict[str, asyncio.subprocess.Process] = {}
         self._inventory_cache: list[LocalModel] | None = None
         self._inventory_cached_at = 0.0
         self._runtime_cache: RuntimeEndpoint | None = None
@@ -802,7 +808,14 @@ class ModelManager:
             if job.repo_id == request.repo_id
             and job.revision == request.revision
             and job.status
-            in {"queued", "resolving", "downloading", "preparing-transfer", "distributing"}
+            in {
+                "queued",
+                "resolving",
+                "downloading",
+                "paused",
+                "preparing-transfer",
+                "distributing",
+            }
         ]
         if active:
             return active[0]
@@ -877,8 +890,157 @@ class ModelManager:
         await self.queue.put(job.id)
         return job
 
+    async def pause(self, job_id: str) -> DownloadJob:
+        job = await asyncio.to_thread(self.store.get_download, job_id)
+        if job is None:
+            raise KeyError(job_id)
+        if job.status == "paused":
+            return job
+        if job.status not in {
+            "queued",
+            "resolving",
+            "downloading",
+            "preparing-transfer",
+            "distributing",
+        }:
+            raise ValueError(f"A {job.status} download cannot be paused")
+        previous_status = job.status
+        job.status = "paused"
+        job.message = "Paused; downloaded files are preserved"
+        job.updated_at = datetime.now(UTC)
+        await asyncio.to_thread(self.store.save_download, job)
+
+        process = self._active_processes.get(job_id)
+        if process and process.returncode is None:
+            process.send_signal(signal.SIGSTOP)
+        elif previous_status in {"preparing-transfer", "distributing"} and self.relay:
+            await self.relay.pause_remote(job)
+        else:
+            task = self._active_tasks.get(job_id)
+            if task and not task.done():
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        return job
+
+    async def resume(self, job_id: str) -> DownloadJob:
+        job = await asyncio.to_thread(self.store.get_download, job_id)
+        if job is None:
+            raise KeyError(job_id)
+        if job.status != "paused":
+            raise ValueError(f"A {job.status} download cannot be resumed")
+
+        process = self._active_processes.get(job_id)
+        if process and process.returncode is None:
+            process.send_signal(signal.SIGCONT)
+            job.status = "downloading"
+            job.message = "Resuming download from preserved partial files"
+        elif job.destination == "cluster" and Path(job.target_path).exists() and self.relay:
+            remote_resumed = await self.relay.resume_remote(job)
+            if remote_resumed:
+                job.status = "distributing"
+                job.message = "Resuming LAN delivery to the cluster"
+            else:
+                job.status = "queued"
+                job.message = "Resume queued"
+                await self.queue.put(job.id)
+        else:
+            job.status = "queued"
+            job.message = "Resume queued from preserved partial files"
+            await self.queue.put(job.id)
+        job.error = None
+        job.updated_at = datetime.now(UTC)
+        await asyncio.to_thread(self.store.save_download, job)
+        return job
+
+    async def cancel(self, job_id: str) -> DownloadJob:
+        job = await asyncio.to_thread(self.store.get_download, job_id)
+        if job is None:
+            raise KeyError(job_id)
+        if job.status == "cancelled":
+            return job
+        if job.status in {"completed", "deleted"}:
+            raise ValueError("Completed models must be deleted from the model library")
+
+        previous_status = job.status
+        job.status = "cancelled"
+        job.message = "Cancelled; partial files were removed from controller and cluster storage"
+        job.error = None
+        job.updated_at = datetime.now(UTC)
+        await asyncio.to_thread(self.store.save_download, job)
+
+        if previous_status in {"preparing-transfer", "distributing", "paused"} and self.relay:
+            await self.relay.cancel_remote(job)
+        process = self._active_processes.get(job_id)
+        if process and process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.send_signal(signal.SIGCONT)
+                process.terminate()
+            try:
+                await asyncio.wait_for(process.wait(), timeout=10)
+            except TimeoutError:
+                process.kill()
+                await process.wait()
+        task = self._active_tasks.get(job_id)
+        if task and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        await asyncio.to_thread(self._remove_job_files, job)
+        if self.relay:
+            await asyncio.to_thread(self.relay.remove_manifest, job.id)
+        self._inventory_cache = None
+        return job
+
+    async def delete_model(self, repo_id: str) -> ModelMutationResult:
+        safe_repo_parts(repo_id)
+        endpoint = await self.runtime_endpoint()
+        if repo_id in endpoint.loaded_model_ids:
+            raise ModelDeletionBlocked("Stop the running model before deleting its files")
+
+        cluster_result = None
+        if self.settings.remote_cluster_url and self.relay:
+            cluster_result = await self.relay.delete_remote_model(repo_id)
+
+        target = self.settings.model_cache_path.joinpath(*safe_repo_parts(repo_id))
+        controller_deleted = (target / ".spark-cluster.json").is_file()
+        freed_bytes = await asyncio.to_thread(directory_size, target) if controller_deleted else 0
+        if controller_deleted:
+            await asyncio.to_thread(shutil.rmtree, target)
+            if target.parent != self.settings.model_cache_path:
+                with contextlib.suppress(OSError):
+                    target.parent.rmdir()
+        cluster_deleted = bool(cluster_result and cluster_result.cluster_deleted)
+        freed_bytes += cluster_result.freed_bytes if cluster_result else 0
+        if not controller_deleted and not cluster_deleted:
+            raise KeyError(repo_id)
+
+        for job in await asyncio.to_thread(self.store.list_downloads):
+            if job.repo_id == repo_id and job.status == "completed":
+                job.status = "deleted"
+                job.message = "Model files deleted from controller and cluster storage"
+                job.updated_at = datetime.now(UTC)
+                await asyncio.to_thread(self.store.save_download, job)
+                if self.relay:
+                    await asyncio.to_thread(self.relay.remove_manifest, job.id)
+        self._inventory_cache = None
+        return ModelMutationResult(
+            repo_id=repo_id,
+            status="deleted",
+            controller_deleted=controller_deleted,
+            cluster_deleted=cluster_deleted or (not self.settings.remote_cluster_url),
+            freed_bytes=freed_bytes,
+            message="Model removed from the controller and all attached cluster storage",
+        )
+
     async def downloads(self) -> list[DownloadJob]:
         return await asyncio.to_thread(self.store.list_downloads)
+
+    @staticmethod
+    def _remove_job_files(job: DownloadJob) -> None:
+        for path in (Path(job.staging_path), Path(job.target_path)):
+            if path.exists():
+                shutil.rmtree(path)
 
     async def runtime_endpoint(self) -> RuntimeEndpoint:
         if self._runtime_cache and time.monotonic() - self._runtime_cached_at < 1:
@@ -1008,24 +1170,31 @@ class ModelManager:
     async def _worker(self) -> None:
         while True:
             job_id = await self.queue.get()
+            task = asyncio.create_task(self._run_job(job_id))
+            self._active_tasks[job_id] = task
             try:
-                await self._run_job(job_id)
+                await task
             except asyncio.CancelledError:
-                raise
+                job = await asyncio.to_thread(self.store.get_download, job_id)
+                if not job or job.status not in {"paused", "cancelled"}:
+                    raise
             except Exception as error:
                 job = await asyncio.to_thread(self.store.get_download, job_id)
-                if job:
+                if job and job.status not in {"paused", "cancelled"}:
                     job.status = "failed"
                     job.error = self.safe_error(error)
                     job.message = "Model transfer failed and can be retried"
                     job.updated_at = datetime.now(UTC)
                     await asyncio.to_thread(self.store.save_download, job)
             finally:
+                self._active_tasks.pop(job_id, None)
                 self.queue.task_done()
 
     async def _run_job(self, job_id: str) -> None:
         job = await asyncio.to_thread(self.store.get_download, job_id)
         if job is None:
+            return
+        if job.status in {"paused", "cancelled", "completed", "deleted"}:
             return
         existing_target = Path(job.target_path)
         if (existing_target / ".spark-cluster.json").exists():
@@ -1050,6 +1219,92 @@ class ModelManager:
             await self._install_staging(job, staging)
             return
 
+        if isinstance(self.catalog, HuggingFaceCatalog):
+            completed = await self._run_download_process(job, staging)
+            if not completed:
+                return
+        else:
+            completed = await self._run_inprocess_download(job, staging)
+            if not completed:
+                return
+
+        try:
+            manifest = {
+                "repo_id": job.repo_id,
+                "revision": job.revision,
+                "downloaded_at": datetime.now(UTC).isoformat(),
+                "fit": job.fit.model_dump(mode="json"),
+            }
+            (staging / ".spark-cluster.json").write_text(json.dumps(manifest, indent=2))
+            await self._install_staging(job, staging)
+            return
+        except (OSError, ValueError) as error:
+            job.status = "failed"
+            job.error = self.safe_error(error)
+            job.message = "Controller download failed"
+        job.updated_at = datetime.now(UTC)
+        await asyncio.to_thread(self.store.save_download, job)
+
+    async def _run_download_process(self, job: DownloadJob, staging: Path) -> bool:
+        environment = os.environ.copy()
+        if self.catalog.token:
+            environment["SPARK_CLUSTER_HF_TOKEN"] = self.catalog.token
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "spark_cluster.download_worker",
+            job.repo_id,
+            job.revision,
+            str(staging),
+            str(self.catalog.download_workers),
+            env=environment,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        self._active_processes[job.id] = process
+        try:
+            while process.returncode is None:
+                await asyncio.sleep(0.5)
+                current = await asyncio.to_thread(self.store.get_download, job.id)
+                if current is None or current.status == "cancelled":
+                    return False
+                if current.status == "paused":
+                    continue
+                job = current
+                job.downloaded_bytes = min(
+                    job.total_bytes,
+                    await asyncio.to_thread(self._staging_progress, staging),
+                )
+                job.progress = (
+                    round(job.downloaded_bytes / job.total_bytes * 100, 2)
+                    if job.total_bytes
+                    else 0
+                )
+                job.updated_at = datetime.now(UTC)
+                await asyncio.to_thread(self.store.save_download, job)
+            return_code = await process.wait()
+            current = await asyncio.to_thread(self.store.get_download, job.id)
+            if current and current.status in {"paused", "cancelled"}:
+                return False
+            if return_code:
+                raise RuntimeError(f"Hugging Face download worker exited with code {return_code}")
+            return True
+        except asyncio.CancelledError:
+            if process.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    process.send_signal(signal.SIGCONT)
+                    process.terminate()
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(process.wait(), timeout=10)
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+            raise
+        finally:
+            self._active_processes.pop(job.id, None)
+
+    async def _run_inprocess_download(self, job: DownloadJob, staging: Path) -> bool:
         outcome: dict[str, BaseException | None] = {"error": None}
 
         def download() -> None:
@@ -1061,6 +1316,9 @@ class ModelManager:
         thread = threading.Thread(target=download, daemon=True, name=f"hf-{job.id[:8]}")
         thread.start()
         while thread.is_alive():
+            current = await asyncio.to_thread(self.store.get_download, job.id)
+            if current and current.status in {"paused", "cancelled"}:
+                return False
             job.downloaded_bytes = min(
                 job.total_bytes,
                 await asyncio.to_thread(self._staging_progress, staging),
@@ -1079,24 +1337,8 @@ class ModelManager:
             job.message = "Controller download failed"
             job.updated_at = datetime.now(UTC)
             await asyncio.to_thread(self.store.save_download, job)
-            return
-
-        try:
-            manifest = {
-                "repo_id": job.repo_id,
-                "revision": job.revision,
-                "downloaded_at": datetime.now(UTC).isoformat(),
-                "fit": job.fit.model_dump(mode="json"),
-            }
-            (staging / ".spark-cluster.json").write_text(json.dumps(manifest, indent=2))
-            await self._install_staging(job, staging)
-            return
-        except (OSError, ValueError) as error:
-            job.status = "failed"
-            job.error = self.safe_error(error)
-            job.message = "Controller download failed"
-        job.updated_at = datetime.now(UTC)
-        await asyncio.to_thread(self.store.save_download, job)
+            return False
+        return True
 
     async def _install_staging(self, job: DownloadJob, staging: Path) -> None:
         target = Path(job.target_path)
@@ -1126,7 +1368,9 @@ class ModelManager:
             job.updated_at = datetime.now(UTC)
             await asyncio.to_thread(self.store.save_download, job)
             try:
-                await self.relay.distribute(job)
+                completed = await self.relay.distribute(job)
+                if not completed:
+                    return
             except (httpx.HTTPError, OSError, RuntimeError, ValueError) as error:
                 job.status = "failed"
                 job.error = self.safe_error(error)
@@ -1176,4 +1420,8 @@ class ModelDoesNotFit(Exception):
 
 
 class ModelAlreadyInstalled(Exception):
+    pass
+
+
+class ModelDeletionBlocked(Exception):
     pass

@@ -40,6 +40,7 @@ from .cluster_setup import ClusterSetupService, SetupFailure
 from .config import Settings
 from .model_manager import (
     ModelAlreadyInstalled,
+    ModelDeletionBlocked,
     ModelDoesNotFit,
     ModelManager,
 )
@@ -56,6 +57,7 @@ from .models import (
     ModelFitRequest,
     ModelLaunchJob,
     ModelLaunchRequest,
+    ModelMutationResult,
     ModelRuntime,
     NodeSnapshot,
     RuntimeEndpoint,
@@ -198,7 +200,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["Authorization", "Content-Type"],
     )
 
@@ -555,6 +557,66 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return await model_manager.retry(job_id)
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Download job not found") from error
+
+    async def download_action(job_id: str, action: str) -> DownloadJob:
+        try:
+            handler = {
+                "pause": model_manager.pause,
+                "resume": model_manager.resume,
+                "cancel": model_manager.cancel,
+            }[action]
+            return await handler(job_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Download job not found") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except httpx.HTTPError as error:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Cluster download action failed: {model_manager.safe_error(error)}",
+            ) from error
+
+    @app.post(
+        "/api/v1/downloads/{job_id}/pause",
+        response_model=DownloadJob,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def pause_download(job_id: str) -> DownloadJob:
+        return await download_action(job_id, "pause")
+
+    @app.post(
+        "/api/v1/downloads/{job_id}/resume",
+        response_model=DownloadJob,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def resume_download(job_id: str) -> DownloadJob:
+        return await download_action(job_id, "resume")
+
+    @app.post(
+        "/api/v1/downloads/{job_id}/cancel",
+        response_model=DownloadJob,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def cancel_download(job_id: str) -> DownloadJob:
+        return await download_action(job_id, "cancel")
+
+    @app.delete(
+        "/api/v1/model-management/models/{repo_id:path}",
+        response_model=ModelMutationResult,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def delete_model(repo_id: str) -> ModelMutationResult:
+        try:
+            return await model_manager.delete_model(repo_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Managed model not found") from error
+        except ModelDeletionBlocked as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except (ValueError, httpx.HTTPError) as error:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Cluster model deletion failed: {model_manager.safe_error(error)}",
+            ) from error
 
     @app.get("/api/v1/logs", response_model=list[RuntimeLog])
     async def runtime_logs(

@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=brand-collapse-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=model-lifecycle-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -149,10 +149,10 @@
               <button id="catalog-more" type="button" class="secondary" hidden>Load more models</button>
             </div>
           </div>
-          <div class="catalog-sheet" id="catalog-sheet" hidden>
-            <button class="catalog-sheet-backdrop" id="catalog-sheet-backdrop" type="button" tabindex="-1" aria-label="Close model details"></button>
-            <section class="catalog-inspector" id="catalog-inspector" role="dialog" aria-modal="true" aria-labelledby="catalog-sheet-title">
-              <header class="catalog-sheet-header">
+          <div class="bottom-sheet catalog-sheet" id="catalog-sheet" hidden>
+            <button class="bottom-sheet-backdrop catalog-sheet-backdrop" id="catalog-sheet-backdrop" type="button" tabindex="-1" aria-label="Close model details"></button>
+            <section class="bottom-sheet-panel catalog-inspector" id="catalog-inspector" role="dialog" aria-modal="true" aria-labelledby="catalog-sheet-title">
+              <header class="bottom-sheet-header catalog-sheet-header">
                 <span class="catalog-sheet-handle" aria-hidden="true"></span>
                 <div><p class="eyebrow">MODEL CATALOG</p><h3 id="catalog-sheet-title">Model details</h3></div>
                 <button class="catalog-sheet-close" id="catalog-sheet-close" type="button" aria-label="Close model details">×</button>
@@ -177,6 +177,23 @@
                   <label>Admin token <span class="optional">optional</span><input id="admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label>
                   <div class="form-actions"><button class="secondary" id="check-fit" type="button">Check fit</button><button class="primary" id="download-model" type="submit" disabled>Download once</button></div>
                 </form>
+              </div>
+            </section>
+          </div>
+          <div class="bottom-sheet action-sheet" id="action-sheet" hidden>
+            <button class="bottom-sheet-backdrop" id="action-sheet-backdrop" type="button" tabindex="-1" aria-label="Close confirmation"></button>
+            <section class="bottom-sheet-panel action-sheet-panel" role="dialog" aria-modal="true" aria-labelledby="action-sheet-title">
+              <header class="bottom-sheet-header">
+                <span class="catalog-sheet-handle" aria-hidden="true"></span>
+                <div><p class="eyebrow" id="action-sheet-eyebrow">MODEL ACTION</p><h3 id="action-sheet-title">Confirm action</h3></div>
+                <button class="catalog-sheet-close" id="action-sheet-close" type="button" aria-label="Close confirmation">×</button>
+              </header>
+              <div class="action-sheet-content">
+                <div class="action-sheet-summary"><span id="action-sheet-icon">!</span><div><h4 id="action-sheet-model"></h4><p id="action-sheet-description"></p></div></div>
+                <div class="action-sheet-impact" id="action-sheet-impact"></div>
+                <label>Admin token <span class="optional">optional</span><input id="action-admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label>
+                <p class="action-sheet-error" id="action-sheet-error" role="alert" hidden></p>
+                <div class="action-sheet-actions"><button class="secondary" id="action-sheet-cancel" type="button">Keep current state</button><button class="primary" id="action-sheet-confirm" type="button">Confirm</button></div>
               </div>
             </section>
           </div>
@@ -236,8 +253,8 @@
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=sidebar-clean-v1"></script>
-    <script src="/assets/catalog.js?v=sidebar-clean-v1"></script>
+    <script src="/assets/app.js?v=model-lifecycle-v1"></script>
+    <script src="/assets/catalog.js?v=model-lifecycle-v1"></script>
     <script src="/assets/setup.js"></script>
   </body>
 </html>

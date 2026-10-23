@@ -170,9 +170,12 @@ DownloadStatus = Literal[
     "queued",
     "resolving",
     "downloading",
+    "paused",
     "preparing-transfer",
     "distributing",
     "completed",
+    "cancelled",
+    "deleted",
     "failed",
 ]
 
@@ -218,6 +221,15 @@ class LocalModel(BaseModel):
     size_bytes: int = 0
     downloaded_at: datetime | None = None
     loaded: bool = False
+
+
+class ModelMutationResult(BaseModel):
+    repo_id: str
+    status: Literal["deleted", "not-found"]
+    controller_deleted: bool = False
+    cluster_deleted: bool = False
+    freed_bytes: int = 0
+    message: str
 
 
 class RuntimeEndpoint(BaseModel):
