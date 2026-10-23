@@ -129,6 +129,13 @@
             <span class="pill" id="model-count">0 models</span>
           </div>
           <div class="catalog-intro"><div><h3>Find your next model</h3><p>Explore Hugging Face, check capacity, and download once to your controller.</p></div><span class="catalog-route">HUB <i>→</i> CONTROLLER <i>→</i> CLUSTER</span></div>
+          <section class="active-downloads" id="active-downloads" aria-live="polite" hidden>
+            <div class="active-downloads-head">
+              <div><p class="eyebrow"><i></i>ACTIVE DOWNLOADS</p><h3 id="active-download-title">Downloading models</h3></div>
+              <span id="active-download-count">0 active</span>
+            </div>
+            <div class="active-download-list" id="active-download-list"></div>
+          </section>
           <div class="catalog-toolbar">
             <label class="catalog-search"><span>⌕</span><input id="catalog-query" type="search" aria-label="Search Hugging Face models" placeholder="Search models, authors, or paste a repository ID…" autocomplete="off" /></label>
             <label>Sort by<select id="catalog-sort"><option value="trendingScore">Trending</option><option value="downloads">Most downloaded</option><option value="likes">Most liked</option><option value="lastModified">Recently updated</option></select></label>
@@ -171,7 +178,7 @@
           </div>
           <div class="downloads-head"><p class="eyebrow">AVAILABLE ON CLUSTER</p></div>
           <div class="model-inventory" id="local-models"><div class="empty-state"><b>No local model found</b><span>Choose a model above to get started.</span></div></div>
-          <div class="downloads-head"><p class="eyebrow">DOWNLOADS & LAN DELIVERY</p><span>Internet → controller → shared cluster storage · automatic resume</span></div>
+          <div class="downloads-head"><p class="eyebrow">DOWNLOAD HISTORY</p><span>Completed transfers and jobs that need attention</span></div>
           <div class="download-list" id="download-list"><div class="empty-downloads">No downloads yet.</div></div>
         </section>
 

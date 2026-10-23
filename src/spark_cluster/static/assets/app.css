@@ -89,3 +89,37 @@
 @media(max-width:1150px){.catalog-workspace{grid-template-columns:minmax(0,1fr) 360px}.catalog-grid{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}}
 @media(max-width:900px){.catalog-workspace{grid-template-columns:1fr}.catalog-inspector{position:static;max-height:none}.catalog-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:560px){.catalog-grid{grid-template-columns:1fr}.catalog-card-content{min-height:145px}}
+
+/* Active model transfers */
+.active-downloads{margin:0 0 20px;padding:16px;border:1px solid #2b5946;border-radius:12px;background:radial-gradient(circle at 100% 0,#18382b66,transparent 45%),linear-gradient(145deg,#0c1814,#0a1117);box-shadow:0 12px 34px #00000024}
+.active-downloads-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.active-downloads-head .eyebrow{display:flex;align-items:center;gap:7px;color:#8aa99a}
+.active-downloads-head .eyebrow i{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 12px var(--green);animation:active-download-pulse 1.8s ease-in-out infinite}
+.active-downloads-head h3{font-size:15px;margin:2px 0 0}
+.active-downloads-head>span{padding:5px 8px;border:1px solid #315943;border-radius:999px;background:#12261c;color:var(--green);font:8px DM Mono;text-transform:uppercase;letter-spacing:.08em}
+.active-download-list{display:grid;gap:10px}
+.active-download-card{display:grid;gap:12px;padding:14px;border:1px solid #253b32;border-radius:9px;background:#09110eaa}
+.active-download-identity{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:11px;align-items:center}
+.active-download-icon{width:38px;height:38px;display:grid;place-items:center;border:1px solid #326249;border-radius:9px;background:#123022;color:var(--green);font:17px DM Mono}
+.active-download-identity p,.active-download-identity h4,.active-download-identity small{margin:0;display:block}
+.active-download-identity p{color:var(--green);font:8px DM Mono;text-transform:uppercase;letter-spacing:.07em}
+.active-download-identity h4{margin:3px 0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.active-download-identity small{color:#73877d;font:8px DM Mono;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.active-download-status{padding:5px 7px;border-radius:5px;background:#18281f;color:#9ac2a9;font:8px DM Mono;text-transform:uppercase}
+.active-download-progress{display:grid;grid-template-columns:1fr 58px;gap:11px;align-items:center}
+.active-download-progress>div{height:9px;padding:2px;border-radius:999px;background:#07100c;border:1px solid #263a31;overflow:hidden}
+.active-download-progress i{display:block;height:100%;border-radius:999px;background:linear-gradient(90deg,#2b9b6c,var(--green));box-shadow:0 0 12px #63f2b34d;transition:width .35s ease}
+.active-download-progress b{text-align:right;color:var(--green);font:10px DM Mono}
+.active-download-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+.active-download-stats>span{padding:9px;border:1px solid #1e3329;border-radius:7px;background:#0b1511;min-width:0}
+.active-download-stats small,.active-download-stats b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.active-download-stats small{color:#5f776b;font-size:8px;text-transform:uppercase;letter-spacing:.05em}
+.active-download-stats b{margin-top:4px;color:#b9cac0;font:9px DM Mono}
+.active-download-stats em{color:#5e7268;font-style:normal}
+.active-download-phases{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;border-top:1px solid #1c3026;padding-top:10px}
+.active-download-phases span{display:flex;align-items:center;gap:6px;color:#50645a;font:8px DM Mono}
+.active-download-phases i{width:18px;height:18px;display:grid;place-items:center;border-radius:50%;border:1px solid #2d4037;font-style:normal}
+.active-download-phases span.active{color:#b8c9bf}.active-download-phases span.active i{border-color:var(--green);color:var(--green);box-shadow:0 0 9px #63f2b329}.active-download-phases span.done{color:#6fa98d}.active-download-phases span.done i{background:#173629;border-color:#285f46;color:var(--green)}
+@keyframes active-download-pulse{50%{opacity:.4;transform:scale(.75)}}
+@media(max-width:800px){.active-download-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.active-download-identity{grid-template-columns:34px minmax(0,1fr)}.active-download-status{grid-column:2;justify-self:start}.active-download-stats{grid-template-columns:1fr}.active-download-phases span{font-size:0}.active-download-phases i{font-size:8px}}

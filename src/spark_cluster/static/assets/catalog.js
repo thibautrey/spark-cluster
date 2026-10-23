@@ -8,10 +8,10 @@ let catalogTimer;
 let catalogJobs = [];
 
 function catalogState(id) {
-  const job = catalogJobs.find(item => item.repo_id === id && !['failed', 'ready'].includes(item.status));
+  const job = catalogJobs.find(item => item.repo_id === id && !['failed', 'completed'].includes(item.status));
   if (job) return job.status.replaceAll('_', ' ');
   if (localModels.some(item => item.id === id)) return 'on cluster';
-  if (catalogJobs.some(item => item.repo_id === id && item.status === 'ready')) return 'downloaded';
+  if (catalogJobs.some(item => item.repo_id === id && item.status === 'completed')) return 'downloaded';
   return '';
 }
 

@@ -6,6 +6,7 @@ let localModels = [];
 let launchFit = null;
 let launchPerformance = null;
 let logEntries = [];
+const downloadSamples = new Map();
 let logsPaused = false;
 
 const formatNumber = (value) => value >= 1e9 ? `${(value / 1e9).toFixed(1)}B` : value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : value >= 1e3 ? `${(value / 1e3).toFixed(1)}k` : `${Math.round(value)}`;
@@ -157,12 +158,78 @@ function updateLaunchModelOptions(models) {
   if (managed.some(model => model.id === selected)) select.value = selected;
 }
 
-function renderDownloads(downloads) {
-  if (!downloads.length) {
-    $('download-list').innerHTML = '<div class="empty-downloads">No downloads yet.</div>';
+const activeDownloadStatuses = new Set(['queued', 'resolving', 'downloading', 'preparing-transfer', 'distributing']);
+
+function downloadPhase(job) {
+  if (['queued', 'resolving'].includes(job.status)) return 0;
+  if (job.status === 'downloading') return 1;
+  return 2;
+}
+
+function downloadPhaseLabel(job) {
+  return ({queued: 'Queued', resolving: 'Resolving repository', downloading: 'Downloading from Hugging Face', 'preparing-transfer': 'Preparing LAN delivery', distributing: 'Distributing to cluster'})[job.status] || job.status;
+}
+
+function downloadRate(job) {
+  const bytes = job.status === 'distributing' ? job.transferred_bytes : job.downloaded_bytes;
+  const now = Date.now();
+  const previous = downloadSamples.get(job.id);
+  let rate = previous?.rate || 0;
+  if (previous && bytes >= previous.bytes && now > previous.time) {
+    const instant = (bytes - previous.bytes) / ((now - previous.time) / 1000);
+    if (instant > 0) rate = rate ? rate * 0.65 + instant * 0.35 : instant;
+  }
+  downloadSamples.set(job.id, {bytes, time: now, rate});
+  return rate;
+}
+
+function formatDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return 'Calculating';
+  if (seconds < 60) return `${Math.ceil(seconds)} sec`;
+  if (seconds < 3600) return `${Math.ceil(seconds / 60)} min`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.ceil((seconds % 3600) / 60)}m`;
+  return `${Math.ceil(seconds / 86400)} days`;
+}
+
+function renderActiveDownloads(downloads) {
+  const active = downloads.filter(job => activeDownloadStatuses.has(job.status));
+  const section = $('active-downloads');
+  section.hidden = active.length === 0;
+  if (!active.length) {
+    $('active-download-list').innerHTML = '';
+    downloadSamples.clear();
     return;
   }
-  $('download-list').innerHTML = downloads.map(job => `
+  $('active-download-count').textContent = `${active.length} active`;
+  $('active-download-title').textContent = active.length === 1 ? 'Model transfer in progress' : `${active.length} model transfers in progress`;
+  const activeIds = new Set(active.map(job => job.id));
+  for (const id of downloadSamples.keys()) if (!activeIds.has(id)) downloadSamples.delete(id);
+  $('active-download-list').innerHTML = active.map(job => {
+    const distributing = job.status === 'distributing';
+    const progress = distributing ? job.transfer_progress : job.progress;
+    const currentBytes = distributing ? job.transferred_bytes : job.downloaded_bytes;
+    const rate = downloadRate(job);
+    const remaining = Math.max(0, job.total_bytes - currentBytes);
+    const destination = job.destination === 'cluster' ? 'Cluster storage' : 'Controller storage';
+    const finalStage = job.destination === 'cluster' ? 'Distribute' : 'Install';
+    const phase = downloadPhase(job);
+    return `<article class="active-download-card">
+      <div class="active-download-identity"><span class="active-download-icon">↓</span><div><p>${escapeHtml(downloadPhaseLabel(job))}</p><h4>${escapeHtml(job.repo_id)}</h4><small>${escapeHtml(job.message || job.status)}</small></div><span class="active-download-status">${escapeHtml(job.status.replaceAll('-', ' '))}</span></div>
+      <div class="active-download-progress"><div><i style="width:${progress}%"></i></div><b>${progress.toFixed(2)}%</b></div>
+      <div class="active-download-stats"><span><small>Transferred</small><b>${formatBytes(currentBytes)} <em>/ ${formatBytes(job.total_bytes)}</em></b></span><span><small>Current speed</small><b>${rate ? `${formatBytes(rate)}/s` : 'Measuring…'}</b></span><span><small>Estimated time</small><b>${rate ? formatDuration(remaining / rate) : 'Calculating…'}</b></span><span><small>Destination</small><b>${destination}</b></span></div>
+      <div class="active-download-phases">${['Resolve', 'Download', finalStage].map((label, index) => `<span class="${index < phase ? 'done' : index === phase ? 'active' : ''}"><i>${index < phase ? '✓' : index + 1}</i>${label}</span>`).join('')}</div>
+    </article>`;
+  }).join('');
+}
+
+function renderDownloads(downloads) {
+  renderActiveDownloads(downloads);
+  const history = downloads.filter(job => !activeDownloadStatuses.has(job.status));
+  if (!history.length) {
+    $('download-list').innerHTML = '<div class="empty-downloads">Completed and failed transfers will appear here.</div>';
+    return;
+  }
+  $('download-list').innerHTML = history.map(job => `
     <div class="download-row">
       <div class="download-name"><b>${escapeHtml(job.repo_id)}</b><small>${job.destination === 'cluster' ? 'Internet → this controller → cluster LAN' : job.source === 'controller' ? 'Controller LAN → shared cluster storage' : 'Internet → local storage'} · attempt ${job.attempts}</small><small>${escapeHtml(job.message || job.status)}</small></div>
       <div class="download-progress"><div class="cache-track"><i style="width:${job.status === 'distributing' ? job.transfer_progress : job.progress}%"></i></div><span>${(job.status === 'distributing' ? job.transfer_progress : job.progress).toFixed(1)}%</span></div>
