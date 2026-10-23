@@ -111,7 +111,7 @@ function fitBadge(model) {
   if (!fit) return '';
   const label = fit.memory_fits ? 'Full memory' : fit.placement_strategy.replaceAll('-', ' ');
   const engine = fit.launch_supported ? '' : ' · engine required';
-  return `<span class="catalog-fit-badge"><i>✓</i>${escapeHtml(label)} · ${fit.minimum_nodes} Spark${fit.minimum_nodes === 1 ? '' : 's'}${engine}</span>`;
+  return `<span class="catalog-fit-badge"><i>✓</i>${escapeHtml(label)} · ${fit.minimum_nodes} accelerator${fit.minimum_nodes === 1 ? '' : 's'}${engine}</span>`;
 }
 
 function visibleCatalogModels() {
@@ -155,7 +155,7 @@ function renderCatalogCards() {
         ${fitBadge(model)}
         <span class="catalog-card-foot"><span title="Downloads">↓ ${formatNumber(model.downloads)}</span><span title="Likes">♡ ${formatNumber(model.likes)}</span>${model.updated ? `<span class="catalog-updated">${escapeHtml(new Date(model.updated).toLocaleDateString())}</span>` : ''}</span>
       </span>
-    </button>`).join('') : `<div class="catalog-empty">${selectedCapacity() ? `No analyzed model fits ${selectedCapacity()} Spark${selectedCapacity() === 1 ? '' : 's'} at this context.<br>Try more machines, a shorter context, or load more models.` : 'No loaded models match these filters.<br>Load more models, change Selection, or reset the filters.'}</div>`;
+    </button>`).join('') : `<div class="catalog-empty">${selectedCapacity() ? `No analyzed model fits ${selectedCapacity()} accelerator${selectedCapacity() === 1 ? '' : 's'} at this context.<br>Try more machines, a shorter context, or load more models.` : 'No loaded models match these filters.<br>Load more models, change Selection, or reset the filters.'}</div>`;
   activateCatalogAvatars($('catalog-grid'));
 }
 
@@ -171,7 +171,7 @@ async function applyCapacityFilter() {
   }
   catalogCapacityLoading = true;
   renderCatalogCards();
-  $('catalog-status').textContent = `Analyzing ${catalogModels.length} models for ${sparkCount} Spark${sparkCount === 1 ? '' : 's'}…`;
+  $('catalog-status').textContent = `Analyzing ${catalogModels.length} models for ${sparkCount} accelerator${sparkCount === 1 ? '' : 's'}…`;
   try {
     const response = {results: []};
     const candidates = [...catalogModels];
@@ -195,7 +195,7 @@ async function applyCapacityFilter() {
     const cached = response.results.filter(result => result.cached).length;
     const unavailable = response.results.filter(result => result.error).length;
     const context = Number($('catalog-fit-context').value) / 1024;
-    $('catalog-status').textContent = `${compatible} of ${catalogModels.length} fit ${sparkCount} Spark${sparkCount === 1 ? '' : 's'} at ${context >= 1024 ? `${context / 1024}M` : `${context}k`} context${cached ? ` · ${cached} cached` : ''}${unavailable ? ` · ${unavailable} unavailable` : ''}`;
+    $('catalog-status').textContent = `${compatible} of ${catalogModels.length} fit ${sparkCount} accelerator${sparkCount === 1 ? '' : 's'} at ${context >= 1024 ? `${context / 1024}M` : `${context}k`} context${cached ? ` · ${cached} cached` : ''}${unavailable ? ` · ${unavailable} unavailable` : ''}`;
   } catch (error) {
     if (request !== catalogFitRequest) return;
     catalogCapacityLoading = false;

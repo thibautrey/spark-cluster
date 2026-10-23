@@ -29,7 +29,7 @@ def capabilities(settings: Settings) -> dict[str, EngineCapability]:
     return {
         "vllm": EngineCapability(
             id="vllm",
-            name="vLLM V1 for NVIDIA GB10",
+            name="vLLM V1 for NVIDIA GPUs",
             image=settings.runtime_vllm_image,
             executable=bool(settings.runtime_vllm_image),
             supports_multi_node=True,

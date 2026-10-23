@@ -126,8 +126,9 @@ def validated_cluster_url(value: str) -> str:
 class RemoteClusterConnector:
     transport: httpx.AsyncBaseTransport | None = None
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, registry=None):
         self.settings = settings
+        self.registry = registry
 
     async def attach(self, address: str, port: int = 30080) -> dict[str, str]:
         address = private_address(address)
@@ -149,6 +150,20 @@ class RemoteClusterConnector:
             ) from error
         if payload.get("status") != "ready" or not payload.get("cluster_name"):
             raise RemoteClusterUnavailable("The endpoint is not a compatible cluster bridge")
+        if self.registry:
+            cluster = self.registry.add_remote(
+                name=payload["cluster_name"],
+                endpoint=url,
+                head_address=address,
+                hardware="dgx-spark",
+                activate=True,
+            )
+            return {
+                **cluster.model_dump(mode="json"),
+                "url": cluster.endpoint,
+                "cluster_name": cluster.name,
+                "head_address": cluster.host_address,
+            }
         return save_active_connection(
             self.settings,
             {"url": url, "cluster_name": payload["cluster_name"], "head_address": address},
@@ -203,14 +218,16 @@ class RemoteClusterProxyMiddleware:
 
     transport: httpx.AsyncBaseTransport | None = None
 
-    def __init__(self, app: ASGIApp, settings: Settings):
+    def __init__(self, app: ASGIApp, settings: Settings, registry=None):
         self.app = app
         self.settings = settings
+        self.registry = registry
 
     def should_forward(self, scope: Scope) -> bool:
         path = scope.get("path", "")
         controller_local = (
             path.startswith("/api/v1/controller/")
+            or path.startswith("/api/v1/clusters")
             or path.startswith("/api/v1/catalog/")
             or path.startswith("/api/v1/model-management/")
             or path.startswith("/api/v1/runtime-management/")

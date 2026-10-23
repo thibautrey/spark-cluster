@@ -198,6 +198,9 @@ class DownloadJob(BaseModel):
     destination: Literal["local", "cluster"] = "local"
     controller_url: str | None = None
     controller_job_id: str | None = None
+    target_cluster_id: str | None = None
+    target_cluster_name: str | None = None
+    target_cluster_url: str | None = None
     message: str = "Queued"
     error: str | None = None
     attempts: int = 0
@@ -344,6 +347,8 @@ class RuntimeExecutionPlan(BaseModel):
 class ModelLaunchJob(BaseModel):
     id: str
     request: ModelLaunchRequest
+    target_cluster_id: str | None = None
+    target_cluster_name: str | None = None
     model_path: str
     status: LaunchStatus = "queued"
     progress: float = Field(default=0, ge=0, le=100)

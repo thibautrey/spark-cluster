@@ -131,11 +131,12 @@ class ModelRelay:
         self._manifest_path(job_id).unlink(missing_ok=True)
 
     async def _remote_job_action(self, job: DownloadJob, action: str) -> bool:
-        if not self.settings.remote_cluster_url:
+        remote_url = job.target_cluster_url or self.settings.remote_cluster_url
+        if not remote_url:
             return False
         path = f"/api/v1/downloads/{job.id}/{action}"
         async with httpx.AsyncClient(
-            base_url=self.settings.remote_cluster_url,
+            base_url=remote_url,
             transport=self.transport,
             timeout=30,
             trust_env=False,
@@ -204,8 +205,9 @@ class ModelRelay:
             raise RuntimeError("Controller model manifest does not match this transfer")
 
     async def distribute(self, job: DownloadJob) -> bool:
-        if not self.settings.remote_cluster_url or not job.controller_url:
-            raise RuntimeError("No attached cluster or reachable controller URL for model relay")
+        remote_url = job.target_cluster_url or self.settings.remote_cluster_url
+        if not remote_url or not job.controller_url:
+            raise RuntimeError("No target cluster or reachable controller URL for model relay")
         manifest = await self.prepare_manifest(job)
         job.total_bytes = manifest["total_bytes"]
         job.status = "distributing"
@@ -225,7 +227,7 @@ class ModelRelay:
         path = "/api/v1/models/import"
         timeout = httpx.Timeout(connect=10, read=60, write=60, pool=10)
         async with httpx.AsyncClient(
-            base_url=self.settings.remote_cluster_url,
+            base_url=remote_url,
             transport=self.transport,
             timeout=timeout,
             trust_env=False,

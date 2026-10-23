@@ -535,3 +535,39 @@ def test_managed_inventory_only_scans_valid_repository_depth(tmp_path):
     )
     assert [model.id for model in manager._scan_managed_models(set())] == ["acme/model"]
     manager.store.close()
+
+
+def test_nvfp4_download_is_allowed_but_launch_is_blocked_on_ampere(tmp_path):
+    settings = Settings(
+        model_cache_path=tmp_path,
+        fallback_node_count=2,
+        fallback_node_memory_gib=8,
+        active_compute_capability=8.6,
+    )
+    repository = RepositoryMetadata(
+        repo_id="acme/model-NVFP4",
+        revision="main",
+        repository_bytes=4 * GIB,
+        weight_bytes=4 * GIB,
+        parameter_count=7_000_000_000,
+        architecture="LlamaForCausalLM",
+        tags=("nvfp4",),
+        config={
+            "architectures": ["LlamaForCausalLM"],
+            "model_type": "llama",
+            "num_hidden_layers": 32,
+            "num_key_value_heads": 8,
+            "head_dim": 128,
+        },
+    )
+    plan = build_fit_plan(
+        ModelFitRequest(repo_id=repository.repo_id, context_length=8192),
+        repository,
+        None,
+        settings,
+    )
+    assert plan.detected_format == "NVFP4"
+    assert plan.download_fits is True
+    assert plan.launch_supported is False
+    assert plan.runtime_fits is False
+    assert any("Blackwell" in item for item in plan.requirements)

@@ -9,8 +9,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from .cluster_registry import ClusterRegistry
 from .cluster_setup import ClusterSetupService, SetupFailure
 from .config import Settings
+from .local_docker import DockerEngineClient
 from .models import (
     RuntimeInstallJob,
     RuntimeInstallLog,
@@ -48,10 +50,14 @@ class RuntimePrerequisiteService:
         settings: Settings,
         store: SnapshotStore,
         setup: ClusterSetupService,
+        registry: ClusterRegistry | None = None,
+        docker: DockerEngineClient | None = None,
     ):
         self.settings = settings
         self.store = store
         self.setup = setup
+        self.registry = registry
+        self.docker = docker or DockerEngineClient(settings)
         self.tasks: dict[str, asyncio.Task] = {}
         self.tickets: dict[str, tuple[float, SetupNode]] = {}
 
@@ -81,6 +87,39 @@ class RuntimePrerequisiteService:
 
     async def inspect(self, model_id: str, engine_id: str = "auto") -> RuntimeReadiness:
         spec = self.spec_for(model_id, engine_id)
+        active = self.registry.active() if self.registry else None
+        if active and active.kind == "local-docker":
+            present = bool(spec.image and await self.docker.image_present(spec.image))
+            states = [
+                RuntimeNodeState(
+                    address=f"{active.host_address}/gpu/{gpu.index}",
+                    role="head" if index == 0 else "worker",
+                    status="ready" if present else "missing",
+                    installed_version=spec.version if present else None,
+                    required_version=spec.version,
+                    message=(
+                        "Pinned runtime image is present on the Docker host"
+                        if present
+                        else "Runtime image is missing from the Docker host"
+                    ),
+                )
+                for index, gpu in enumerate(active.gpus)
+            ]
+            return RuntimeReadiness(
+                model_id=model_id,
+                runtime_id=spec.id,
+                runtime_name=spec.name,
+                required_version=spec.version,
+                image=spec.image,
+                ready=present,
+                install_supported=bool(spec.image),
+                nodes=states,
+                message=(
+                    "Docker runtime image is ready for every assigned GPU"
+                    if present
+                    else "Pull the required runtime image on the Docker host"
+                ),
+            )
         nodes = self.nodes()
         if not nodes:
             return RuntimeReadiness(
@@ -173,6 +212,27 @@ class RuntimePrerequisiteService:
         spec = self.spec_for(model_id, engine_id)
         if not spec.image:
             raise ValueError("Configure a pinned image before installing this specialized runtime")
+        active = self.registry.active() if self.registry else None
+        if active and active.kind == "local-docker":
+            states = [
+                RuntimeNodeState(
+                    address=f"{active.host_address}/gpu/{gpu.index}",
+                    role="head" if index == 0 else "worker",
+                    status="installing",
+                    required_version=spec.version,
+                    message="Queued on Docker host",
+                )
+                for index, gpu in enumerate(active.gpus)
+            ]
+            job = RuntimeInstallJob(
+                id=uuid4().hex,
+                model_id=model_id,
+                runtime_id=spec.id,
+                nodes=states,
+            )
+            await asyncio.to_thread(self.store.save_runtime_install, job)
+            self.tasks[job.id] = asyncio.create_task(self._run_docker_install(job, spec))
+            return job.model_copy(deep=True)
         nodes = self.nodes()
         if not nodes:
             raise ValueError("Complete cluster setup before installing runtimes")
@@ -197,6 +257,35 @@ class RuntimePrerequisiteService:
         await asyncio.to_thread(self.store.save_runtime_install, job)
         self.tasks[job.id] = asyncio.create_task(self._run_install(job, nodes, spec))
         return job.model_copy(deep=True)
+
+    async def _run_docker_install(self, job: RuntimeInstallJob, spec: RuntimeSpec) -> None:
+        job.status = "running"
+        await asyncio.to_thread(self.store.save_runtime_install, job)
+        try:
+            self._log(job, "docker-host", "info", f"Pulling {spec.name} {spec.version}")
+            await self.docker.pull_image(spec.image or "")
+            for index, node in enumerate(job.nodes):
+                job.nodes[index] = node.model_copy(
+                    update={
+                        "status": "ready",
+                        "installed_version": spec.version,
+                        "message": "Runtime image is ready on the Docker host",
+                    }
+                )
+            job.progress = 100
+            job.status = "completed"
+            self._log(job, "docker-host", "success", "Runtime image is ready")
+        except Exception:
+            job.status = "failed"
+            job.error = "Docker runtime image installation failed"
+            for index, node in enumerate(job.nodes):
+                job.nodes[index] = node.model_copy(
+                    update={"status": "failed", "message": job.error}
+                )
+        finally:
+            job.updated_at = datetime.now(UTC)
+            await asyncio.to_thread(self.store.save_runtime_install, job)
+            self.tasks.pop(job.id, None)
 
     async def _run_install(
         self, job: RuntimeInstallJob, nodes: list[SetupNode], spec: RuntimeSpec

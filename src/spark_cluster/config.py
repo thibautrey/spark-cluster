@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     setup_registry_endpoint: str | None = None
     remote_cluster_url: str | None = None
     controller_public_url: str | None = None
+    docker_runtime_enabled: bool = False
+    docker_socket_path: Path = Path("/var/run/docker.sock")
+    docker_host_model_path: Path = Path("/models")
+    docker_runtime_host: str = "127.0.0.1"
+    docker_runtime_port_start: int = 30000
+    active_compute_capability: float | None = None
 
     @property
     def cors_origin_list(self) -> list[str]:

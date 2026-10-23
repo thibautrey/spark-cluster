@@ -12,7 +12,9 @@ from uuid import uuid4
 
 import httpx
 
+from .cluster_registry import ClusterRegistry
 from .config import Settings
+from .local_docker import DockerEngineClient
 from .model_manager import ModelDoesNotFit, ModelManager
 from .models import (
     ModelFitRequest,
@@ -294,11 +296,15 @@ class RuntimeDeploymentService:
         store: SnapshotStore,
         models: ModelManager,
         logs: RuntimeLogService,
+        registry: ClusterRegistry | None = None,
+        docker: DockerEngineClient | None = None,
     ):
         self.settings = settings
         self.store = store
         self.models = models
         self.logs = logs
+        self.registry = registry
+        self.docker = docker or DockerEngineClient(settings)
         self.kubernetes = logs.kubernetes
         configured = settings.runtime_control_mode
         self.mode = configured if configured != "auto" else self._auto_mode()
@@ -306,6 +312,8 @@ class RuntimeDeploymentService:
         self.worker: asyncio.Task | None = None
 
     def _auto_mode(self) -> str:
+        if self.docker.available:
+            return "docker"
         if self.kubernetes.available:
             return "kubernetes"
         return "demo" if self.settings.mode == "demo" else "unavailable"
@@ -345,9 +353,12 @@ class RuntimeDeploymentService:
         execution_plan = build_execution_plan(request, local.path, self.settings)
         if not execution_plan.executable:
             raise EngineNotExecutable(execution_plan.engine_name, execution_plan.blockers)
+        active_cluster = self.registry.active() if self.registry else None
         job = ModelLaunchJob(
             id=uuid4().hex,
             request=request,
+            target_cluster_id=active_cluster.id if active_cluster else None,
+            target_cluster_name=active_cluster.name if active_cluster else None,
             model_path=local.path,
             fit=fit,
             execution_plan=execution_plan,
@@ -394,6 +405,8 @@ class RuntimeDeploymentService:
                 await self._run_demo(job)
             elif self.mode == "kubernetes":
                 await self._run_kubernetes(job)
+            elif self.mode == "docker":
+                await self._run_docker(job)
             else:
                 raise RuntimeError("Runtime control is unavailable outside a Kubernetes cluster")
         except Exception as error:
@@ -421,6 +434,40 @@ class RuntimeDeploymentService:
         for status, progress, message in stages:
             await self._update(job, status, progress, message)
             await asyncio.sleep(0.35)
+
+    async def _run_docker(self, job: ModelLaunchJob) -> None:
+        cluster = self.registry.active() if self.registry else None
+        if cluster is None or cluster.kind != "local-docker":
+            raise RuntimeError("Select a local Docker GPU cluster before launching")
+        plan = job.execution_plan
+        if not plan or not plan.executable or not plan.image:
+            raise RuntimeError("Launch has no executable inference-engine plan")
+        if plan.engine_id != "vllm":
+            raise RuntimeError("The local Docker adapter currently launches vLLM models")
+        await self._update(job, "starting-runtime", 45, "Creating NVIDIA runtime container")
+        await self.docker.launch(
+            cluster=cluster,
+            image=plan.image,
+            model_path=job.model_path,
+            served_model_name=job.request.served_model_name,
+            context_length=job.request.context_length,
+            tensor_parallel=job.request.tensor_parallel,
+            pipeline_parallel=job.request.pipeline_parallel,
+            gpu_memory_utilization=job.request.gpu_memory_utilization,
+            kv_cache_dtype=job.request.kv_cache_dtype,
+            max_num_seqs=job.request.max_num_seqs,
+            max_num_batched_tokens=job.request.max_num_batched_tokens,
+            expert_parallel=job.request.expert_parallel,
+            chunked_prefill=job.request.chunked_prefill,
+        )
+        await self._update(job, "waiting-ready", 75, "Waiting for vLLM health endpoint")
+        await self.docker.wait_ready(cluster)
+        self.settings.runtime_model = job.request.model_id
+        self.settings.runtime_quantization = job.fit.detected_format
+        self.settings.runtime_context_length = job.request.context_length
+        self.settings.runtime_tensor_parallel = job.request.tensor_parallel
+        self.settings.runtime_pipeline_parallel = job.request.pipeline_parallel
+        await self._update(job, "ready", 100, "Model is ready on the local GPU cluster")
 
     async def _run_kubernetes(self, job: ModelLaunchJob) -> None:
         request = job.request

@@ -16,6 +16,7 @@ let runtimeInstallJob = null;
 let runtimeInstallTimer = null;
 let pendingLaunchPayload = null;
 let runtimeTerminalSocket = null;
+let clusterState = {clusters: [], active_cluster_id: null};
 
 const formatNumber = (value) => value >= 1e9 ? `${(value / 1e9).toFixed(1)}B` : value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : value >= 1e3 ? `${(value / 1e3).toFixed(1)}k` : `${Math.round(value)}`;
 const formatBytes = (value) => value >= 2 ** 30 ? `${(value / 2 ** 30).toFixed(1)} GiB` : value >= 2 ** 20 ? `${(value / 2 ** 20).toFixed(1)} MiB` : `${Math.round(value / 1024)} KiB`;
@@ -32,6 +33,43 @@ async function api(path, options = {}) {
     throw error;
   }
   return body;
+}
+
+function clusterAuthHeaders() {
+  const candidates = [$('setup-token')?.value, $('admin-token')?.value, $('launch-admin-token')?.value];
+  const token = candidates.find(value => value?.trim())?.trim();
+  return token ? {Authorization: `Bearer ${token}`} : {};
+}
+
+function renderClusters(state) {
+  clusterState = state;
+  const select = $('cluster-select');
+  select.innerHTML = state.clusters.length ? state.clusters.map(cluster => `<option value="${escapeHtml(cluster.id)}" ${cluster.id === state.active_cluster_id ? 'selected' : ''}>${escapeHtml(cluster.name)} · ${cluster.kind === 'local-docker' ? `${cluster.gpu_count} GPU${cluster.gpu_count === 1 ? '' : 's'}` : 'remote'}</option>`).join('') : '<option value="">No cluster configured</option>';
+  $('cluster-list').innerHTML = state.clusters.length ? state.clusters.map(cluster => `<article class="cluster-card ${cluster.active ? 'active' : ''}" data-cluster-id="${escapeHtml(cluster.id)}"><div class="cluster-card-head"><span class="cluster-card-icon">${cluster.kind === 'local-docker' ? 'GPU' : 'LAN'}</span><div><b>${escapeHtml(cluster.name)}</b><small>${escapeHtml(cluster.kind)} · ${escapeHtml(cluster.hardware)} · ${escapeHtml(cluster.status)}</small></div></div><div class="cluster-card-meta"><span>${cluster.gpu_count ? `${cluster.gpu_count} × ${escapeHtml(cluster.gpu_model || 'NVIDIA GPU')}` : escapeHtml(cluster.endpoint || 'endpoint pending')}</span>${cluster.gpu_memory_gib ? `<span>${cluster.gpu_memory_gib} GiB / GPU</span>` : ''}<span>runtime :${cluster.runtime_port}</span></div>${cluster.active ? '<span class="pill ready">Active control target</span>' : `<button class="secondary" type="button" data-select-cluster="${escapeHtml(cluster.id)}">Use this cluster</button>`}</article>`).join('') : '<div class="empty-state"><b>No cluster configured</b><span>Detect local GPUs or attach a remote bridge.</span></div>';
+  const active = state.clusters.find(cluster => cluster.id === state.active_cluster_id);
+  if (active) {
+    $('cluster-name').textContent = active.name.toUpperCase();
+    $('cluster-fleet-status').textContent = `${active.name} is the active target for capacity, downloads, launches, logs and telemetry.`;
+  }
+}
+
+async function loadClusters() {
+  const state = await api('/api/v1/clusters');
+  renderClusters(state);
+  return state;
+}
+
+async function selectCluster(clusterId) {
+  if (!clusterId || clusterId === clusterState.active_cluster_id) return;
+  const previous = clusterState.active_cluster_id;
+  try {
+    await api(`/api/v1/clusters/${encodeURIComponent(clusterId)}/select`, {method:'POST', headers:clusterAuthHeaders()});
+    location.reload();
+  } catch (error) {
+    $('cluster-select').value = previous || '';
+    $('cluster-fleet-status').textContent = `${error.message} Enter the administration token on this page, then retry.`;
+    location.hash = '#setup';
+  }
 }
 
 function render(snapshot) {
@@ -217,7 +255,7 @@ function renderActiveDownloads(downloads) {
     const finalStage = job.destination === 'cluster' ? 'Distribute' : 'Install';
     const phase = downloadPhase(job);
     return `<article class="active-download-card ${paused ? 'paused' : ''}">
-      <div class="active-download-identity"><span class="active-download-icon">↓</span><div><p>${escapeHtml(downloadPhaseLabel(job))}</p><h4>${escapeHtml(job.repo_id)}</h4><small>${escapeHtml(job.message || job.status)}</small></div><span class="active-download-status">${escapeHtml(job.status.replaceAll('-', ' '))}</span></div>
+      <div class="active-download-identity"><span class="active-download-icon">↓</span><div><p>${escapeHtml(downloadPhaseLabel(job))}</p><h4>${escapeHtml(job.repo_id)}</h4><small>${escapeHtml(job.target_cluster_name || 'Controller storage')} · ${escapeHtml(job.message || job.status)}</small></div><span class="active-download-status">${escapeHtml(job.status.replaceAll('-', ' '))}</span></div>
       <div class="active-download-progress"><div><i style="width:${progress}%"></i></div><b>${progress.toFixed(2)}%</b></div>
       <div class="active-download-stats"><span><small>Transferred</small><b>${formatBytes(currentBytes)} <em>/ ${formatBytes(job.total_bytes)}</em></b></span><span><small>Current speed</small><b>${paused ? 'Paused' : rate ? `${formatBytes(rate)}/s` : 'Measuring…'}</b></span><span><small>Estimated time</small><b>${paused ? 'Paused' : rate ? formatDuration(remaining / rate) : 'Calculating…'}</b></span><span><small>Destination</small><b>${destination}</b></span></div>
       <div class="active-download-phases">${['Resolve', 'Download', finalStage].map((label, index) => `<span class="${index < phase ? 'done' : index === phase ? 'active' : ''}"><i>${index < phase ? '✓' : index + 1}</i>${label}</span>`).join('')}</div>
@@ -235,7 +273,7 @@ function renderDownloads(downloads) {
   }
   $('download-list').innerHTML = history.map(job => `
     <div class="download-row">
-      <div class="download-name"><b>${escapeHtml(job.repo_id)}</b><small>${job.destination === 'cluster' ? 'Internet → this controller → cluster LAN' : job.source === 'controller' ? 'Controller LAN → shared cluster storage' : 'Internet → local storage'} · attempt ${job.attempts}</small><small>${escapeHtml(job.message || job.status)}</small></div>
+      <div class="download-name"><b>${escapeHtml(job.repo_id)}</b><small>${job.destination === 'cluster' ? `Internet → controller → ${escapeHtml(job.target_cluster_name || 'cluster LAN')}` : job.source === 'controller' ? 'Controller LAN → shared cluster storage' : `Internet → ${escapeHtml(job.target_cluster_name || 'controller storage')}`} · attempt ${job.attempts}</small><small>${escapeHtml(job.message || job.status)}</small></div>
       <div class="download-progress"><div class="cache-track"><i style="width:${job.status === 'distributing' ? job.transfer_progress : job.progress}%"></i></div><span>${(job.status === 'distributing' ? job.transfer_progress : job.progress).toFixed(1)}%</span></div>
       <span class="download-status ${job.status}">${escapeHtml(job.status)}</span>
       ${job.status === 'failed' ? `<button class="download-retry" data-job-id="${escapeHtml(job.id)}" title="${escapeHtml(job.error || 'Retry download')}">Retry</button>` : '<span></span>'}
@@ -259,7 +297,7 @@ function renderLaunches(launches) {
   const current = launches.find(job => !['ready', 'failed'].includes(job.status)) || launches[0];
   const activeIndex = launchStages.findIndex(([status]) => status === current.status);
   $('launch-status').innerHTML = `
-    <div class="launch-job-head"><div><h3>${escapeHtml(current.request.served_model_name)}</h3><p>${escapeHtml(current.request.model_id)} · ${escapeHtml(current.execution_plan?.engine_name || current.request.engine_id)} · TP ${current.request.tensor_parallel} × PP ${current.request.pipeline_parallel} · ${Math.round(current.request.context_length / 1024)}k</p></div><span class="launch-progress-value">${current.progress.toFixed(0)}%</span></div>
+    <div class="launch-job-head"><div><h3>${escapeHtml(current.request.served_model_name)}</h3><p>${escapeHtml(current.request.model_id)} · ${escapeHtml(current.target_cluster_name || 'active cluster')} · ${escapeHtml(current.execution_plan?.engine_name || current.request.engine_id)} · TP ${current.request.tensor_parallel} × PP ${current.request.pipeline_parallel} · ${Math.round(current.request.context_length / 1024)}k</p></div><span class="launch-progress-value">${current.progress.toFixed(0)}%</span></div>
     <div class="launch-progress-bar"><i style="width:${current.progress}%"></i></div>
     <div class="launch-steps">${launchStages.map(([status, label], index) => `<div class="launch-step ${index < activeIndex || current.status === 'ready' ? 'done' : index === activeIndex ? 'active' : ''}"><i>${index < activeIndex || current.status === 'ready' ? '✓' : index + 1}</i><span>${label}</span><span>${status === current.status ? escapeHtml(current.message) : ''}</span></div>`).join('')}</div>
     ${current.error ? `<div class="launch-error">${escapeHtml(current.error)}</div>` : ''}`;
@@ -1042,6 +1080,25 @@ $('clear-logs').addEventListener('click', () => {
 });
 $('run-benchmark').addEventListener('click', runBenchmark);
 $('cache-prewarm').addEventListener('click', prewarmPrefix);
+
+$('cluster-select').addEventListener('change', event => selectCluster(event.target.value));
+$('cluster-list').addEventListener('click', event => {
+  const button = event.target.closest('[data-select-cluster]');
+  if (button) selectCluster(button.dataset.selectCluster);
+});
+$('cluster-add-local').addEventListener('click', async () => {
+  $('cluster-add-local').disabled = true;
+  $('cluster-fleet-status').textContent = 'Inspecting Docker and NVIDIA GPUs…';
+  try {
+    await api('/api/v1/clusters/local-docker', {method:'POST', headers:clusterAuthHeaders(), body:JSON.stringify({name:'Unraid GPUs'})});
+    await loadClusters();
+    location.reload();
+  } catch (error) {
+    $('cluster-fleet-status').textContent = error.message;
+    $('cluster-add-local').disabled = false;
+  }
+});
+loadClusters().catch(error => { $('cluster-fleet-status').textContent = error.message; });
 
 connect();
 connectLogs();

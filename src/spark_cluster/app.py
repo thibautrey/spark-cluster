@@ -45,8 +45,14 @@ from .cluster_control import (
     RuntimeDeploymentService,
     RuntimeLogService,
 )
+from .cluster_registry import (
+    ClusterRegistry,
+    LocalClusterRequest,
+    RemoteClusterRequest,
+)
 from .cluster_setup import ClusterSetupService, SetupFailure
 from .config import Settings
+from .local_docker import DockerEngineClient, detect_nvidia_gpus, local_gpu_snapshot
 from .mcp_server import SparkClusterMCP
 from .model_manager import (
     ModelAlreadyInstalled,
@@ -90,7 +96,6 @@ from .remote_cluster import (
     RemoteClusterConnector,
     RemoteClusterProxyMiddleware,
     RemoteClusterUnavailable,
-    load_active_connection,
     valid_controller_signature,
     validated_cluster_url,
 )
@@ -142,22 +147,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     if settings.remote_cluster_url:
         settings.remote_cluster_url = validated_cluster_url(settings.remote_cluster_url)
-    else:
-        if active_connection := load_active_connection(settings):
-            settings.remote_cluster_url = active_connection["url"]
+    cluster_registry = ClusterRegistry(settings)
     runtime = Runtime(settings)
     model_relay = ModelRelay(settings, runtime.store)
     model_manager = ModelManager(settings, runtime.store, runtime, model_relay)
     browser = ModelBrowser(settings)
     log_service = RuntimeLogService(settings, runtime.store)
+    docker_engine = DockerEngineClient(settings)
     deployment_service = RuntimeDeploymentService(
-        settings, runtime.store, model_manager, log_service
+        settings,
+        runtime.store,
+        model_manager,
+        log_service,
+        registry=cluster_registry,
+        docker=docker_engine,
     )
     setup_service = ClusterSetupService(settings, runtime.store)
-    runtime_prerequisites = RuntimePrerequisiteService(settings, runtime.store, setup_service)
+    runtime_prerequisites = RuntimePrerequisiteService(
+        settings,
+        runtime.store,
+        setup_service,
+        registry=cluster_registry,
+        docker=docker_engine,
+    )
     telemetry_service = InferenceTelemetryService(settings, runtime.store)
     optimization_lab = OptimizationLab(settings, runtime.store, telemetry_service)
-    cluster_connector = RemoteClusterConnector(settings)
+    cluster_connector = RemoteClusterConnector(settings, cluster_registry)
 
     async def activate_cluster(job) -> None:
         head = next(node for node in job.request.nodes if node.role == "head")
@@ -201,7 +216,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: ModelDownloadRequest, request_base_url: str
     ) -> DownloadJob:
         fit_plan = await model_fit_plan(request)
-        destination = "cluster" if settings.remote_cluster_url else "local"
+        target = cluster_registry.active()
+        destination = "cluster" if target and target.kind == "remote-bridge" else "local"
         controller_url = (
             model_relay.controller_url(request_base_url) if destination == "cluster" else None
         )
@@ -210,10 +226,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             destination=destination,
             controller_url=controller_url,
             fit_plan=fit_plan,
+            target_cluster_id=target.id if target else None,
+            target_cluster_name=target.name if target else None,
+            target_cluster_url=target.endpoint if target else None,
         )
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        local_monitor: asyncio.Task | None = None
+        if docker_engine.available and await docker_engine.ping():
+            gpus = await asyncio.to_thread(detect_nvidia_gpus)
+            if gpus:
+                cluster_registry.add_local(
+                    name="Unraid GPUs",
+                    host_address=settings.docker_runtime_host,
+                    runtime_port=settings.docker_runtime_port_start,
+                    gpus=gpus,
+                    model_storage_path=str(settings.docker_host_model_path),
+                    activate=cluster_registry.active() is None,
+                )
+
+                async def monitor_local_cluster() -> None:
+                    while True:
+                        active = cluster_registry.active()
+                        if active and active.kind == "local-docker":
+                            snapshot = await asyncio.to_thread(local_gpu_snapshot, active, settings)
+                            snapshot.runtime.model = settings.runtime_model
+                            snapshot.runtime.quantization = settings.runtime_quantization
+                            snapshot.runtime.context_length = settings.runtime_context_length
+                            snapshot.runtime.tensor_parallel = settings.runtime_tensor_parallel
+                            snapshot.runtime.pipeline_parallel = settings.runtime_pipeline_parallel
+                            await runtime.publish(snapshot)
+                        await asyncio.sleep(max(2, settings.sample_interval_seconds))
+
+                local_monitor = asyncio.create_task(monitor_local_cluster())
         await runtime.start()
         await model_manager.start()
         await log_service.start()
@@ -221,6 +267,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await deployment_service.start()
         await setup_service.start()
         yield
+        if local_monitor:
+            local_monitor.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await local_monitor
         await setup_service.stop()
         await runtime_prerequisites.stop()
         await deployment_service.stop()
@@ -243,6 +293,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.optimization_lab = optimization_lab
     app.state.settings = settings
     app.state.cluster_connector = cluster_connector
+    app.state.cluster_registry = cluster_registry
+    app.state.docker_engine = docker_engine
     mcp_server = SparkClusterMCP(
         browser=browser,
         runtime=runtime,
@@ -250,9 +302,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         deployment_service=deployment_service,
         model_fit_plan=model_fit_plan,
         download_model=enqueue_model_download,
+        cluster_registry=cluster_registry,
     )
     app.state.mcp_server = mcp_server
-    app.add_middleware(RemoteClusterProxyMiddleware, settings=settings)
+    app.add_middleware(RemoteClusterProxyMiddleware, settings=settings, registry=cluster_registry)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
@@ -307,11 +360,82 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def setup_state():
         return await setup_service.state()
 
+    @app.get("/api/v1/clusters")
+    async def clusters():
+        return {
+            "clusters": [item.model_dump(mode="json") for item in cluster_registry.list()],
+            "active_cluster_id": (
+                cluster_registry.active().id if cluster_registry.active() else None
+            ),
+        }
+
+    @app.post(
+        "/api/v1/clusters/remote",
+        dependencies=[Depends(require_model_token)],
+    )
+    async def add_remote_cluster(request: RemoteClusterRequest):
+        connection = await cluster_connector.attach(request.address, request.port)
+        cluster = cluster_registry.get(connection["id"])
+        if cluster.name != request.name or cluster.hardware != request.hardware:
+            cluster = cluster_registry.add_remote(
+                name=request.name,
+                endpoint=cluster.endpoint or "",
+                head_address=cluster.host_address or request.address,
+                hardware=request.hardware,
+                activate=True,
+            )
+        return cluster
+
+    @app.post(
+        "/api/v1/clusters/local-docker",
+        dependencies=[Depends(require_model_token)],
+    )
+    async def add_local_cluster(request: LocalClusterRequest):
+        if not docker_engine.available or not await docker_engine.ping():
+            raise HTTPException(
+                status_code=409,
+                detail="Mount the Docker socket and enable the local Docker runtime first.",
+            )
+        gpus = await asyncio.to_thread(detect_nvidia_gpus)
+        return cluster_registry.add_local(
+            name=request.name,
+            host_address=settings.docker_runtime_host,
+            runtime_port=settings.docker_runtime_port_start,
+            gpus=gpus,
+            model_storage_path=str(settings.docker_host_model_path),
+            activate=True,
+        )
+
+    @app.post(
+        "/api/v1/clusters/{cluster_id}/select",
+        dependencies=[Depends(require_model_token)],
+    )
+    async def select_cluster(cluster_id: str):
+        try:
+            cluster = cluster_registry.select(cluster_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Cluster not found") from error
+        if cluster.kind == "local-docker":
+            runtime.latest = await asyncio.to_thread(local_gpu_snapshot, cluster, settings)
+        else:
+            runtime.latest = None
+            with contextlib.suppress(RemoteClusterUnavailable):
+                runtime.latest = await cluster_connector.snapshot()
+        return cluster
+
+    @app.delete(
+        "/api/v1/clusters/{cluster_id}",
+        dependencies=[Depends(require_model_token)],
+    )
+    async def delete_cluster(cluster_id: str):
+        try:
+            return cluster_registry.delete(cluster_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Cluster not found") from error
+
     @app.post("/api/v1/setup/connect", dependencies=[Depends(require_model_token)])
     async def connect_cluster(request: ClusterConnectRequest):
-        connection = await cluster_connector.attach(request.address, request.port)
-        settings.remote_cluster_url = connection["url"]
-        return connection
+        return await cluster_connector.attach(request.address, request.port)
 
     @app.get("/api/v1/controller/verify", dependencies=[Depends(require_model_token)])
     async def verify_controller():

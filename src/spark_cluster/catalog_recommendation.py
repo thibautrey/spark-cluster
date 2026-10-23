@@ -172,3 +172,21 @@ def ranking_key(model):
         model.id.casefold(),
         model.id,
     )
+
+
+def generic_ranking_key(model):
+    """Rank general NVIDIA candidates without inheriting DGX Spark/NVFP4 evidence."""
+    recommendation = model.recommendation
+    risky = recommendation.variant != "standard"
+    popularity = round(
+        min(6, math.log10(max(0, model.downloads) + 1))
+        + min(3, math.log10(max(0, model.likes) + 1)),
+        4,
+    )
+    return (
+        risky,
+        -int(recommendation.publisher != "community"),
+        -popularity,
+        model.id.casefold(),
+        model.id,
+    )

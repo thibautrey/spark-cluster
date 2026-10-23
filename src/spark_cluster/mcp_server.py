@@ -132,6 +132,16 @@ READ_TOOLS = [
         "annotations": {"readOnlyHint": True},
     },
     {
+        "name": "list_clusters",
+        "title": "List managed clusters",
+        "description": (
+            "List local Docker and remote bridge clusters and identify the active control target."
+        ),
+        "inputSchema": _schema({}),
+        "outputSchema": {"type": "object", "additionalProperties": True},
+        "annotations": {"readOnlyHint": True},
+    },
+    {
         "name": "list_installed_models",
         "title": "List installed models",
         "description": (
@@ -152,6 +162,20 @@ READ_TOOLS = [
 ]
 
 ADMIN_TOOLS = [
+    {
+        "name": "select_cluster",
+        "title": "Select active cluster",
+        "description": (
+            "Select which registered cluster receives subsequent fit, download, launch, logs and "
+            "telemetry operations. This changes the controller-wide active target."
+        ),
+        "inputSchema": _schema(
+            {"cluster_id": {"type": "string", "minLength": 1, "maxLength": 80}},
+            ["cluster_id"],
+        ),
+        "outputSchema": {"type": "object", "additionalProperties": True},
+        "annotations": {"readOnlyHint": False, "destructiveHint": False},
+    },
     {
         "name": "download_model",
         "title": "Download a model",
@@ -252,6 +276,7 @@ class SparkClusterMCP:
         deployment_service: Any,
         model_fit_plan: Callable[[Any], Awaitable[Any]],
         download_model: Callable[[ModelDownloadRequest, str], Awaitable[Any]],
+        cluster_registry: Any = None,
     ) -> None:
         self.browser = browser
         self.runtime = runtime
@@ -259,6 +284,7 @@ class SparkClusterMCP:
         self.deployment_service = deployment_service
         self.model_fit_plan = model_fit_plan
         self.download_model = download_model
+        self.cluster_registry = cluster_registry
 
     def tools(self, admin: bool) -> list[dict]:
         return READ_TOOLS + (ADMIN_TOOLS if admin else [])
@@ -334,6 +360,20 @@ class SparkClusterMCP:
                         "runtime_control_mode": self.deployment_service.mode,
                     }
                 )
+            if name == "list_clusters":
+                clusters = self.cluster_registry.list() if self.cluster_registry else []
+                active = self.cluster_registry.active() if self.cluster_registry else None
+                return self._result(
+                    {
+                        "clusters": [item.model_dump(mode="json") for item in clusters],
+                        "active_cluster_id": active.id if active else None,
+                    }
+                )
+            if name == "select_cluster":
+                if not self.cluster_registry:
+                    raise RuntimeError("Cluster registry is unavailable")
+                cluster = self.cluster_registry.select(arguments["cluster_id"])
+                return self._result(cluster.model_dump(mode="json"))
             if name == "list_installed_models":
                 models = await self.model_manager.local_models()
                 endpoint = await self.model_manager.runtime_endpoint()

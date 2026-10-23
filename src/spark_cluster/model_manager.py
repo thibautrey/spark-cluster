@@ -622,6 +622,19 @@ def build_fit_plan(
     if not runtime_weight_bytes and not metadata.parameter_count:
         runtime_fits = False
         requirements.append("Weight sizes and parameter count are unknown; inspect the checkpoint.")
+    if (
+        detected_format.startswith("NVFP4")
+        and settings.active_compute_capability is not None
+        and settings.active_compute_capability < 10
+    ):
+        runtime_fits = False
+        launch_supported = False
+        requirements.append(
+            "NVFP4 requires NVIDIA Blackwell-class kernels; the active cluster reports "
+            f"compute capability {settings.active_compute_capability:g}. Choose an AWQ, GPTQ, "
+            "FP16/BF16 or other format supported by this GPU generation."
+        )
+        notes.append("The checkpoint may be downloaded, but it cannot launch on the active GPUs.")
     if detected_format.startswith("EXL3"):
         launch_supported = False
         requirements.append(
@@ -794,19 +807,24 @@ class ModelManager:
         destination: str = "local",
         controller_url: str | None = None,
         fit_plan: ModelFitPlan | None = None,
+        target_cluster_id: str | None = None,
+        target_cluster_name: str | None = None,
+        target_cluster_url: str | None = None,
     ) -> DownloadJob:
         fit = fit_plan or await self.fit(request)
         if not fit.download_fits:
             raise ModelDoesNotFit(fit)
         parts = safe_repo_parts(request.repo_id)
         target = self.settings.model_cache_path.joinpath(*parts)
-        if (target / ".spark-cluster.json").exists():
+        local_exists = (target / ".spark-cluster.json").exists()
+        if local_exists and destination == "local":
             raise ModelAlreadyInstalled(request.repo_id)
         active = [
             job
             for job in await asyncio.to_thread(self.store.list_downloads)
             if job.repo_id == request.repo_id
             and job.revision == request.revision
+            and job.target_cluster_id == target_cluster_id
             and job.status
             in {
                 "queued",
@@ -830,6 +848,9 @@ class ModelManager:
             staging_path=str(self.settings.model_cache_path / ".partial" / job_id),
             destination=destination,
             controller_url=controller_url,
+            target_cluster_id=target_cluster_id,
+            target_cluster_name=target_cluster_name,
+            target_cluster_url=target_cluster_url,
             message=(
                 "Queued for controller download and LAN delivery"
                 if destination == "cluster"

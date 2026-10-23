@@ -1,0 +1,314 @@
+"""Local NVIDIA GPU discovery and Docker-backed inference runtime."""
+
+import asyncio
+import contextlib
+import shutil
+from datetime import UTC, datetime
+from pathlib import Path
+from urllib.parse import quote
+
+import httpx
+
+from .cluster_registry import ClusterTarget, GPUDevice
+from .config import Settings
+from .models import CacheTier, ClusterSnapshot, MemoryStats, ModelRuntime, NodeSnapshot
+
+GIB = 2**30
+
+
+def detect_nvidia_gpus() -> list[GPUDevice]:
+    try:
+        import pynvml
+    except ImportError:
+        return []
+    devices = []
+    try:
+        pynvml.nvmlInit()
+        for index in range(pynvml.nvmlDeviceGetCount()):
+            handle = pynvml.nvmlDeviceGetHandleByIndex(index)
+            major, minor = pynvml.nvmlDeviceGetCudaComputeCapability(handle)
+            devices.append(
+                GPUDevice(
+                    index=index,
+                    name=pynvml.nvmlDeviceGetName(handle),
+                    uuid=pynvml.nvmlDeviceGetUUID(handle),
+                    memory_gib=round(pynvml.nvmlDeviceGetMemoryInfo(handle).total / GIB, 2),
+                    compute_capability=f"{major}.{minor}",
+                )
+            )
+    except pynvml.NVMLError:
+        return []
+    finally:
+        with contextlib.suppress(Exception):
+            pynvml.nvmlShutdown()
+    return devices
+
+
+def local_gpu_snapshot(cluster: ClusterTarget, settings: Settings) -> ClusterSnapshot:
+    try:
+        import pynvml
+    except ImportError:
+        pynvml = None
+    nodes = []
+    if pynvml:
+        with contextlib.suppress(pynvml.NVMLError):
+            pynvml.nvmlInit()
+    try:
+        for position, gpu in enumerate(cluster.gpus):
+            used = utilization = temperature = 0.0
+            if pynvml:
+                try:
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(gpu.index)
+                    memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    used = memory.used / GIB
+                    utilization = float(pynvml.nvmlDeviceGetUtilizationRates(handle).gpu)
+                    temperature = float(
+                        pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
+                    )
+                except pynvml.NVMLError:
+                    pass
+            nodes.append(
+                NodeSnapshot(
+                    id=gpu.uuid,
+                    hostname=f"{cluster.name}-gpu-{gpu.index}",
+                    role="head" if position == 0 else "worker",
+                    status="healthy",
+                    address=cluster.host_address or settings.docker_runtime_host,
+                    memory=MemoryStats(
+                        total_gib=gpu.memory_gib,
+                        used_gib=round(used, 2),
+                        accelerator_used_gib=round(used, 2),
+                    ),
+                    gpu_utilization=utilization,
+                    temperature_c=temperature,
+                )
+            )
+    finally:
+        if pynvml:
+            with contextlib.suppress(pynvml.NVMLError):
+                pynvml.nvmlShutdown()
+    storage = shutil.disk_usage(settings.model_cache_path)
+    return ClusterSnapshot(
+        timestamp=datetime.now(UTC),
+        cluster_name=cluster.name,
+        status="healthy" if nodes else "offline",
+        nodes=nodes,
+        cache_tiers=[
+            CacheTier(
+                name="Shared model storage",
+                kind="remote",
+                used_gib=round((storage.total - storage.free) / GIB, 2),
+                capacity_gib=round(storage.total / GIB, 2),
+                persistent=True,
+            )
+        ],
+        runtime=ModelRuntime(
+            model="No model loaded",
+            quantization="auto",
+            context_length=0,
+            tensor_parallel=max(1, len(nodes)),
+            pipeline_parallel=1,
+        ),
+    )
+
+
+class DockerEngineClient:
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        self.socket = settings.docker_socket_path
+        self.transport: httpx.AsyncBaseTransport | None = None
+
+    @property
+    def available(self) -> bool:
+        return self.settings.docker_runtime_enabled and self.socket.exists()
+
+    def _transport(self) -> httpx.AsyncBaseTransport:
+        return self.transport or httpx.AsyncHTTPTransport(uds=str(self.socket))
+
+    async def request(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict | None = None,
+        params: dict | None = None,
+        timeout: float = 60,
+        allow: set[int] | None = None,
+    ) -> httpx.Response:
+        if not self.available:
+            raise RuntimeError("Docker runtime access is not configured")
+        async with httpx.AsyncClient(
+            base_url="http://docker",
+            transport=self._transport(),
+            timeout=timeout,
+        ) as client:
+            response = await client.request(method, path, json=payload, params=params)
+        if allow and response.status_code in allow:
+            return response
+        response.raise_for_status()
+        return response
+
+    async def ping(self) -> bool:
+        try:
+            response = await self.request("GET", "/_ping", timeout=3)
+            return response.text.strip() == "OK"
+        except (httpx.HTTPError, RuntimeError):
+            return False
+
+    @staticmethod
+    def container_name(cluster_id: str) -> str:
+        return f"spark-cluster-runtime-{cluster_id}"
+
+    async def _remove_existing(self, name: str) -> None:
+        encoded = quote(name, safe="")
+        response = await self.request("GET", f"/containers/{encoded}/json", allow={404}, timeout=10)
+        if response.status_code == 404:
+            return
+        state = response.json().get("State", {})
+        if state.get("Running"):
+            await self.request(
+                "POST",
+                f"/containers/{encoded}/stop",
+                params={"t": 20},
+                allow={304},
+                timeout=30,
+            )
+        await self.request(
+            "DELETE",
+            f"/containers/{encoded}",
+            params={"force": "true"},
+            timeout=30,
+        )
+
+    async def image_present(self, image: str) -> bool:
+        response = await self.request(
+            "GET", f"/images/{quote(image, safe='')}/json", allow={404}, timeout=10
+        )
+        return response.status_code == 200
+
+    async def pull_image(self, image: str) -> None:
+        repository, separator, tag = image.rpartition(":")
+        if not separator or "/" in tag:
+            repository, tag = image, "latest"
+        response = await self.request(
+            "POST",
+            "/images/create",
+            params={"fromImage": repository, "tag": tag},
+            timeout=1800,
+        )
+        if b'"error"' in response.content:
+            raise RuntimeError("Docker reported an image pull failure")
+
+    async def launch(
+        self,
+        *,
+        cluster: ClusterTarget,
+        image: str,
+        model_path: str,
+        served_model_name: str,
+        context_length: int,
+        tensor_parallel: int,
+        pipeline_parallel: int,
+        gpu_memory_utilization: float,
+        kv_cache_dtype: str,
+        max_num_seqs: int,
+        max_num_batched_tokens: int,
+        expert_parallel: bool,
+        chunked_prefill: bool,
+    ) -> str:
+        if tensor_parallel * pipeline_parallel > cluster.gpu_count:
+            raise ValueError("Requested parallelism exceeds GPUs assigned to this cluster")
+        image_path = quote(image, safe="")
+        image_response = await self.request(
+            "GET", f"/images/{image_path}/json", allow={404}, timeout=10
+        )
+        if image_response.status_code == 404:
+            raise RuntimeError(
+                f"Runtime image {image} is not present on the Docker host; install it first"
+            )
+        controller_root = self.settings.model_cache_path.resolve()
+        resolved_model = Path(model_path).resolve()
+        if controller_root not in resolved_model.parents:
+            raise ValueError("Model path is outside managed model storage")
+        relative = resolved_model.relative_to(controller_root).as_posix()
+        runtime_model = f"/models/{relative}"
+        command = [
+            runtime_model,
+            "--served-model-name",
+            served_model_name,
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(cluster.runtime_port),
+            "--tensor-parallel-size",
+            str(tensor_parallel),
+            "--pipeline-parallel-size",
+            str(pipeline_parallel),
+            "--max-model-len",
+            str(context_length),
+            "--gpu-memory-utilization",
+            str(gpu_memory_utilization),
+            "--max-num-seqs",
+            str(max_num_seqs),
+            "--max-num-batched-tokens",
+            str(max_num_batched_tokens),
+        ]
+        if kv_cache_dtype != "auto":
+            command.extend(["--kv-cache-dtype", kv_cache_dtype])
+        if expert_parallel:
+            command.append("--enable-expert-parallel")
+        if chunked_prefill:
+            command.append("--enable-chunked-prefill")
+        name = self.container_name(cluster.id)
+        await self._remove_existing(name)
+        device_ids = [str(item.index) for item in cluster.gpus]
+        payload = {
+            "Image": image,
+            "Entrypoint": ["vllm", "serve"],
+            "Cmd": command,
+            "Env": [f"NVIDIA_VISIBLE_DEVICES={','.join(device_ids)}"],
+            "HostConfig": {
+                "NetworkMode": "host",
+                "Runtime": "nvidia",
+                "Binds": [f"{self.settings.docker_host_model_path}:/models:ro"],
+                "DeviceRequests": [
+                    {
+                        "Driver": "nvidia",
+                        "DeviceIDs": device_ids,
+                        "Capabilities": [["gpu"]],
+                    }
+                ],
+                "IpcMode": "host",
+                "ShmSize": 16 * GIB,
+                "RestartPolicy": {"Name": "unless-stopped"},
+            },
+            "Labels": {
+                "spark-cluster.managed": "true",
+                "spark-cluster.cluster-id": cluster.id,
+                "spark-cluster.model": served_model_name,
+            },
+        }
+        response = await self.request(
+            "POST",
+            "/containers/create",
+            params={"name": name},
+            payload=payload,
+            timeout=30,
+        )
+        container_id = response.json()["Id"]
+        await self.request("POST", f"/containers/{container_id}/start", timeout=30)
+        return container_id
+
+    async def wait_ready(self, cluster: ClusterTarget, timeout: int = 900) -> None:
+        url = f"http://{cluster.host_address}:{cluster.runtime_port}/v1/models"
+        deadline = asyncio.get_running_loop().time() + timeout
+        async with httpx.AsyncClient(timeout=3) as client:
+            while asyncio.get_running_loop().time() < deadline:
+                try:
+                    response = await client.get(url)
+                    if response.status_code == 200:
+                        return
+                except httpx.HTTPError:
+                    pass
+                await asyncio.sleep(3)
+        raise TimeoutError("Docker runtime did not become ready within 15 minutes")

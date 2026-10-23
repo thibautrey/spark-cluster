@@ -15,6 +15,7 @@ from .catalog_cache import CatalogCache
 from .catalog_recommendation import (
     RECOMMENDATION_VERSION,
     Recommendation,
+    generic_ranking_key,
     ranking_key,
     recommend,
 )
@@ -326,10 +327,19 @@ class ModelBrowser:
                     if query and query.casefold() not in repo_id.casefold():
                         continue
                     candidates.setdefault(repo_id, summary(item))
-            models = sorted(candidates.values(), key=ranking_key)
+            active_capability = self.settings.active_compute_capability
+            spark_hardware = active_capability is None or active_capability >= 10
+            models = sorted(
+                candidates.values(),
+                key=ranking_key if spark_hardware else generic_ranking_key,
+            )
             note = (
-                "Evidence → Spark signals → publisher → bounded popularity · "
-                f"shortlist of {len(models)} models (up to 288 candidates); "
+                (
+                    "Evidence → Spark signals → publisher → bounded popularity · "
+                    if spark_hardware
+                    else "Publisher → bounded popularity for active NVIDIA GPUs · "
+                )
+                + f"shortlist of {len(models)} models (up to 288 candidates); "
                 "not a quality or speed benchmark"
             )
             if any(isinstance(response, Exception) for response in responses[1:]):

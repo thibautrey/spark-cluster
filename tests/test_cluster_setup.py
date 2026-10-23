@@ -366,7 +366,7 @@ def test_demo_wizard_end_to_end_without_network_or_ssh(tmp_path, monkeypatch):
     monkeypatch.setattr(app.state.setup_service.transport, "run", forbidden)
     monkeypatch.setattr(app.state.setup_service.transport, "trust", forbidden)
     with TestClient(app) as client:
-        assert "Connect or build your Spark cluster" in client.get("/").text
+        assert "Connect or build a GPU cluster" in client.get("/").text
         assert client.get("/assets/setup.js").status_code == 200
         discovery = client.post("/api/v1/setup/discover", json={}).json()
         assert len(discovery["nodes"]) == 4

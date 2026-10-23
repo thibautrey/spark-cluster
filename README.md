@@ -161,9 +161,31 @@ spark-cluster serve --host 0.0.0.0 --port 8080
 
 Keep the dashboard on a trusted management network. Verify every displayed SSH host fingerprint on the corresponding device before authorizing setup.
 
+### Multiple clusters and local Docker GPUs
+
+The controller keeps a persistent cluster registry. A target can be an authenticated remote bridge (including a DGX Spark cluster) or a local NVIDIA Docker host. Selecting a cluster changes capacity checks, model delivery, launches, logs, telemetry and the direct inference endpoint together. Downloads record their target cluster, and a controller copy can be delivered to another remote cluster without downloading the model from Hugging Face again.
+
+To let a controller container manage GPUs on its own Docker host, mount the Docker socket and the same host model directory used by runtime containers, expose the assigned NVIDIA devices, and keep the administration token enabled:
+
+```bash
+docker run --gpus all --group-add "$(stat -c %g /var/run/docker.sock)" \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /host/models:/models \
+  -e SPARK_CLUSTER_DOCKER_RUNTIME_ENABLED=true \
+  -e SPARK_CLUSTER_DOCKER_HOST_MODEL_PATH=/host/models \
+  -e SPARK_CLUSTER_DOCKER_RUNTIME_HOST=192.168.1.10 \
+  -e SPARK_CLUSTER_RUNTIME_VLLM_IMAGE=vllm/vllm-openai:latest \
+  -e SPARK_CLUSTER_MODEL_ADMIN_TOKEN=... \
+  spark-cluster:latest serve --host 192.168.1.10 --port 8769
+```
+
+Docker socket access grants host-level container control. Keep the controller on a trusted LAN, restrict its administration token, and do not expose `/var/run/docker.sock` to unrelated applications. Spark Cluster creates one labeled vLLM container per local cluster, limits it to the cluster's assigned GPU indices, mounts models read-only, and leaves the inference container running independently of controller updates.
+
+NVFP4 is Blackwell-specific. On older NVIDIA GPUs, Spark Cluster allows storage of an NVFP4 repository but blocks launch and explains which compatible quantization family to choose.
+
 ## Model compatibility
 
-Spark Cluster manages repositories and runtime settings without hard-coding a model family. Compatibility depends on the vLLM runtime image, quantization kernels, and model architecture available on the target GB10 systems.
+Spark Cluster manages repositories and runtime settings without hard-coding a model family. Compatibility depends on the vLLM runtime image, quantization kernels, model architecture and compute capability of the selected target GPUs.
 
 Common use cases include:
 
@@ -171,9 +193,9 @@ Common use cases include:
 - Qwen, Llama, Mistral, and other Hugging Face causal language models supported by vLLM;
 - BF16/FP16, 8-bit, and 4-bit capacity planning;
 - 128k, 256k, and 512k serving profiles;
-- tensor and pipeline parallel layouts across one to four nodes.
+- tensor and pipeline parallel layouts across local GPUs or remote nodes.
 
-Always run **Check fit** before downloading or launching. It separates weights, KV cache, runtime overhead, storage, usable unified memory, required node count, and remaining headroom. The catalog can also be filtered for 1, 2, 4, or 8 DGX Sparks at a selected context length. Cards show full-memory, hybrid, and specialized-engine fits before a repository is selected.
+Always run **Check fit** before downloading or launching. It separates weights, KV cache, runtime overhead, storage, usable unified memory, required node count, and remaining headroom. The catalog can also be filtered by accelerator count at a selected context length. Cards show full-memory, hybrid, and specialized-engine fits before a repository is selected.
 
 ## Model library and launch flow
 
@@ -250,6 +272,11 @@ All settings use the `SPARK_CLUSTER_` prefix.
 | `SETUP_IMAGE_DIGEST` | unset | Immutable image digest used instead of a mutable tag. |
 | `REMOTE_CLUSTER_URL` | unset | Authenticated cluster bridge attached to an external controller. |
 | `CONTROLLER_PUBLIC_URL` | request LAN URL | Controller URL the cluster uses to fetch staged files. Set it when the browser-facing URL is not reachable from the cluster. |
+| `DOCKER_RUNTIME_ENABLED` | `false` | Enables runtime lifecycle through a mounted Docker Engine socket. |
+| `DOCKER_SOCKET_PATH` | `/var/run/docker.sock` | Docker Engine Unix socket inside the controller. |
+| `DOCKER_HOST_MODEL_PATH` | `/models` | Host-side model directory bind-mounted read-only into local runtime containers. |
+| `DOCKER_RUNTIME_HOST` | `127.0.0.1` | LAN address clients use for the local runtime API. |
+| `DOCKER_RUNTIME_PORT_START` | `30000` | First host-network port reserved for local cluster runtimes. |
 
 The complete setup-specific reference is in [docs/cluster-setup.md](docs/cluster-setup.md).
 
