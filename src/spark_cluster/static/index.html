@@ -132,7 +132,7 @@
               <div class="empty-state"><b>No local model found</b><span>Add one from Hugging Face.</span></div>
             </div>
             <form class="model-form" id="model-form">
-              <div class="form-title"><span>＋</span><div><b>Add from Hugging Face</b><small>Inspect fit before downloading</small></div></div>
+              <div class="form-title"><span>＋</span><div><b>Download once, distribute over LAN</b><small>The controller downloads from Hugging Face; the cluster copies from the controller into shared storage.</small></div></div>
               <label>Model ID<input id="repo-id" name="repo_id" placeholder="deepseek-ai/DeepSeek-R1" required /></label>
               <div class="form-row">
                 <label>Revision<input id="revision" name="revision" value="main" /></label>
@@ -145,10 +145,10 @@
               <div class="fit-result neutral" id="fit-result"><span class="fit-symbol">?</span><div><b>Run a fit check</b><small>Weights, KV cache, runtime overhead, nodes and storage.</small></div></div>
               <label class="override"><input id="allow-oversized" type="checkbox" /> Allow download when the model does not fit</label>
               <label>Admin token <span class="optional">optional</span><input id="admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label>
-              <div class="form-actions"><button class="secondary" id="check-fit" type="button">Check fit</button><button class="primary" id="download-model" type="submit" disabled>Download model</button></div>
+              <div class="form-actions"><button class="secondary" id="check-fit" type="button">Check fit</button><button class="primary" id="download-model" type="submit" disabled>Download once</button></div>
             </form>
           </div>
-          <div class="downloads-head"><p class="eyebrow">DOWNLOADS</p><span>Automatic resume is enabled</span></div>
+          <div class="downloads-head"><p class="eyebrow">DOWNLOADS & LAN DELIVERY</p><span>Internet → controller → shared cluster storage · automatic resume</span></div>
           <div class="download-list" id="download-list"><div class="empty-downloads">No downloads yet.</div></div>
         </section>
 

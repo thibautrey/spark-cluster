@@ -25,6 +25,9 @@ spec:
             - { name: SPARK_CLUSTER_CLUSTER_NAME, value: {{ .Values.controlPlane.clusterName | quote }} }
             - { name: SPARK_CLUSTER_RUNTIME_LOGS_MODE, value: {{ .Values.controlPlane.runtimeLogsMode | quote }} }
             - { name: SPARK_CLUSTER_RUNTIME_CONTROL_MODE, value: {{ .Values.controlPlane.runtimeControlMode | quote }} }
+            {{- if .Values.controlPlane.controllerPublicUrl }}
+            - { name: SPARK_CLUSTER_CONTROLLER_PUBLIC_URL, value: {{ .Values.controlPlane.controllerPublicUrl | quote }} }
+            {{- end }}
             - { name: SPARK_CLUSTER_DATABASE_PATH, value: /data/spark-cluster.db }
             - { name: SPARK_CLUSTER_RUNTIME_MODEL, value: {{ .Values.runtime.model | quote }} }
             - { name: SPARK_CLUSTER_RUNTIME_CONTEXT_LENGTH, value: {{ .Values.runtime.maxModelLen | quote }} }

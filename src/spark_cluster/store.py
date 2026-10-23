@@ -120,9 +120,16 @@ class SnapshotStore:
     def recover_downloads(self) -> list[DownloadJob]:
         recovered: list[DownloadJob] = []
         for job in self.list_downloads():
-            if job.status in {"queued", "resolving", "downloading"}:
+            if job.status in {
+                "queued",
+                "resolving",
+                "downloading",
+                "preparing-transfer",
+                "distributing",
+            }:
                 job.status = "queued"
                 job.error = None
+                job.message = "Recovered after controller restart"
                 job.updated_at = datetime.now(UTC)
                 self.save_download(job)
                 recovered.append(job)

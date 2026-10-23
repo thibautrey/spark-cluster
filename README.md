@@ -27,7 +27,8 @@ The runtime is model-agnostic and works with Hugging Face models supported by th
 | **Remote control plane** | Runs away from the GPU nodes while an authenticated bridge performs cluster-local operations. |
 | **Automated installation** | Installs pinned k3s components, NVIDIA scheduling, shared model storage, telemetry, and idle runtime resources. |
 | **Actionable diagnostics** | Turns failed checks into a concrete remedy and lets interrupted setup resume from persisted state. |
-| **Model lifecycle** | Checks capacity before download, resumes transfers, lists cached models, and launches a selected model across the cluster. |
+| **Single internet download** | Downloads each model once on the controller, then relays verified files over the LAN into shared cluster storage. |
+| **Model lifecycle** | Checks capacity before download, resumes internet and LAN transfers, lists cached models, and launches a selected model across the cluster. |
 | **Operational visibility** | Shows topology, memory, throughput, KV-cache tiers, GPU state, endpoints, and per-runtime logs in real time. |
 | **Open interfaces** | Exposes JSON APIs, WebSockets, Prometheus metrics, an OpenAI-compatible endpoint, Docker, and Helm deployment paths. |
 
@@ -53,7 +54,8 @@ The runtime is model-agnostic and works with Hugging Face models supported by th
 flowchart LR
     Operator[Browser] --> Control[Spark Cluster control plane]
     Control --> DB[(SQLite WAL)]
-    Control --> Bridge[Authenticated cluster bridge]
+    Hub[Hugging Face] -->|one internet download| Control
+    Control -->|resumable verified LAN copy| Bridge[Authenticated cluster bridge]
     Bridge --> K8s[k3s API]
     K8s --> Head[vLLM head]
     K8s --> Workers[Ray workers]
@@ -125,7 +127,9 @@ Always run **Check fit** before downloading or launching. It separates weights, 
 
 ## Model library and launch flow
 
-Downloads use Hugging Face's resumable snapshot cache. Jobs, attempts, progress, fit results, and errors are persisted in SQLite. Interrupted jobs are requeued after a controller restart, and completed files plus partial shards are reused.
+Downloads use Hugging Face's resumable snapshot cache on the external controller. After the internet download completes, Spark Cluster creates a signed manifest with the size and SHA-256 digest of every model file. The bridge resumes file-by-file HTTP transfers from the controller, verifies every digest, and installs the result into the cluster's shared model volume. GPU nodes mount that volume instead of contacting Hugging Face individually.
+
+Jobs, attempts, internet progress, LAN delivery progress, fit results, and errors are persisted in SQLite on both sides. Interrupted internet downloads and partial LAN files are reused after a restart. If cluster delivery fails, the complete controller copy remains available and **Retry** restarts only the LAN stage.
 
 A launch performs these steps:
 
@@ -190,6 +194,7 @@ All settings use the `SPARK_CLUSTER_` prefix.
 | `SETUP_IMAGE_REPOSITORY` | `ghcr.io/thibautrey/spark-cluster` | Image installed on cluster nodes. |
 | `SETUP_IMAGE_DIGEST` | unset | Immutable image digest used instead of a mutable tag. |
 | `REMOTE_CLUSTER_URL` | unset | Authenticated cluster bridge attached to an external controller. |
+| `CONTROLLER_PUBLIC_URL` | request LAN URL | Controller URL the cluster uses to fetch staged files. Set it when the browser-facing URL is not reachable from the cluster. |
 
 The complete setup-specific reference is in [docs/cluster-setup.md](docs/cluster-setup.md).
 
@@ -203,6 +208,9 @@ The complete setup-specific reference is in [docs/cluster-setup.md](docs/cluster
 | `GET /api/v1/models` | Managed, cached, and runtime-reported models. |
 | `POST /api/v1/models/fit` | Repository metadata and fit preflight. |
 | `POST /api/v1/models/download` | Resumable model download. |
+| `POST /api/v1/models/import` | Ask the bridge to copy a staged controller model into shared storage. |
+| `GET /api/v1/controller/downloads/{id}/manifest` | Signed file manifest used by the cluster bridge. |
+| `GET /api/v1/controller/downloads/{id}/files/{path}` | Range-capable authenticated LAN file delivery. |
 | `GET /api/v1/logs` | Persisted, filterable runtime logs. |
 | `WS /api/v1/logs/stream` | Live runtime log stream. |
 | `POST /api/v1/launches` | Validate and launch a managed model. |

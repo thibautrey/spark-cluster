@@ -32,10 +32,12 @@ from .model_manager import (
     ModelDoesNotFit,
     ModelManager,
 )
+from .model_relay import ModelRelay
 from .models import (
     CapacityPlan,
     CapacityRequest,
     ClusterSnapshot,
+    ControllerModelImportRequest,
     DownloadJob,
     LocalModel,
     ModelDownloadRequest,
@@ -107,7 +109,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if active_connection := load_active_connection(settings):
             settings.remote_cluster_url = active_connection["url"]
     runtime = Runtime(settings)
-    model_manager = ModelManager(settings, runtime.store, runtime)
+    model_relay = ModelRelay(settings, runtime.store)
+    model_manager = ModelManager(settings, runtime.store, runtime, model_relay)
     log_service = RuntimeLogService(settings, runtime.store)
     deployment_service = RuntimeDeploymentService(
         settings, runtime.store, model_manager, log_service
@@ -120,6 +123,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await cluster_connector.attach(head.address, 30080)
 
     setup_service.on_cluster_ready = activate_cluster
+
+    async def refresh_remote_capacity() -> None:
+        if settings.remote_cluster_url:
+            runtime.latest = await cluster_connector.snapshot()
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -138,6 +145,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title=settings.title, version="0.1.0", lifespan=lifespan)
     app.state.runtime = runtime
     app.state.model_manager = model_manager
+    app.state.model_relay = model_relay
     app.state.log_service = log_service
     app.state.deployment_service = deployment_service
     app.state.setup_service = setup_service
@@ -315,7 +323,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/v1/models/fit", response_model=ModelFitPlan)
     async def model_fit(request: ModelFitRequest) -> ModelFitPlan:
         try:
+            await refresh_remote_capacity()
             return await model_manager.fit(request)
+        except RemoteClusterUnavailable:
+            raise
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         except Exception as error:
@@ -342,9 +353,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         status_code=202,
         dependencies=[Depends(require_model_token)],
     )
-    async def download_model(request: ModelDownloadRequest) -> DownloadJob:
+    async def download_model(request: ModelDownloadRequest, http_request: Request) -> DownloadJob:
         try:
-            return await model_manager.enqueue(request)
+            await refresh_remote_capacity()
+            destination = "cluster" if settings.remote_cluster_url else "local"
+            controller_url = (
+                model_relay.controller_url(str(http_request.base_url).rstrip("/"))
+                if destination == "cluster"
+                else None
+            )
+            return await model_manager.enqueue(
+                request, destination=destination, controller_url=controller_url
+            )
+        except RemoteClusterUnavailable:
+            raise
         except ModelDoesNotFit as error:
             raise HTTPException(
                 status_code=409,
@@ -360,9 +382,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail=f"Hugging Face metadata lookup failed: {model_manager.safe_error(error)}",
             ) from error
 
+    @app.post(
+        "/api/v1/models/import",
+        response_model=DownloadJob,
+        status_code=202,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def import_model(request: ControllerModelImportRequest) -> DownloadJob:
+        try:
+            validated_cluster_url(request.controller_url)
+            return await model_manager.enqueue_from_controller(request)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
     @app.get("/api/v1/downloads", response_model=list[DownloadJob])
     async def downloads() -> list[DownloadJob]:
         return await model_manager.downloads()
+
+    @app.get(
+        "/api/v1/downloads/{job_id}",
+        response_model=DownloadJob,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def download(job_id: str) -> DownloadJob:
+        job = await asyncio.to_thread(runtime.store.get_download, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Download job not found")
+        return job
+
+    @app.get(
+        "/api/v1/controller/downloads/{job_id}/manifest",
+        dependencies=[Depends(require_model_token)],
+    )
+    async def controller_model_manifest(job_id: str) -> dict:
+        try:
+            return model_relay.manifest(job_id)
+        except (FileNotFoundError, ValueError) as error:
+            raise HTTPException(status_code=404, detail="Model transfer not found") from error
+
+    @app.get(
+        "/api/v1/controller/downloads/{job_id}/files/{file_path:path}",
+        dependencies=[Depends(require_model_token)],
+    )
+    async def controller_model_file(job_id: str, file_path: str) -> FileResponse:
+        try:
+            path = model_relay.model_file(job_id, file_path)
+        except (FileNotFoundError, ValueError) as error:
+            raise HTTPException(status_code=404, detail="Model transfer file not found") from error
+        return FileResponse(path, filename=path.name)
 
     @app.post(
         "/api/v1/downloads/{job_id}/retry",

@@ -15,8 +15,10 @@ import httpx
 from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
 from .config import Settings
+from .model_relay import ModelRelay
 from .models import (
     ClusterSnapshot,
+    ControllerModelImportRequest,
     DownloadJob,
     LocalModel,
     ModelDownloadRequest,
@@ -231,11 +233,18 @@ def build_fit_plan(
 
 
 class ModelManager:
-    def __init__(self, settings: Settings, store: SnapshotStore, runtime: Any):
+    def __init__(
+        self,
+        settings: Settings,
+        store: SnapshotStore,
+        runtime: Any,
+        relay: ModelRelay | None = None,
+    ):
         self.settings = settings
         self.store = store
         self.runtime = runtime
         self.catalog = HuggingFaceCatalog(settings.hf_token, settings.hf_download_workers)
+        self.relay = relay
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.worker: asyncio.Task | None = None
         self._inventory_cache: list[LocalModel] | None = None
@@ -298,7 +307,13 @@ class ModelManager:
                 return model
         return None
 
-    async def enqueue(self, request: ModelDownloadRequest) -> DownloadJob:
+    async def enqueue(
+        self,
+        request: ModelDownloadRequest,
+        *,
+        destination: str = "local",
+        controller_url: str | None = None,
+    ) -> DownloadJob:
         fit = await self.fit(request)
         if not fit.fits and not request.allow_oversized:
             raise ModelDoesNotFit(fit)
@@ -311,7 +326,8 @@ class ModelManager:
             for job in await asyncio.to_thread(self.store.list_downloads)
             if job.repo_id == request.repo_id
             and job.revision == request.revision
-            and job.status in {"queued", "resolving", "downloading"}
+            and job.status
+            in {"queued", "resolving", "downloading", "preparing-transfer", "distributing"}
         ]
         if active:
             return active[0]
@@ -324,10 +340,46 @@ class ModelManager:
             total_bytes=fit.repository_bytes,
             target_path=str(target),
             staging_path=str(self.settings.model_cache_path / ".partial" / job_id),
+            destination=destination,
+            controller_url=controller_url,
+            message=(
+                "Queued for controller download and LAN delivery"
+                if destination == "cluster"
+                else "Queued for download"
+            ),
             fit=fit,
         )
         await asyncio.to_thread(self.store.save_download, job)
         await self.queue.put(job.id)
+        return job
+
+    async def enqueue_from_controller(self, request: ControllerModelImportRequest) -> DownloadJob:
+        existing = await asyncio.to_thread(self.store.get_download, request.job_id)
+        if existing:
+            return existing
+        parts = safe_repo_parts(request.repo_id)
+        target = self.settings.model_cache_path.joinpath(*parts)
+        job = DownloadJob(
+            id=request.job_id,
+            repo_id=request.repo_id,
+            revision=request.revision,
+            total_bytes=request.total_bytes,
+            target_path=str(target),
+            staging_path=str(self.settings.model_cache_path / ".partial" / request.job_id),
+            source="controller",
+            controller_url=request.controller_url,
+            controller_job_id=request.job_id,
+            message="Queued for LAN copy from the controller",
+            fit=request.fit,
+        )
+        if (target / ".spark-cluster.json").exists():
+            job.status = "completed"
+            job.downloaded_bytes = directory_size(target)
+            job.progress = 100
+            job.message = "Model already exists in shared cluster storage"
+        await asyncio.to_thread(self.store.save_download, job)
+        if job.status != "completed":
+            await self.queue.put(job.id)
         return job
 
     async def retry(self, job_id: str) -> DownloadJob:
@@ -338,6 +390,7 @@ class ModelManager:
             return job
         job.status = "queued"
         job.error = None
+        job.message = "Retry queued"
         job.updated_at = datetime.now(UTC)
         await asyncio.to_thread(self.store.save_download, job)
         await self.queue.put(job.id)
@@ -466,6 +519,7 @@ class ModelManager:
                 if job:
                     job.status = "failed"
                     job.error = self.safe_error(error)
+                    job.message = "Model transfer failed and can be retried"
                     job.updated_at = datetime.now(UTC)
                     await asyncio.to_thread(self.store.save_download, job)
             finally:
@@ -477,20 +531,27 @@ class ModelManager:
             return
         existing_target = Path(job.target_path)
         if (existing_target / ".spark-cluster.json").exists():
-            job.status = "completed"
-            job.downloaded_bytes = job.total_bytes or directory_size(existing_target)
-            job.progress = 100
-            job.error = None
-            job.updated_at = datetime.now(UTC)
-            await asyncio.to_thread(self.store.save_download, job)
+            await self._finish_or_distribute(job, existing_target)
             return
         job.status = "downloading"
         job.attempts += 1
         job.error = None
+        job.message = (
+            "Copying model files from the controller over the LAN"
+            if job.source == "controller"
+            else "Downloading model from Hugging Face to this controller"
+        )
         job.updated_at = datetime.now(UTC)
         await asyncio.to_thread(self.store.save_download, job)
         staging = Path(job.staging_path)
         staging.mkdir(parents=True, exist_ok=True)
+        if job.source == "controller":
+            if not self.relay:
+                raise RuntimeError("Model relay is unavailable")
+            await self.relay.pull(job)
+            await self._install_staging(job, staging)
+            return
+
         outcome: dict[str, BaseException | None] = {"error": None}
 
         def download() -> None:
@@ -514,15 +575,12 @@ class ModelManager:
         if outcome["error"] is not None:
             job.status = "failed"
             job.error = self.safe_error(outcome["error"])
+            job.message = "Controller download failed"
             job.updated_at = datetime.now(UTC)
             await asyncio.to_thread(self.store.save_download, job)
             return
 
-        target = Path(job.target_path)
         try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if target.exists():
-                raise FileExistsError(f"Target model directory already exists: {target}")
             manifest = {
                 "repo_id": job.repo_id,
                 "revision": job.revision,
@@ -530,15 +588,61 @@ class ModelManager:
                 "fit": job.fit.model_dump(mode="json"),
             }
             (staging / ".spark-cluster.json").write_text(json.dumps(manifest, indent=2))
-            staging.replace(target)
-            self._inventory_cache = None
-            job.status = "completed"
-            job.downloaded_bytes = job.total_bytes or directory_size(target)
-            job.progress = 100
-            job.error = None
+            await self._install_staging(job, staging)
+            return
         except (OSError, ValueError) as error:
             job.status = "failed"
             job.error = self.safe_error(error)
+            job.message = "Controller download failed"
+        job.updated_at = datetime.now(UTC)
+        await asyncio.to_thread(self.store.save_download, job)
+
+    async def _install_staging(self, job: DownloadJob, staging: Path) -> None:
+        target = Path(job.target_path)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                raise FileExistsError(f"Target model directory already exists: {target}")
+            staging.replace(target)
+            self._inventory_cache = None
+            await self._finish_or_distribute(job, target)
+        except (OSError, ValueError) as error:
+            job.status = "failed"
+            job.error = self.safe_error(error)
+            job.message = "Model installation failed"
+            job.updated_at = datetime.now(UTC)
+            await asyncio.to_thread(self.store.save_download, job)
+
+    async def _finish_or_distribute(self, job: DownloadJob, target: Path) -> None:
+        job.downloaded_bytes = job.total_bytes or directory_size(target)
+        job.progress = 100
+        job.error = None
+        if job.destination == "cluster":
+            if not self.relay:
+                raise RuntimeError("Model relay is unavailable")
+            job.status = "preparing-transfer"
+            job.message = "Verifying files before LAN delivery to the cluster"
+            job.updated_at = datetime.now(UTC)
+            await asyncio.to_thread(self.store.save_download, job)
+            try:
+                await self.relay.distribute(job)
+            except (httpx.HTTPError, OSError, RuntimeError, ValueError) as error:
+                job.status = "failed"
+                job.error = self.safe_error(error)
+                job.message = "Controller download is safe; cluster delivery can be retried"
+                job.updated_at = datetime.now(UTC)
+                await asyncio.to_thread(self.store.save_download, job)
+                return
+            job.transfer_progress = 100
+            job.transferred_bytes = job.total_bytes
+            job.message = "Available on the controller and in shared cluster storage"
+        else:
+            job.message = (
+                "Copied from the controller into shared cluster storage"
+                if job.source == "controller"
+                else "Available in local model storage"
+            )
+        job.status = "completed"
         job.updated_at = datetime.now(UTC)
         await asyncio.to_thread(self.store.save_download, job)
 

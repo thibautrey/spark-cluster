@@ -1,8 +1,9 @@
 # Guided cluster setup
 
 Run the dashboard on any Linux, macOS, NAS, VM, or container host that can reach the Spark management
-LAN. The interface remains on that system. A lightweight bridge inside Kubernetes performs model
-downloads, storage access, log collection and runtime rollouts next to the GPUs. The controller relays
+LAN. The interface remains on that system. The controller downloads model files from the internet
+once, while a lightweight bridge inside Kubernetes copies them over the LAN into shared model storage
+and performs log collection and runtime rollouts next to the GPUs. The controller relays
 the bridge APIs and WebSockets, so cache, memory, topology, models, launches and logs all remain in one
 dashboard. Demo mode runs the same interface with simulated machines and sends no LAN or SSH traffic.
 
@@ -42,6 +43,25 @@ Mutating requests and attachment checks use an HMAC-SHA256 signature over method
 body digest. Signatures expire after 30 seconds and prevent replay or modification. Keep clocks synced.
 Read-only telemetry remains available on the private bridge endpoint; restrict NodePort 30080 to the
 management LAN with host or upstream firewall rules.
+
+### Controller-first model delivery
+
+When a cluster is attached, model downloads stay on the external controller:
+
+1. The controller resolves Hugging Face metadata and verifies fit against a fresh bridge snapshot.
+2. Hugging Face files download once into `MODEL_CACHE_PATH` on the controller with normal resume.
+3. The controller hashes every completed file and stores a signed transfer manifest.
+4. The bridge opens authenticated, range-capable HTTP requests back to the controller and resumes
+   partial files after interruptions.
+5. Each SHA-256 digest is verified before the staged directory is atomically installed into the
+   shared model volume. Runtime nodes mount that volume read-only and do not contact Hugging Face.
+
+Set `SPARK_CLUSTER_CONTROLLER_PUBLIC_URL` to an HTTP(S) URL using the controller's reachable private
+IPv4 address, for example `http://192.168.1.149:8769`. It may be omitted when the browser reaches the
+dashboard through that same LAN address. The URL is rejected unless it targets an RFC1918 address.
+Allow the bridge to initiate connections to this port. File and manifest requests require the shared
+HMAC secret, file paths are restricted to the staged model, and all content is verified against the
+signed manifest. A failed LAN copy can be retried without another internet download.
 
 The SSH user must have noninteractive `sudo -n` access on the selected devices. Prepare that account
 according to your administration policy. The wizard does not collect SSH passwords, sudo passwords or
@@ -136,9 +156,10 @@ k3s; temporary enrollment files are root-only and removed on exit.
    NFS read/write access from each selected machine as the application UID.
 
 After verification, the current external dashboard automatically attaches to the bridge on head port
-**30080**. Add/download a model in the model library, then use **Launch**. The bridge stores models on
-the cluster NFS volume and executes Kubernetes operations; the external controller does not need that
-volume mounted. Model capacity and runtime readiness are validated separately. Launching scales the
+**30080**. Add/download a model in the model library, then use **Launch**. The controller stages the
+model locally and the bridge copies it into the cluster NFS volume before exposing it to the runtime;
+the external controller does not need that volume mounted. Model capacity and runtime readiness are
+validated separately. Launching scales the
 deferred head and required Ray workers. The OpenAI-compatible runtime is exposed on head NodePort
 **30000**, and the API panel displays that LAN URL after launch.
 
@@ -182,6 +203,10 @@ All setup endpoints use the model administration bearer token in live mode.
 | `POST /api/v1/setup/check` | Read-only preflight and detected node fabric addresses |
 | `POST /api/v1/setup/jobs` | Start a reviewed installation |
 | `POST /api/v1/setup/jobs/{id}/resume` | Revalidate and resume an interrupted installation |
+| `POST /api/v1/models/import` | Start or resume a controller-to-cluster model copy |
+| `GET /api/v1/downloads/{id}` | Read internet or LAN transfer progress |
+| `GET /api/v1/controller/downloads/{id}/manifest` | Retrieve the signed model file manifest |
+| `GET /api/v1/controller/downloads/{id}/files/{path}` | Resume an authenticated model file transfer |
 | `GET /api/v1/controller/verify` | HMAC-authenticated bridge identity check |
 
 The dashboard polls authenticated setup state every two seconds while a job is running. Logs and

@@ -162,8 +162,8 @@ function renderDownloads(downloads) {
   }
   $('download-list').innerHTML = downloads.map(job => `
     <div class="download-row">
-      <div class="download-name"><b>${escapeHtml(job.repo_id)}</b><small>attempt ${job.attempts} · ${formatBytes(job.downloaded_bytes)} / ${formatBytes(job.total_bytes)}</small></div>
-      <div class="download-progress"><div class="cache-track"><i style="width:${job.progress}%"></i></div><span>${job.progress.toFixed(1)}%</span></div>
+      <div class="download-name"><b>${escapeHtml(job.repo_id)}</b><small>${job.destination === 'cluster' ? 'Internet → this controller → cluster LAN' : job.source === 'controller' ? 'Controller LAN → shared cluster storage' : 'Internet → local storage'} · attempt ${job.attempts}</small><small>${escapeHtml(job.message || job.status)}</small></div>
+      <div class="download-progress"><div class="cache-track"><i style="width:${job.status === 'distributing' ? job.transfer_progress : job.progress}%"></i></div><span>${(job.status === 'distributing' ? job.transfer_progress : job.progress).toFixed(1)}%</span></div>
       <span class="download-status ${job.status}">${escapeHtml(job.status)}</span>
       ${job.status === 'failed' ? `<button class="download-retry" data-job-id="${escapeHtml(job.id)}" title="${escapeHtml(job.error || 'Retry download')}">Retry</button>` : '<span></span>'}
     </div>`).join('');
@@ -294,10 +294,10 @@ function connectLogs() {
 
 async function refreshLibrary() {
   try {
-    const state = await api('/api/v1/control');
+    const [state, downloads] = await Promise.all([api('/api/v1/control'), api('/api/v1/downloads')]);
     renderEndpoint(state.runtime);
     renderModels(state.models);
-    renderDownloads(state.downloads);
+    renderDownloads(downloads);
     renderLaunches(state.launches);
     $('launch-mode').textContent = state.runtime_control_mode;
   } catch (error) {
@@ -382,7 +382,7 @@ $('model-form').addEventListener('submit', async event => {
     await refreshLibrary();
   } catch (error) {
     renderFitError(error.message);
-    $('download-model').textContent = 'Download model';
+    $('download-model').textContent = 'Download once';
   }
 });
 $('download-list').addEventListener('click', async event => {

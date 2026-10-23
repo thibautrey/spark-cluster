@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     setup_image_digest: str | None = None
     setup_registry_endpoint: str | None = None
     remote_cluster_url: str | None = None
+    controller_public_url: str | None = None
 
     @property
     def cors_origin_list(self) -> list[str]:

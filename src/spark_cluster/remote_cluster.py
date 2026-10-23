@@ -15,6 +15,7 @@ from websockets.asyncio.client import connect as websocket_connect
 from websockets.exceptions import WebSocketException
 
 from .config import Settings
+from .models import ClusterSnapshot
 from .setup_models import private_address
 
 MAX_PROXY_BODY = 2 * 1024 * 1024
@@ -153,6 +154,24 @@ class RemoteClusterConnector:
             {"url": url, "cluster_name": payload["cluster_name"], "head_address": address},
         )
 
+    async def snapshot(self) -> ClusterSnapshot:
+        if not self.settings.remote_cluster_url:
+            raise RemoteClusterUnavailable("No cluster bridge is attached")
+        try:
+            async with httpx.AsyncClient(
+                base_url=self.settings.remote_cluster_url,
+                transport=self.transport,
+                timeout=10,
+                trust_env=False,
+            ) as client:
+                response = await client.get("/api/v1/snapshot")
+                response.raise_for_status()
+                return ClusterSnapshot.model_validate(response.json())
+        except (httpx.HTTPError, ValueError, TypeError) as error:
+            raise RemoteClusterUnavailable(
+                "Cluster capacity is unavailable; check the bridge before downloading a model"
+            ) from error
+
     def _authorization(self) -> str:
         if not self.settings.model_admin_token:
             raise RemoteClusterUnavailable("Configure MODEL_ADMIN_TOKEN before attaching a cluster")
@@ -170,8 +189,16 @@ class RemoteClusterProxyMiddleware:
 
     def should_forward(self, scope: Scope) -> bool:
         path = scope.get("path", "")
+        controller_local = (
+            path.startswith("/api/v1/controller/")
+            or path == "/api/v1/models/fit"
+            or path == "/api/v1/models/download"
+            or path == "/api/v1/models/import"
+            or path.startswith("/api/v1/downloads")
+        )
         return bool(
             self.settings.remote_cluster_url
+            and not controller_local
             and (
                 (path.startswith("/api/v1/") and not path.startswith("/api/v1/setup"))
                 or path == "/metrics"

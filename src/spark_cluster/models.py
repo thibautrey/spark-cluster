@@ -130,7 +130,15 @@ class ModelDownloadRequest(ModelFitRequest):
     allow_oversized: bool = False
 
 
-DownloadStatus = Literal["queued", "resolving", "downloading", "completed", "failed"]
+DownloadStatus = Literal[
+    "queued",
+    "resolving",
+    "downloading",
+    "preparing-transfer",
+    "distributing",
+    "completed",
+    "failed",
+]
 
 
 class DownloadJob(BaseModel):
@@ -141,13 +149,29 @@ class DownloadJob(BaseModel):
     total_bytes: int = 0
     downloaded_bytes: int = 0
     progress: float = Field(default=0, ge=0, le=100)
+    transfer_progress: float = Field(default=0, ge=0, le=100)
+    transferred_bytes: int = 0
     target_path: str
     staging_path: str
+    source: Literal["huggingface", "controller"] = "huggingface"
+    destination: Literal["local", "cluster"] = "local"
+    controller_url: str | None = None
+    controller_job_id: str | None = None
+    message: str = "Queued"
     error: str | None = None
     attempts: int = 0
     fit: ModelFitPlan
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class ControllerModelImportRequest(BaseModel):
+    job_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    repo_id: str = Field(min_length=1, max_length=200)
+    revision: str = Field(default="main", min_length=1, max_length=200)
+    controller_url: str
+    total_bytes: int = Field(ge=0)
+    fit: ModelFitPlan
 
 
 class LocalModel(BaseModel):
