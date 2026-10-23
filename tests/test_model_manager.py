@@ -571,3 +571,18 @@ def test_nvfp4_download_is_allowed_but_launch_is_blocked_on_ampere(tmp_path):
     assert plan.launch_supported is False
     assert plan.runtime_fits is False
     assert any("Blackwell" in item for item in plan.requirements)
+
+
+def test_discrete_gpu_reserve_allows_small_model_without_overstating_capacity(tmp_path):
+    settings = Settings(model_cache_path=tmp_path, active_hardware="nvidia-gpu",
+                        fallback_node_count=2, fallback_node_memory_gib=8)
+    request = ModelFitRequest(repo_id="acme/model", context_length=8192)
+    small = build_fit_plan(request, metadata(parameters=135_000_000, weight_gib=0.25), None, settings)
+    assert small.memory_fits
+    assert small.minimum_nodes == 1
+    assert small.runtime_overhead_gib == 2
+    large = build_fit_plan(request, metadata(weight_gib=12), None, settings)
+    assert not large.memory_fits
+    spark = build_fit_plan(request, metadata(parameters=135_000_000, weight_gib=0.25), None,
+                           settings.model_copy(update={"active_hardware": "dgx-spark"}))
+    assert not spark.memory_fits

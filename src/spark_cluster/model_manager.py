@@ -325,12 +325,13 @@ def _node_requirement(
     resident_weights: float,
     resident_kv: float,
     kv_heads: int = 0,
+    minimum_overhead: float = 8.0,
 ) -> tuple[bool, float, float, float]:
     weight_per_node = resident_weights / nodes
     kv_per_node = (
         resident_kv * math.ceil(kv_heads / nodes) / kv_heads if kv_heads else resident_kv / nodes
     )
-    overhead_per_node = max(8.0, weight_per_node * 0.08)
+    overhead_per_node = max(minimum_overhead, weight_per_node * 0.08)
     required_per_node = weight_per_node + kv_per_node + overhead_per_node
     selected = capacities[:nodes]
     fits = len(selected) == nodes and all(capacity >= required_per_node for capacity in selected)
@@ -340,16 +341,17 @@ def _node_requirement(
 
 
 def _minimum_nodes(
-    capacities: list[float], resident_weights: float, resident_kv: float, kv_heads: int = 0
+    capacities: list[float], resident_weights: float, resident_kv: float, kv_heads: int = 0,
+    minimum_overhead: float = 8.0,
 ) -> tuple[int, float, float, float]:
     for nodes in range(1, len(capacities) + 1):
         fits, overhead, total, headroom = _node_requirement(
-            capacities, nodes, resident_weights, resident_kv, kv_heads
+            capacities, nodes, resident_weights, resident_kv, kv_heads, minimum_overhead
         )
         if fits:
             return nodes, overhead, total, headroom
     _, overhead, total, headroom = _node_requirement(
-        capacities, len(capacities), resident_weights, resident_kv, kv_heads
+        capacities, len(capacities), resident_weights, resident_kv, kv_heads, minimum_overhead
     )
     return len(capacities) + 1, overhead, total, headroom
 
@@ -441,8 +443,10 @@ def build_fit_plan(
     engram_bytes = metadata.engram_bytes or metadata.external_artifacts_bytes
     engram_gib = engram_bytes / GIB
     complete_weights_gib = repository_weights_gib + metadata.external_artifacts_bytes / GIB
+    # Discrete GPUs need CUDA/engine workspace, without the Spark host-memory reserve.
+    minimum_overhead = 2.0 if settings.active_hardware == "nvidia-gpu" else 8.0
     full_minimum, full_overhead, full_total, full_headroom = _minimum_nodes(
-        node_capacities, complete_weights_gib, kv_cache_gib, kv_heads
+        node_capacities, complete_weights_gib, kv_cache_gib, kv_heads, minimum_overhead
     )
     memory_fits = full_minimum <= len(node_capacities)
 
@@ -493,7 +497,7 @@ def build_fit_plan(
     if is_deepseek_v41 and "flash-1017" in repo_lower and engram_bytes:
         resident_weights = max(0.0, complete_weights_gib - engram_gib)
         hybrid_minimum, hybrid_overhead, hybrid_total, hybrid_headroom = _minimum_nodes(
-            node_capacities, resident_weights, kv_cache_gib, kv_heads
+            node_capacities, resident_weights, kv_cache_gib, kv_heads, minimum_overhead
         )
         placement = "engram-nvme"
         runtime_fits = hybrid_minimum <= len(node_capacities)

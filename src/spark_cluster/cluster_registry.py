@@ -135,6 +135,7 @@ class ClusterRegistry:
         if cluster is None:
             self.settings.remote_cluster_url = None
             return
+        self.settings.active_hardware = cluster.hardware
         self.settings.cluster_name = cluster.name
         if cluster.kind == "remote-bridge":
             self.settings.remote_cluster_url = cluster.endpoint
