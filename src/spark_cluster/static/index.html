@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=compact-token-prompt-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=mobile-catalog-toolbar-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -164,9 +164,9 @@
           </section>
           <div class="catalog-toolbar">
             <label class="catalog-search"><span>⌕</span><input id="catalog-query" type="search" aria-label="Search Hugging Face models" placeholder="Search models or paste a repository ID…" autocomplete="off" /></label>
-            <label class="catalog-sort">Sort<select id="catalog-sort"><option value="spark">Recommended</option><option value="trendingScore">Trending</option><option value="downloads">Most downloaded</option><option value="likes">Most liked</option><option value="lastModified">Recently updated</option></select></label>
+            <label class="catalog-sort"><span class="sr-only">Sort models</span><select id="catalog-sort" aria-label="Sort models"><option value="spark">Recommended</option><option value="trendingScore">Trending</option><option value="downloads">Most downloaded</option><option value="likes">Most liked</option><option value="lastModified">Recently updated</option></select></label>
             <button id="catalog-filter-open" type="button" class="secondary catalog-tool-button">Filters <span id="catalog-filter-count" hidden>0</span></button>
-            <button id="catalog-manual" type="button" class="secondary catalog-tool-button">＋ Repository</button>
+            <button id="catalog-manual" type="button" class="secondary catalog-tool-button" aria-label="Add repository"><span class="catalog-manual-icon" aria-hidden="true">＋</span><span class="catalog-manual-label">Repository</span></button>
           </div>
           <div class="bottom-sheet catalog-filter-sheet" id="catalog-filter-sheet" hidden>
             <button class="bottom-sheet-backdrop" id="catalog-filter-backdrop" type="button" tabindex="-1" aria-label="Close model filters"></button>
