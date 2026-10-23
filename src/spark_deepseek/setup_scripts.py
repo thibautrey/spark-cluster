@@ -53,8 +53,7 @@ def registry_configuration(settings) -> str:
     if not settings.setup_image_repository.startswith(repository_prefix + "/"):
         raise SetupFailure("SETUP_IMAGE_REPOSITORY must belong to the configured LAN registry")
     registry = (
-        f'mirrors:\n  "{repository_prefix}":\n'
-        f"    endpoint:\n      - \"{endpoint.rstrip('/')}\"\n"
+        f'mirrors:\n  "{repository_prefix}":\n    endpoint:\n      - "{endpoint.rstrip("/")}"\n'
     )
     encoded = base64.b64encode(registry.encode()).decode()
     return (
