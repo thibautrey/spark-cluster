@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=mobile-model-actions-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=mobile-model-actions-v2" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -198,7 +198,6 @@
                 <button class="catalog-sheet-close" id="catalog-sheet-close" type="button" aria-label="Close model details">×</button>
               </header>
               <div class="catalog-sheet-body" id="catalog-sheet-body">
-                <div class="catalog-sheet-detail"><div id="catalog-detail" hidden></div></div>
                 <form class="model-form" id="model-form" hidden>
                   <div class="form-title"><span>↓</span><div><b>Download to controller</b><small>Nodes copy the model over the LAN.</small></div></div>
                   <label id="manual-repo-label" hidden>Repository ID<input id="repo-id" name="repo_id" placeholder="organization/model-name" required /></label>
@@ -211,6 +210,7 @@
                   <div class="fit-details" id="fit-details" hidden></div>
                   <div class="form-actions"><button class="secondary" id="check-fit" type="button">Check fit</button><button class="primary" id="download-model" type="submit" disabled>Download</button></div>
                 </form>
+                <div class="catalog-sheet-detail"><div id="catalog-detail" hidden></div></div>
               </div>
             </section>
           </div>
