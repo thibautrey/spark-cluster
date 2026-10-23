@@ -142,6 +142,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cluster_available = await cluster_connector.model_storage_available()
         available_gib = min(plan.storage_available_gib, cluster_available / 2**30)
         storage_fits = plan.storage_fits and plan.repository_bytes <= cluster_available
+        runtime_storage_bytes = plan.repository_bytes + plan.additional_artifacts_bytes
+        runtime_storage_fits = (
+            plan.runtime_storage_fits and runtime_storage_bytes <= cluster_available
+        )
         notes = list(plan.notes)
         notes.append(
             "Storage preflight uses the lower free-space value from the controller and cluster."
@@ -150,7 +154,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             update={
                 "storage_available_gib": available_gib,
                 "storage_fits": storage_fits,
-                "fits": plan.memory_fits and storage_fits,
+                "download_fits": storage_fits,
+                "runtime_storage_fits": runtime_storage_fits,
+                "fits": plan.runtime_fits and plan.launch_supported and runtime_storage_fits,
+                "fit_status": ("insufficient-storage" if not storage_fits else plan.fit_status),
                 "notes": notes,
             }
         )

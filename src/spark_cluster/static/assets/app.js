@@ -260,12 +260,13 @@ async function checkLaunchFit() {
   }
   const payload = launchPayload();
   try {
-    launchFit = await api('/api/v1/models/fit-local', {method: 'POST', body: JSON.stringify({repo_id: payload.model_id, bits_per_weight: payload.bits_per_weight, context_length: payload.context_length, concurrent_sequences: payload.concurrent_sequences})});
+    launchFit = await api('/api/v1/models/fit-local', {method: 'POST', body: JSON.stringify({repo_id: payload.model_id, bits_per_weight: payload.bits_per_weight, context_length: payload.context_length, concurrent_sequences: payload.concurrent_sequences, kv_cache_dtype: payload.kv_cache_dtype})});
     const requestedNodes = payload.tensor_parallel * payload.pipeline_parallel;
     const parallelFits = requestedNodes >= launchFit.minimum_nodes && requestedNodes <= launchFit.cluster_nodes;
-    const canLaunch = launchFit.memory_fits && parallelFits;
+    const canLaunch = launchFit.fits && parallelFits;
     $('launch-fit').className = `fit-result ${canLaunch ? 'fit' : 'no-fit'}`;
-    $('launch-fit').innerHTML = `<span class="fit-symbol">${canLaunch ? '✓' : '!'}</span><div><b>${canLaunch ? 'Ready to launch' : !launchFit.memory_fits ? 'Insufficient cluster memory' : 'Adjust runtime parallelism'}</b><small>${launchFit.total_required_gib.toFixed(1)} GiB required · ${launchFit.minimum_nodes} nodes minimum · ${requestedNodes} selected of ${launchFit.cluster_nodes} available · ${launchFit.headroom_gib.toFixed(1)} GiB headroom</small></div>`;
+    const blocker = !launchFit.runtime_storage_fits ? 'Missing runtime artifacts or storage' : !launchFit.runtime_fits ? 'No validated runtime placement' : !launchFit.launch_supported ? 'Specialized engine required' : 'Adjust runtime parallelism';
+    $('launch-fit').innerHTML = `<span class="fit-symbol">${canLaunch ? '✓' : '!'}</span><div><b>${canLaunch ? `Ready with ${escapeHtml(launchFit.placement_strategy.replaceAll('-', ' '))}` : blocker}</b><small>${launchFit.total_required_gib.toFixed(1)} GiB resident runtime · ${launchFit.minimum_nodes} nodes minimum · ${requestedNodes} selected of ${launchFit.cluster_nodes} available · ${launchFit.headroom_gib.toFixed(1)} GiB headroom</small></div>`;
     launchFit.parallel_fits = parallelFits;
     $('launch-model-button').disabled = !canLaunch || !payload.served_model_name;
   } catch (error) {
@@ -352,6 +353,7 @@ function fitPayload() {
     bits_per_weight: Number($('weight-bits').value),
     context_length: Number($('context-length').value),
     concurrent_sequences: Number($('concurrency').value),
+    kv_cache_dtype: $('fit-kv-dtype').value,
   };
 }
 
@@ -363,15 +365,39 @@ function authHeaders() {
 function renderFit(plan) {
   currentFit = plan;
   const result = $('fit-result');
-  result.className = `fit-result ${plan.fits ? 'fit' : 'no-fit'}`;
-  result.innerHTML = `<span class="fit-symbol">${plan.fits ? '✓' : '!'}</span><div><b>${plan.fits ? 'Fits this cluster' : 'Does not fit current capacity'}</b><small>${plan.weights_gib.toFixed(1)} GiB weights + ${plan.kv_cache_gib.toFixed(1)} GiB KV + ${plan.runtime_overhead_gib.toFixed(1)} GiB runtime = ${plan.total_required_gib.toFixed(1)} GiB · ${plan.minimum_nodes} node${plan.minimum_nodes === 1 ? '' : 's'} minimum · ${formatBytes(plan.repository_bytes)} download</small></div>`;
-  $('download-model').disabled = !plan.fits && !$('allow-oversized').checked;
+  const states = {
+    'full-memory': ['fit', '✓', 'Estimated fit in cluster memory'],
+    'hybrid-ready': ['hybrid', '↯', 'Estimated hybrid placement'],
+    'engine-required': ['warning', '↓', 'Download fits · specialized engine required'],
+    'download-only': ['warning', '↓', 'Download fits · runtime plan needs validation'],
+    'insufficient-storage': ['no-fit', '!', 'Not enough model storage'],
+  };
+  const [className, symbol, title] = states[plan.fit_status] || states['download-only'];
+  result.className = `fit-result ${className}`;
+  result.innerHTML = `<span class="fit-symbol">${symbol}</span><div><b>${title}</b><small>${escapeHtml(plan.detected_format)} · ${escapeHtml(plan.engine_recommendation)} · ${plan.minimum_nodes <= plan.cluster_nodes ? `${plan.minimum_nodes} node${plan.minimum_nodes === 1 ? '' : 's'} minimum` : `more than ${plan.cluster_nodes} available nodes`} · ${formatBytes(plan.repository_bytes)} repository</small></div>`;
+  const detail = $('fit-details');
+  const metrics = [
+    ['Resident weights', `${plan.resident_weights_gib.toFixed(1)} GiB`],
+    ['SSD/offloaded weights', `${plan.offloaded_weights_gib.toFixed(1)} GiB`],
+    ['Resident KV', `${plan.resident_kv_cache_gib.toFixed(1)} GiB`],
+    ['CPU/NVMe KV tier', `${plan.offloaded_kv_cache_gib.toFixed(1)} GiB`],
+    ['Runtime overhead', `${plan.runtime_overhead_gib.toFixed(1)} GiB`],
+    ['Runnable artifacts', `${plan.runtime_storage_required_gib.toFixed(1)} GiB`],
+  ];
+  const requirements = plan.requirements.length ? `<div class="fit-guidance"><b>Required</b>${plan.requirements.map(item => `<p>• ${escapeHtml(item)}</p>`).join('')}</div>` : '';
+  const tradeoffs = plan.tradeoffs.length ? `<div class="fit-guidance"><b>Tradeoffs · ${escapeHtml(plan.performance_impact)} impact</b>${plan.tradeoffs.map(item => `<p>• ${escapeHtml(item)}</p>`).join('')}</div>` : '';
+  const notes = plan.notes.length ? `<div class="fit-guidance muted"><b>Planner notes</b>${plan.notes.map(item => `<p>• ${escapeHtml(item)}</p>`).join('')}</div>` : '';
+  detail.innerHTML = `<div class="fit-strategy"><span>${escapeHtml(plan.placement_strategy.replaceAll('-', ' '))}</span><small>${plan.memory_fits ? 'Estimated memory fit' : plan.runtime_fits ? 'Estimated hybrid fit' : 'No validated runtime fit'} · ${plan.storage_fits ? `${plan.storage_available_gib.toFixed(0)} GiB storage free` : 'repository exceeds free storage'}${plan.ssd_required_gib_per_node ? ` · ${plan.ssd_required_gib_per_node.toFixed(1)} GiB local SSD per node` : ''}</small></div><div class="fit-metrics">${metrics.map(([label, value]) => `<span><small>${label}</small><b>${value}</b></span>`).join('')}</div>${requirements}${tradeoffs}${notes}`;
+  detail.hidden = false;
+  $('download-model').disabled = !plan.download_fits;
+  $('download-model').textContent = plan.runtime_fits ? 'Download model' : 'Download for later';
 }
 
 function renderFitError(message) {
   currentFit = null;
   $('fit-result').className = 'fit-result no-fit';
   $('fit-result').innerHTML = `<span class="fit-symbol">!</span><div><b>Fit check failed</b><small>${escapeHtml(message)}</small></div>`;
+  $('fit-details').hidden = true;
   $('download-model').disabled = true;
 }
 
@@ -406,17 +432,15 @@ $('copy-endpoint').addEventListener('click', async () => {
   setTimeout(() => { $('copy-endpoint').textContent = 'Copy'; }, 1200);
 });
 $('check-fit').addEventListener('click', checkFit);
-$('allow-oversized').addEventListener('change', () => {
-  $('download-model').disabled = !currentFit || (!currentFit.fits && !$('allow-oversized').checked);
-});
 $('model-form').addEventListener('input', event => {
-  if (['allow-oversized', 'admin-token'].includes(event.target.id)) return;
+  if (event.target.id === 'admin-token') return;
   ++fitRequestVersion;
   currentFit = null;
   $('check-fit').disabled = false;
   $('check-fit').textContent = 'Check fit';
   $('download-model').disabled = true;
   $('download-model').textContent = 'Download once';
+  $('fit-details').hidden = true;
 });
 $('model-form').addEventListener('submit', async event => {
   event.preventDefault();
@@ -425,7 +449,7 @@ $('model-form').addEventListener('submit', async event => {
   $('download-model').disabled = true;
   $('download-model').textContent = 'Queueing…';
   try {
-    await api('/api/v1/models/download', {method: 'POST', headers: authHeaders(), body: JSON.stringify({...fitPayload(), allow_oversized: $('allow-oversized').checked})});
+    await api('/api/v1/models/download', {method: 'POST', headers: authHeaders(), body: JSON.stringify({...fitPayload(), allow_oversized: false})});
     $('download-model').textContent = 'Queued';
     await refreshLibrary();
   } catch (error) {
@@ -461,11 +485,11 @@ $('launch-workload').addEventListener('change', async () => {
   checkLaunchFit();
 });
 $('served-model-name').addEventListener('input', () => {
-  $('launch-model-button').disabled = !launchFit?.memory_fits || !launchFit?.parallel_fits || !$('served-model-name').value.trim();
+  $('launch-model-button').disabled = !launchFit?.fits || !launchFit?.parallel_fits || !$('served-model-name').value.trim();
 });
 $('launch-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if (!launchFit?.memory_fits || !launchFit?.parallel_fits) return;
+  if (!launchFit?.fits || !launchFit?.parallel_fits) return;
   $('launch-model-button').disabled = true;
   $('launch-model-button').textContent = 'Launching…';
   try {

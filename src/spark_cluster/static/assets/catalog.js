@@ -69,9 +69,9 @@ function resetModelFit() {
   $('check-fit').textContent = 'Check fit';
   $('download-model').disabled = true;
   $('download-model').textContent = 'Download once';
-  $('allow-oversized').checked = false;
   $('fit-result').className = 'fit-result neutral';
-  $('fit-result').innerHTML = '<span class="fit-symbol">?</span><div><b>Check capacity before downloading</b><small>Weights, context, runtime memory, and free storage.</small></div>';
+  $('fit-result').innerHTML = '<span class="fit-symbol">?</span><div><b>Run an intelligent fit check</b><small>Architecture, memory tiers, engine support, and storage.</small></div>';
+  $('fit-details').hidden = true;
 }
 
 async function inspectCatalogModel(repo, revision = 'main') {

@@ -331,11 +331,12 @@ class RuntimeDeploymentService:
                 repo_id=request.model_id,
                 revision=local.revision or "main",
                 bits_per_weight=request.bits_per_weight,
+                kv_cache_dtype=request.kv_cache_dtype,
                 context_length=request.context_length,
                 concurrent_sequences=request.concurrent_sequences,
             )
         )
-        if not fit.memory_fits:
+        if not fit.fits:
             raise ModelDoesNotFit(fit)
         requested_nodes = request.tensor_parallel * request.pipeline_parallel
         if requested_nodes < fit.minimum_nodes or requested_nodes > fit.cluster_nodes:

@@ -97,6 +97,29 @@ These recommendations cite the [official NVIDIA scaling results](https://develop
 the [measured DeepSeek V4.1 Spark recipes](https://github.com/tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark),
 and the [GLM 5.3 Flash optimization campaign](https://github.com/chishiki37/glm-5.3-flash-nvfp4-dgx-spark).
 
+The download fit check treats storage, physical placement, and launcher support as separate gates.
+It uses the repository's detected quantization and actual weight files instead of pretending the
+precision selector converts a checkpoint. It evaluates per-rank weight, KV, and runtime overhead,
+then reports one of these placements:
+
+- **Full memory:** weights and active KV fit on every selected rank after tensor sharding.
+- **Engram on local NVMe:** DeepSeek V4.1 keeps dense and expert weights resident while sparse Engram
+  rows stay on each Spark's SSD. Quantized packs also account for the two required base-model Engram
+  shards that are not present in the selected repository.
+- **Tiered KV:** LMCache stores cold prefixes for reuse. The planner never assumes that prefix
+  caching removes active decode KV; it recommends reducing context/concurrency or validating an
+  active-offload engine before claiming a runtime fit.
+- **MoE expert offload:** recognized as an engine-specific option. The planner does not claim that
+  sparse activation alone reduces resident weights, and it requires a measured compatible engine.
+- **GGUF mmap or another runtime:** downloads are permitted when storage fits, while the dashboard
+  identifies the required engine and warns when SSD paging can substantially reduce decode speed.
+
+A repository can therefore be downloaded even when no validated runtime placement currently fits.
+Insufficient repository storage remains a hard block. Launching stays stricter: it requires a
+capacity fit, sufficient artifact storage, and a supported engine. Hybrid Engram plans show local
+NVMe requirements and remain gated on specialized engine integration. Estimates are not throughput
+guarantees; CPU and GPU memory on DGX Spark share the same physical RAM.
+
 ## Run the dashboard
 
 ### Docker Compose

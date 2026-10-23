@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 import os
 import re
 import shutil
@@ -31,6 +32,7 @@ from .store import SnapshotStore
 GIB = 2**30
 WEIGHT_SUFFIXES = (".safetensors", ".bin", ".pt", ".pth", ".gguf")
 REPO_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+DEEPSEEK_V41_ENGRAM_BYTES = 203_073_077_576
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,13 @@ class RepositoryMetadata:
     parameter_count: int | None
     architecture: str | None
     config: dict[str, Any]
+    files: tuple[tuple[str, int], ...] = ()
+    tags: tuple[str, ...] = ()
+    library_name: str | None = None
+    pipeline_tag: str | None = None
+    engram_bytes: int = 0
+    external_artifacts_bytes: int = 0
+    external_artifacts: tuple[str, ...] = ()
 
 
 def safe_repo_parts(repo_id: str) -> tuple[str, ...]:
@@ -69,6 +78,13 @@ class HuggingFaceCatalog:
             repo_id, revision=revision, files_metadata=True, token=self.token
         )
         siblings = info.siblings or []
+        files = tuple(
+            (
+                str(getattr(item, "rfilename", "")),
+                int(getattr(item, "size", 0) or 0),
+            )
+            for item in siblings
+        )
         repository_bytes = sum(int(getattr(item, "size", 0) or 0) for item in siblings)
         weight_bytes = sum(
             int(getattr(item, "size", 0) or 0)
@@ -102,6 +118,55 @@ class HuggingFaceCatalog:
         elif isinstance(safetensors, dict) and safetensors.get("total"):
             parameter_count = int(safetensors["total"])
 
+        tags = tuple(str(tag) for tag in (getattr(info, "tags", None) or []))
+        model_type = str(config.get("model_type") or "")
+        text_config = config.get("text_config")
+        if isinstance(text_config, dict):
+            model_type = str(text_config.get("model_type") or model_type)
+        is_deepseek_v41 = model_type == "deepseek_v41" or "deepseek-v4.1" in repo_id.lower()
+        engram_files = tuple(
+            (name, size)
+            for name, size in files
+            if re.search(r"model-0004[78]-of-00048\.safetensors$", name)
+        )
+        engram_bytes = sum(size for _, size in engram_files)
+        external_artifacts_bytes = 0
+        external_artifacts: tuple[str, ...] = ()
+        if is_deepseek_v41 and "flash-1017" in repo_id.lower() and not engram_bytes:
+            base_model = next(
+                (
+                    tag.removeprefix("base_model:")
+                    for tag in tags
+                    if tag.startswith("base_model:") and not tag.startswith("base_model:quantized:")
+                ),
+                "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+            )
+            try:
+                base_info = self.api.model_info(
+                    base_model, revision="main", files_metadata=True, token=self.token
+                )
+                base_files = tuple(
+                    (
+                        str(getattr(item, "rfilename", "")),
+                        int(getattr(item, "size", 0) or 0),
+                    )
+                    for item in (base_info.siblings or [])
+                    if re.search(
+                        r"model-0004[78]-of-00048\.safetensors$",
+                        str(getattr(item, "rfilename", "")),
+                    )
+                )
+                external_artifacts_bytes = sum(size for _, size in base_files)
+                if not external_artifacts_bytes:
+                    raise ValueError("Base Engram shard metadata unavailable")
+                external_artifacts = tuple(f"{base_model}/{name}" for name, _ in base_files)
+            except Exception:
+                external_artifacts_bytes = DEEPSEEK_V41_ENGRAM_BYTES
+                external_artifacts = (
+                    f"{base_model}/model-00047-of-00048.safetensors",
+                    f"{base_model}/model-00048-of-00048.safetensors",
+                )
+
         return RepositoryMetadata(
             repo_id=repo_id,
             revision=revision,
@@ -110,6 +175,13 @@ class HuggingFaceCatalog:
             parameter_count=parameter_count,
             architecture=architecture,
             config=config,
+            files=files,
+            tags=tags,
+            library_name=getattr(info, "library_name", None),
+            pipeline_tag=getattr(info, "pipeline_tag", None),
+            engram_bytes=engram_bytes,
+            external_artifacts_bytes=external_artifacts_bytes,
+            external_artifacts=external_artifacts,
         )
 
     def download(self, repo_id: str, revision: str, target: Path) -> None:
@@ -122,25 +194,158 @@ class HuggingFaceCatalog:
         )
 
 
-def _kv_bytes_per_token(config: dict[str, Any]) -> tuple[float, bool]:
-    layers = int(config.get("num_hidden_layers") or config.get("n_layer") or 0)
+def _model_config(config: dict[str, Any]) -> dict[str, Any]:
+    text_config = config.get("text_config")
+    return text_config if isinstance(text_config, dict) else config
+
+
+def _kv_bytes_per_token(config: dict[str, Any], dtype_bytes: int = 2) -> tuple[float, bool]:
+    model = _model_config(config)
+    layers = int(model.get("num_hidden_layers") or model.get("n_layer") or 0)
     if not layers:
         return 0, False
-    dtype_bytes = 2
-    kv_lora_rank = int(config.get("kv_lora_rank") or 0)
-    rope_dim = int(config.get("qk_rope_head_dim") or 0)
+    kv_lora_rank = int(model.get("kv_lora_rank") or 0)
+    rope_dim = int(model.get("qk_rope_head_dim") or 0)
     if kv_lora_rank:
         return layers * (kv_lora_rank + rope_dim) * dtype_bytes, True
 
-    attention_heads = int(config.get("num_attention_heads") or config.get("n_head") or 0)
-    kv_heads = int(config.get("num_key_value_heads") or attention_heads)
-    hidden_size = int(config.get("hidden_size") or config.get("n_embd") or 0)
+    attention_heads = int(model.get("num_attention_heads") or model.get("n_head") or 0)
+    kv_heads = int(model.get("num_key_value_heads") or attention_heads)
+    hidden_size = int(model.get("hidden_size") or model.get("n_embd") or 0)
     head_dim = int(
-        config.get("head_dim") or (hidden_size // attention_heads if attention_heads else 0)
+        model.get("head_dim") or (hidden_size // attention_heads if attention_heads else 0)
     )
     if not kv_heads or not head_dim:
         return 0, False
     return layers * 2 * kv_heads * head_dim * dtype_bytes, True
+
+
+def _quantization(metadata: RepositoryMetadata) -> tuple[str, float | None]:
+    repo = metadata.repo_id.lower()
+    names = " ".join(name.lower() for name, _ in metadata.files)
+    tags = " ".join(tag.lower() for tag in metadata.tags)
+    combined = f"{repo} {names} {tags}"
+    quant = metadata.config.get("quantization_config")
+    if not isinstance(quant, dict):
+        quant = _model_config(metadata.config).get("quantization_config")
+    quant = quant if isinstance(quant, dict) else {}
+    method = str(quant.get("quant_method") or quant.get("format") or "").lower()
+
+    if method == "exl3" or "exl3" in combined:
+        bits = float(quant.get("avg_bits") or 0) or None
+        if bits is None:
+            match = re.search(r"(\d+(?:\.\d+)?)\s*bpw", combined)
+            bits = float(match.group(1)) if match else None
+        return (f"EXL3 {bits:g} bpw" if bits else "EXL3", bits)
+    if "nvfp4" in combined or "nvfp4" in method:
+        return "NVFP4", 4
+    if any(token in combined for token in ("gptq", "awq")):
+        bits = float(quant.get("bits") or 4)
+        return ("GPTQ" if "gptq" in combined else "AWQ"), bits
+    if "fp8" in combined or method == "fp8":
+        return "FP8", 8
+    gguf_files = [name for name, _ in metadata.files if name.lower().endswith(".gguf")]
+    if gguf_files:
+        matches = {
+            int(value)
+            for name in gguf_files
+            for value in re.findall(r"[-_.]q([2-8])", name.lower())
+        }
+        if len(matches) == 1:
+            bits = float(next(iter(matches)))
+            return f"GGUF Q{int(bits)}", bits
+        return (f"GGUF repository ({len(gguf_files)} variants)", None)
+    if any(token in combined for token in ("int4", "4-bit", "4bit", "fp4")):
+        return "4-bit quantized", 4
+    if any(token in combined for token in ("int8", "8-bit", "8bit")):
+        return "8-bit quantized", 8
+
+    dtype = str(
+        _model_config(metadata.config).get("dtype")
+        or _model_config(metadata.config).get("torch_dtype")
+        or metadata.config.get("dtype")
+        or metadata.config.get("torch_dtype")
+        or ""
+    ).lower()
+    if "float32" in dtype:
+        return "FP32", 32
+    if "float16" in dtype or "bfloat16" in dtype:
+        return "BF16 / FP16", 16
+    if metadata.parameter_count and metadata.weight_bytes:
+        effective = metadata.weight_bytes * 8 / metadata.parameter_count
+        if 1.5 <= effective <= 32:
+            return f"Approximately {effective:.1f} bpw", round(effective, 2)
+    return "Repository weights", None
+
+
+def _runtime_weight_bytes(metadata: RepositoryMetadata) -> tuple[int, list[str]]:
+    notes: list[str] = []
+    groups: dict[str, int] = {}
+    for name, size in metadata.files:
+        suffix = Path(name).suffix.lower()
+        if suffix in WEIGHT_SUFFIXES:
+            groups[suffix] = groups.get(suffix, 0) + size
+    if not groups:
+        return metadata.weight_bytes, notes
+    if len(groups) > 1:
+        selected_suffix = next(
+            suffix
+            for suffix in (".safetensors", ".bin", ".gguf", ".pt", ".pth")
+            if suffix in groups
+        )
+        selected_bytes = groups[selected_suffix]
+        notes.append(
+            "The repository contains multiple weight formats. Runtime memory prioritizes "
+            f"the primary format ({selected_suffix}); the download still includes every file."
+        )
+        return selected_bytes, notes
+    suffix, total = next(iter(groups.items()))
+    if suffix == ".gguf":
+        files = [(name, size) for name, size in metadata.files if name.lower().endswith(".gguf")]
+        unsharded = [item for item in files if not re.search(r"-\d{5}-of-\d{5}\.gguf$", item[0])]
+        if len(unsharded) > 1:
+            selected = min(unsharded, key=lambda item: item[1])
+            notes.append(
+                "This GGUF repository contains several quantization variants. Runtime memory uses "
+                f"the smallest file ({selected[0]}); downloading currently retrieves all variants."
+            )
+            return selected[1], notes
+    return total, notes
+
+
+def _node_requirement(
+    capacities: list[float],
+    nodes: int,
+    resident_weights: float,
+    resident_kv: float,
+    kv_heads: int = 0,
+) -> tuple[bool, float, float, float]:
+    weight_per_node = resident_weights / nodes
+    kv_per_node = (
+        resident_kv * math.ceil(kv_heads / nodes) / kv_heads if kv_heads else resident_kv / nodes
+    )
+    overhead_per_node = max(8.0, weight_per_node * 0.08)
+    required_per_node = weight_per_node + kv_per_node + overhead_per_node
+    selected = capacities[:nodes]
+    fits = len(selected) == nodes and all(capacity >= required_per_node for capacity in selected)
+    total = resident_weights + kv_per_node * nodes + overhead_per_node * nodes
+    headroom = sum(selected) - total
+    return fits, overhead_per_node * nodes, total, headroom
+
+
+def _minimum_nodes(
+    capacities: list[float], resident_weights: float, resident_kv: float, kv_heads: int = 0
+) -> tuple[int, float, float, float]:
+    for nodes in range(1, len(capacities) + 1):
+        fits, overhead, total, headroom = _node_requirement(
+            capacities, nodes, resident_weights, resident_kv, kv_heads
+        )
+        if fits:
+            return nodes, overhead, total, headroom
+    _, overhead, total, headroom = _node_requirement(
+        capacities, len(capacities), resident_weights, resident_kv, kv_heads
+    )
+    return len(capacities) + 1, overhead, total, headroom
 
 
 def build_fit_plan(
@@ -148,61 +353,283 @@ def build_fit_plan(
     metadata: RepositoryMetadata,
     snapshot: ClusterSnapshot | None,
     settings: Settings,
+    cached_repository_bytes: int = 0,
 ) -> ModelFitPlan:
-    if snapshot and snapshot.nodes:
-        node_capacities = [
-            node.memory.total_gib * settings.model_usable_memory_fraction for node in snapshot.nodes
-        ]
+    available_nodes = (
+        [node for node in snapshot.nodes if node.status != "offline"] if snapshot else []
+    )
+    if available_nodes:
+        node_capacities = sorted(
+            (
+                node.memory.total_gib * settings.model_usable_memory_fraction
+                for node in available_nodes
+            ),
+            reverse=True,
+        )
     else:
         node_capacities = [
             settings.fallback_node_memory_gib * settings.model_usable_memory_fraction
         ] * settings.fallback_node_count
-    node_capacities.sort(reverse=True)
 
-    if metadata.parameter_count:
-        weights_gib = metadata.parameter_count * request.bits_per_weight / 8 / GIB
+    runtime_weight_bytes, notes = _runtime_weight_bytes(metadata)
+    if not available_nodes:
+        notes.append("Capacity uses configured fallback nodes, not measured available hardware.")
+    notes.append(
+        "Memory is a capacity estimate with a runtime reserve, not a speed guarantee. "
+        "On unified-memory systems CPU offload shares the same physical RAM; "
+        "it is not extra capacity."
+    )
+    detected_format, detected_bits = _quantization(metadata)
+    if runtime_weight_bytes:
+        repository_weights_gib = runtime_weight_bytes / GIB
+        weight_confidence = "repository"
+    elif metadata.parameter_count:
+        repository_weights_gib = (
+            metadata.parameter_count * (detected_bits or request.bits_per_weight) / 8 / GIB
+        )
         weight_confidence = "parameters"
     else:
-        weights_gib = metadata.weight_bytes / GIB
+        repository_weights_gib = metadata.weight_bytes / GIB
         weight_confidence = "repository"
 
-    bytes_per_token, architecture_known = _kv_bytes_per_token(metadata.config)
-    notes: list[str] = []
+    model_config = _model_config(metadata.config)
+    model_type = str(model_config.get("model_type") or metadata.config.get("model_type") or "")
+    repo_lower = metadata.repo_id.lower()
+    tags = {tag.lower() for tag in metadata.tags}
+    is_deepseek_v41 = model_type == "deepseek_v41" or "deepseek-v4.1" in repo_lower
+    is_glm53 = model_type == "glm5_next" or "glm-5.3" in repo_lower
+    is_moe = bool(
+        model_config.get("n_routed_experts") or model_config.get("num_experts") or "moe" in tags
+    )
+    library = str(metadata.library_name or "").lower()
+    pipeline = str(metadata.pipeline_tag or "").lower()
+
+    kv_dtype = request.kv_cache_dtype
+    if kv_dtype == "auto":
+        kv_dtype = "fp8_e4m3" if is_glm53 else "bf16"
+    kv_dtype_bytes = 1 if kv_dtype == "fp8_e4m3" else 2
+    bytes_per_token, architecture_known = _kv_bytes_per_token(metadata.config, kv_dtype_bytes)
     if architecture_known:
         kv_cache_gib = bytes_per_token * request.context_length * request.concurrent_sequences / GIB
         confidence = "architecture"
     else:
-        kv_cache_gib = (
-            0.00025 * 1_000_000_000 * request.context_length * request.concurrent_sequences / GIB
-        )
+        kv_cache_gib = 250_000 * request.context_length * request.concurrent_sequences / GIB
         confidence = weight_confidence
         notes.append(
-            "KV memory uses the conservative generic fallback because "
-            "the architecture metadata is incomplete."
+            "KV memory uses a conservative fallback because architecture metadata is incomplete."
         )
 
-    runtime_overhead_gib = weights_gib * 0.08 + 8
-    total_required_gib = weights_gib + kv_cache_gib + runtime_overhead_gib
-    running = 0.0
-    minimum_nodes = len(node_capacities) + 1
-    for index, capacity in enumerate(node_capacities, start=1):
-        running += capacity
-        if running >= total_required_gib:
-            minimum_nodes = index
-            break
+    kv_heads = (
+        1
+        if model_config.get("kv_lora_rank")
+        else int(
+            model_config.get("num_key_value_heads") or model_config.get("num_attention_heads") or 0
+        )
+    )
+    notes.append(
+        "KV uses full-context attention as an upper bound, with GQA/MQA head replication "
+        "and replicated MLA latent cache under tensor parallelism. Sliding-window, recurrent "
+        "or compressed attention may use less with a verified engine. Pipeline parallelism "
+        "can change the placement."
+    )
+    engram_bytes = metadata.engram_bytes or metadata.external_artifacts_bytes
+    engram_gib = engram_bytes / GIB
+    complete_weights_gib = repository_weights_gib + metadata.external_artifacts_bytes / GIB
+    full_minimum, full_overhead, full_total, full_headroom = _minimum_nodes(
+        node_capacities, complete_weights_gib, kv_cache_gib, kv_heads
+    )
+    memory_fits = full_minimum <= len(node_capacities)
 
-    usable_cluster_gib = sum(node_capacities)
-    memory_fits = total_required_gib <= usable_cluster_gib
-    settings.model_cache_path.mkdir(parents=True, exist_ok=True)
-    storage_available_gib = shutil.disk_usage(settings.model_cache_path).free / GIB
-    storage_required_gib = metadata.repository_bytes / GIB
-    storage_fits = storage_required_gib <= storage_available_gib
-    if not memory_fits:
+    placement = "full-memory"
+    runtime_fits = memory_fits
+    launch_supported = True
+    engine = "vLLM V1"
+    resident_weights = complete_weights_gib
+    offloaded_weights = 0.0
+    resident_kv = kv_cache_gib
+    offloaded_kv = 0.0
+    ssd_per_node = 0.0
+    minimum_nodes = full_minimum
+    runtime_overhead = full_overhead
+    total_required = full_total
+    headroom = full_headroom
+    performance_impact = "none"
+    requirements: list[str] = []
+    tradeoffs: list[str] = []
+
+    unsupported_library = library in {"mlx", "transformers.js", "litert-lm", "diffusers"}
+    unsupported_pipeline = bool(pipeline) and pipeline not in {
+        "text-generation",
+        "image-text-to-text",
+        "conversational",
+    }
+    if detected_format.startswith("GGUF"):
+        launch_supported = False
+        engine = "llama.cpp with GGUF mmap"
+        if not memory_fits:
+            placement = "mmap"
+            runtime_fits = False
+            performance_impact = "high"
+            tradeoffs.append(
+                "SSD-backed mmap can start a model larger than memory, but sustained page "
+                "faults can severely reduce decode speed. Treat this as compatibility mode, "
+                "not a fast path."
+            )
+        requirements.append("Select one GGUF quantization file and use a llama.cpp runtime.")
+    elif unsupported_library or unsupported_pipeline:
+        launch_supported = False
+        engine = f"A runtime compatible with {metadata.library_name or metadata.pipeline_tag}"
+        placement = "unsupported" if not memory_fits else "full-memory"
+        requirements.append(
+            "The current vLLM launcher does not support this repository's library or task."
+        )
+
+    if is_deepseek_v41 and "flash-1017" in repo_lower and engram_bytes:
+        resident_weights = max(0.0, complete_weights_gib - engram_gib)
+        hybrid_minimum, hybrid_overhead, hybrid_total, hybrid_headroom = _minimum_nodes(
+            node_capacities, resident_weights, kv_cache_gib, kv_heads
+        )
+        placement = "engram-nvme"
+        runtime_fits = hybrid_minimum <= len(node_capacities)
+        launch_supported = False
+        engine = "TensorFold DeepSeek V4.1 lane with disk-backed Engram"
+        offloaded_weights = engram_gib
+        resident_kv = kv_cache_gib
+        minimum_nodes = hybrid_minimum
+        runtime_overhead = hybrid_overhead
+        total_required = hybrid_total
+        headroom = hybrid_headroom
+        selected_nodes = min(hybrid_minimum, len(node_capacities))
+        ssd_per_node = engram_gib / max(1, selected_nodes)
+        performance_impact = "low"
+        requirements.extend(
+            [
+                "Place each rank's sparse Engram rows on node-local NVMe, not on "
+                "management Ethernet.",
+                "Use the pinned TensorFold/EXL3 or model-specific vLLM lane and verify "
+                "the Engram row index.",
+            ]
+        )
+        if metadata.external_artifacts:
+            requirements.append(
+                "Fetch the two Engram shards from the base DeepSeek V4.1 checkpoint in addition "
+                "to this repository."
+            )
+        tradeoffs.append(
+            "Sparse Engram lookup can avoid full table residency with limited overhead in the "
+            "referenced recipe. Throughput depends on local NVMe latency, layout and engine. "
+            "Preparation and cold reads add latency. Node SSD capacity is not measured here."
+        )
         notes.append(
-            "The selected context and concurrency exceed the cluster's usable memory envelope."
+            f"Engram placement removes about {engram_gib:.1f} GiB from resident model memory."
         )
+
+    if not runtime_fits and launch_supported and placement == "full-memory" and kv_cache_gib:
+        weights_fit = _minimum_nodes(node_capacities, complete_weights_gib, 0)[0]
+        if weights_fit <= len(node_capacities):
+            placement = "kv-offload"
+            engine = "vLLM with a smaller active context; LMCache for prefix reuse"
+            performance_impact = "unknown"
+            requirements.append(
+                "Reduce active context or concurrency, or validate a runtime with active KV "
+                "offload. LMCache prefix storage alone does not shrink active decode KV."
+            )
+            tradeoffs.append(
+                "Cold prefixes can be stored on CPU/NVMe and restored for reuse. All KV needed "
+                "by active full-attention sequences must still be accessible during decoding."
+            )
+
+    if is_moe and not runtime_fits and placement in {"full-memory", "kv-offload"}:
+        placement = "expert-offload"
+        engine = "Model-specific expert-offload runtime"
+        experts = int(model_config.get("n_routed_experts") or model_config.get("num_experts") or 0)
+        active = int(model_config.get("num_experts_per_tok") or 0)
+        ratio = active / experts if experts and active else 0
+        detail = f" Only about {ratio:.1%} of experts are active per token." if ratio else ""
+        notes.append(
+            "This is a mixture-of-experts model."
+            + detail
+            + " Inactive experts still consume memory unless the selected engine explicitly "
+            "offloads them."
+        )
+        requirements.append(
+            "Choose and benchmark an engine with expert offload or expert parallelism for "
+            "this exact architecture."
+        )
+        tradeoffs.append(
+            "CPU or SSD expert fetches can reduce resident memory but may become the "
+            "decode bottleneck."
+        )
+        performance_impact = "unknown"
+
+    settings.model_cache_path.mkdir(parents=True, exist_ok=True)
+    storage_available_gib = (
+        shutil.disk_usage(settings.model_cache_path).free
+        + min(cached_repository_bytes, metadata.repository_bytes)
+    ) / GIB
+    repository_storage_gib = metadata.repository_bytes / GIB
+    runtime_storage_required_gib = (
+        metadata.repository_bytes + metadata.external_artifacts_bytes
+    ) / GIB
+    storage_fits = repository_storage_gib <= storage_available_gib
+    runtime_storage_fits = runtime_storage_required_gib <= storage_available_gib
+    download_fits = storage_fits
+
     if not storage_fits:
-        notes.append("The model repository is larger than the free model-cache storage.")
+        notes.append("The selected repository is larger than free controller model storage.")
+    elif not runtime_storage_fits:
+        notes.append(
+            "The repository fits, but the complete runnable artifact set needs more storage."
+        )
+    if not memory_fits and placement == "full-memory":
+        notes.append("The complete model and KV cache exceed the in-memory cluster envelope.")
+    if detected_bits and abs(detected_bits - request.bits_per_weight) >= 1:
+        notes.append(
+            f"The repository appears to be {detected_format}; selecting "
+            f"{request.bits_per_weight:g}-bit does not convert the downloaded weights."
+        )
+
+    if not available_nodes and snapshot and snapshot.nodes:
+        runtime_fits = False
+        requirements.append(
+            "Bring cluster nodes online before launching; all reported nodes are offline."
+        )
+    if not memory_fits and kv_cache_gib and complete_weights_gib:
+        low, high = 0, request.context_length
+        while low < high:
+            middle = (low + high + 1) // 2
+            required = _minimum_nodes(
+                node_capacities,
+                complete_weights_gib,
+                kv_cache_gib * middle / request.context_length,
+                kv_heads,
+            )[0]
+            if required <= len(node_capacities):
+                low = middle
+            else:
+                high = middle - 1
+        if low:
+            notes.append(
+                f"Alternative full-memory plan: at most about {low:,} tokens per sequence "
+                f"at concurrency {request.concurrent_sequences}, at this KV precision."
+            )
+    if not runtime_weight_bytes and not metadata.parameter_count:
+        runtime_fits = False
+        requirements.append("Weight sizes and parameter count are unknown; inspect the checkpoint.")
+    if detected_format.startswith("EXL3"):
+        launch_supported = False
+        requirements.append(
+            "EXL3 requires its compatible engine; the standard vLLM launcher cannot load it."
+        )
+    if not download_fits:
+        fit_status = "insufficient-storage"
+    elif runtime_fits and launch_supported and runtime_storage_fits:
+        fit_status = "full-memory" if placement == "full-memory" else "hybrid-ready"
+    elif runtime_fits and not launch_supported:
+        fit_status = "engine-required"
+    else:
+        fit_status = "download-only"
+    fits = runtime_fits and launch_supported and runtime_storage_fits
 
     return ModelFitPlan(
         repo_id=request.repo_id,
@@ -211,24 +638,46 @@ def build_fit_plan(
         parameter_count=metadata.parameter_count,
         repository_bytes=metadata.repository_bytes,
         weight_bytes=metadata.weight_bytes,
-        weights_gib=round(weights_gib, 2),
+        weights_gib=round(complete_weights_gib, 2),
         kv_cache_gib=round(kv_cache_gib, 2),
-        runtime_overhead_gib=round(runtime_overhead_gib, 2),
-        total_required_gib=round(total_required_gib, 2),
+        runtime_overhead_gib=round(runtime_overhead, 2),
+        total_required_gib=round(total_required, 2),
         cluster_nodes=len(node_capacities),
         usable_per_node_gib=round(sum(node_capacities) / len(node_capacities), 2),
-        usable_cluster_gib=round(usable_cluster_gib, 2),
+        usable_cluster_gib=round(sum(node_capacities), 2),
         minimum_nodes=minimum_nodes,
-        headroom_gib=round(usable_cluster_gib - total_required_gib, 2),
+        headroom_gib=round(headroom, 2),
         memory_fits=memory_fits,
         storage_available_gib=round(storage_available_gib, 2),
         storage_fits=storage_fits,
-        fits=memory_fits and storage_fits,
+        fits=fits,
         confidence=confidence,
         notes=notes,
         bits_per_weight=request.bits_per_weight,
         context_length=request.context_length,
         concurrent_sequences=request.concurrent_sequences,
+        kv_cache_dtype=kv_dtype,
+        runtime_fits=runtime_fits,
+        download_fits=download_fits,
+        launch_supported=launch_supported,
+        runtime_storage_fits=runtime_storage_fits,
+        fit_status=fit_status,
+        placement_strategy=placement,
+        engine_recommendation=engine,
+        detected_format=detected_format,
+        detected_bits_per_weight=detected_bits,
+        library_name=metadata.library_name,
+        pipeline_tag=metadata.pipeline_tag,
+        resident_weights_gib=round(resident_weights, 2),
+        offloaded_weights_gib=round(offloaded_weights, 2),
+        resident_kv_cache_gib=round(resident_kv, 2),
+        offloaded_kv_cache_gib=round(offloaded_kv, 2),
+        ssd_required_gib_per_node=round(ssd_per_node, 2),
+        additional_artifacts_bytes=metadata.external_artifacts_bytes,
+        runtime_storage_required_gib=round(runtime_storage_required_gib, 2),
+        performance_impact=performance_impact,
+        requirements=requirements,
+        tradeoffs=tradeoffs,
     )
 
 
@@ -286,6 +735,11 @@ class ModelManager:
             previous = ModelFitPlan.model_validate(manifest["fit"])
             config_path = model_path / "config.json"
             config = json.loads(config_path.read_text()) if config_path.exists() else {}
+            files = tuple(
+                (str(path.relative_to(model_path)), path.stat().st_size)
+                for path in model_path.rglob("*")
+                if path.is_file() and path.name != ".spark-cluster.json"
+            )
             return RepositoryMetadata(
                 repo_id=request.repo_id,
                 revision=request.revision,
@@ -294,11 +748,28 @@ class ModelManager:
                 parameter_count=previous.parameter_count,
                 architecture=previous.architecture,
                 config=config,
+                files=files,
+                library_name=previous.library_name,
+                pipeline_tag=previous.pipeline_tag,
+                engram_bytes=(
+                    int(previous.offloaded_weights_gib * GIB)
+                    if not previous.additional_artifacts_bytes
+                    else 0
+                ),
+                external_artifacts_bytes=previous.additional_artifacts_bytes,
+                external_artifacts=("base Engram shards (see original repository metadata)",)
+                if previous.additional_artifacts_bytes
+                else (),
             )
 
         metadata = await asyncio.to_thread(local_metadata)
         return await asyncio.to_thread(
-            build_fit_plan, request, metadata, self.runtime.latest, self.settings
+            build_fit_plan,
+            request,
+            metadata,
+            self.runtime.latest,
+            self.settings,
+            directory_size(model_path),
         )
 
     async def managed_model(self, model_id: str) -> LocalModel | None:
@@ -316,7 +787,7 @@ class ModelManager:
         fit_plan: ModelFitPlan | None = None,
     ) -> DownloadJob:
         fit = fit_plan or await self.fit(request)
-        if not fit.fits and not request.allow_oversized:
+        if not fit.download_fits:
             raise ModelDoesNotFit(fit)
         parts = safe_repo_parts(request.repo_id)
         target = self.settings.model_cache_path.joinpath(*parts)

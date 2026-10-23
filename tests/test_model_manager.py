@@ -17,12 +17,16 @@ from spark_cluster.simulator import ClusterSimulator
 from spark_cluster.store import SnapshotStore
 
 
-def metadata(parameters: int = 70_000_000_000) -> RepositoryMetadata:
+def metadata(
+    parameters: int = 70_000_000_000,
+    weight_gib: float = 35,
+    **values,
+) -> RepositoryMetadata:
     return RepositoryMetadata(
         repo_id="acme/model",
         revision="main",
         repository_bytes=1 * GIB,
-        weight_bytes=35 * GIB,
+        weight_bytes=int(weight_gib * GIB),
         parameter_count=parameters,
         architecture="DeepseekV3ForCausalLM",
         config={
@@ -31,6 +35,7 @@ def metadata(parameters: int = 70_000_000_000) -> RepositoryMetadata:
             "kv_lora_rank": 512,
             "qk_rope_head_dim": 64,
         },
+        **values,
     )
 
 
@@ -66,12 +71,202 @@ def test_fit_plan_rejects_model_beyond_cluster_memory(tmp_path):
     snapshot = ClusterSimulator("test").snapshot()
     plan = build_fit_plan(
         ModelFitRequest(repo_id="acme/model", bits_per_weight=16, context_length=524288),
-        metadata(parameters=671_000_000_000),
+        metadata(parameters=671_000_000_000, weight_gib=1250),
         snapshot,
         settings,
     )
     assert plan.memory_fits is False
     assert plan.minimum_nodes > plan.cluster_nodes
+    assert plan.fits is False
+    assert plan.download_fits is True
+
+
+def test_deepseek_v41_engram_uses_validated_local_nvme_placement(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "spark_cluster.model_manager.shutil.disk_usage",
+        lambda _: SimpleNamespace(free=2 * 1024 * GIB),
+    )
+    engram_bytes = 190 * GIB
+    repository = RepositoryMetadata(
+        repo_id="deepseek-ai/DeepSeek-V4.1-Flash-1017",
+        revision="main",
+        repository_bytes=475 * GIB,
+        weight_bytes=475 * GIB,
+        parameter_count=763_000_000_000,
+        architecture="DeepseekV41ForCausalLM",
+        config={
+            "model_type": "deepseek_v41",
+            "text_config": {
+                "model_type": "deepseek_v41",
+                "num_hidden_layers": 61,
+                "kv_lora_rank": 512,
+                "qk_rope_head_dim": 64,
+            },
+        },
+        files=(
+            ("model-00001-of-00048.safetensors", 285 * GIB),
+            ("model-00047-of-00048.safetensors", 95 * GIB),
+            ("model-00048-of-00048.safetensors", 95 * GIB),
+        ),
+        tags=("moe", "fp8"),
+        library_name="transformers",
+        pipeline_tag="image-text-to-text",
+        engram_bytes=engram_bytes,
+    )
+    plan = build_fit_plan(
+        ModelFitRequest(repo_id=repository.repo_id, context_length=131_072),
+        repository,
+        ClusterSimulator("test").snapshot(),
+        Settings(model_cache_path=tmp_path),
+    )
+    assert plan.memory_fits is False
+    assert plan.runtime_fits is True
+    assert plan.launch_supported is False
+    assert plan.download_fits is True
+    assert plan.fit_status == "engine-required"
+    assert plan.placement_strategy == "engram-nvme"
+    assert plan.resident_weights_gib == pytest.approx(285, abs=0.1)
+    assert plan.offloaded_weights_gib == pytest.approx(190, abs=0.1)
+    assert plan.ssd_required_gib_per_node == pytest.approx(47.5, abs=0.1)
+    assert any("Engram" in item for item in plan.requirements)
+
+
+def test_quantized_engram_pack_accounts_for_external_base_shards(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "spark_cluster.model_manager.shutil.disk_usage",
+        lambda _: SimpleNamespace(free=2 * 1024 * GIB),
+    )
+    repository = RepositoryMetadata(
+        repo_id="LibertAIDAI/DeepSeek-V4.1-Flash-1017-EXL3-3.5bpw",
+        revision="main",
+        repository_bytes=240 * GIB,
+        weight_bytes=240 * GIB,
+        parameter_count=128_000_000_000,
+        architecture="DeepseekV41ForCausalLM",
+        config={
+            "model_type": "deepseek_v41",
+            "quantization_config": {"quant_method": "exl3", "avg_bits": 3.5},
+            "text_config": {
+                "model_type": "deepseek_v41",
+                "num_hidden_layers": 61,
+                "kv_lora_rank": 512,
+                "qk_rope_head_dim": 64,
+            },
+        },
+        files=(("model-00001-of-00044.safetensors", 240 * GIB),),
+        tags=("exl3", "moe"),
+        external_artifacts_bytes=190 * GIB,
+        external_artifacts=("base/shard-47", "base/shard-48"),
+    )
+    plan = build_fit_plan(
+        ModelFitRequest(repo_id=repository.repo_id, context_length=524_288),
+        repository,
+        ClusterSimulator("test").snapshot(),
+        Settings(model_cache_path=tmp_path),
+    )
+    assert plan.weights_gib == pytest.approx(430, abs=0.1)
+    assert plan.resident_weights_gib == pytest.approx(240, abs=0.1)
+    assert plan.additional_artifacts_bytes == 190 * GIB
+    assert plan.runtime_storage_required_gib == pytest.approx(430, abs=0.1)
+    assert any("two Engram shards" in item for item in plan.requirements)
+
+
+def test_prefix_cache_does_not_claim_to_offload_active_decode_kv(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "spark_cluster.model_manager.shutil.disk_usage",
+        lambda _: SimpleNamespace(free=2 * 1024 * GIB),
+    )
+    repository = RepositoryMetadata(
+        repo_id="acme/long-context",
+        revision="main",
+        repository_bytes=300 * GIB,
+        weight_bytes=300 * GIB,
+        parameter_count=160_000_000_000,
+        architecture="LlamaForCausalLM",
+        config={
+            "num_hidden_layers": 80,
+            "num_attention_heads": 64,
+            "num_key_value_heads": 64,
+            "hidden_size": 8192,
+        },
+        files=(("model.safetensors", 300 * GIB),),
+        library_name="transformers",
+        pipeline_tag="text-generation",
+    )
+    plan = build_fit_plan(
+        ModelFitRequest(repo_id=repository.repo_id, context_length=131_072),
+        repository,
+        ClusterSimulator("test").snapshot(),
+        Settings(model_cache_path=tmp_path),
+    )
+    assert plan.memory_fits is False
+    assert plan.runtime_fits is False
+    assert plan.launch_supported is True
+    assert plan.fits is False
+    assert plan.fit_status == "download-only"
+    assert plan.placement_strategy == "kv-offload"
+    assert plan.offloaded_kv_cache_gib == 0
+    assert plan.offloaded_weights_gib == 0
+
+
+def test_moe_and_gguf_do_not_claim_unvalidated_fast_offload(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "spark_cluster.model_manager.shutil.disk_usage",
+        lambda _: SimpleNamespace(free=2 * 1024 * GIB),
+    )
+    snapshot = ClusterSimulator("test").snapshot()
+    settings = Settings(model_cache_path=tmp_path)
+    moe = RepositoryMetadata(
+        repo_id="acme/huge-moe",
+        revision="main",
+        repository_bytes=600 * GIB,
+        weight_bytes=600 * GIB,
+        parameter_count=500_000_000_000,
+        architecture="HugeMoeForCausalLM",
+        config={"n_routed_experts": 256, "num_experts_per_tok": 8},
+        files=(("model.safetensors", 600 * GIB),),
+        tags=("moe",),
+        library_name="transformers",
+        pipeline_tag="text-generation",
+    )
+    moe_plan = build_fit_plan(ModelFitRequest(repo_id=moe.repo_id), moe, snapshot, settings)
+    assert moe_plan.placement_strategy == "expert-offload"
+    assert moe_plan.runtime_fits is False
+    assert moe_plan.download_fits is True
+    assert any("3.1%" in note for note in moe_plan.notes)
+
+    gguf = RepositoryMetadata(
+        repo_id="acme/model-GGUF",
+        revision="main",
+        repository_bytes=600 * GIB,
+        weight_bytes=600 * GIB,
+        parameter_count=None,
+        architecture=None,
+        config={},
+        files=(("model-Q4_K_M.gguf", 600 * GIB),),
+        tags=("gguf",),
+        pipeline_tag="text-generation",
+    )
+    gguf_plan = build_fit_plan(ModelFitRequest(repo_id=gguf.repo_id), gguf, snapshot, settings)
+    assert gguf_plan.placement_strategy == "mmap"
+    assert gguf_plan.runtime_fits is False
+    assert gguf_plan.launch_supported is False
+    assert gguf_plan.performance_impact == "high"
+
+
+def test_repository_download_is_allowed_without_a_runtime_fit(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "spark_cluster.model_manager.shutil.disk_usage",
+        lambda _: SimpleNamespace(free=2 * 1024 * GIB),
+    )
+    plan = build_fit_plan(
+        ModelFitRequest(repo_id="acme/huge"),
+        metadata(weight_gib=600),
+        ClusterSimulator("test").snapshot(),
+        Settings(model_cache_path=tmp_path),
+    )
+    assert plan.runtime_fits is False
+    assert plan.download_fits is True
     assert plan.fits is False
 
 
@@ -143,3 +338,64 @@ async def test_download_job_completes_and_model_is_in_inventory(tmp_path, monkey
     finally:
         await manager.stop()
         store.close()
+
+
+def test_kv_head_replication_is_not_divided_by_tensor_parallel(tmp_path):
+    from spark_cluster.model_manager import _node_requirement
+
+    # MLA/MQA has one KV head replicated over tensor ranks.
+    fits, _, total, _ = _node_requirement([100, 100, 100, 100], 4, 200, 40, 1)
+    assert fits
+    assert total == pytest.approx(392)
+    # Eight GQA KV heads shard across four ranks.
+    _, _, total, _ = _node_requirement([100] * 4, 4, 200, 40, 8)
+    assert total == pytest.approx(272)
+
+
+def test_small_auxiliary_format_does_not_replace_primary_weights(tmp_path):
+    from spark_cluster.model_manager import _runtime_weight_bytes
+
+    weights, notes = _runtime_weight_bytes(
+        metadata(
+            files=(
+                ("model.safetensors", 100 * GIB),
+                ("auxiliary.bin", GIB),
+            )
+        )
+    )
+    assert weights == 100 * GIB
+    assert notes
+
+
+def test_repository_storage_shortage_blocks_even_download_override(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "spark_cluster.model_manager.shutil.disk_usage", lambda _: SimpleNamespace(free=GIB // 2)
+    )
+    plan = build_fit_plan(
+        ModelDownloadRequest(repo_id="acme/model", allow_oversized=True),
+        metadata(),
+        ClusterSimulator("test").snapshot(),
+        Settings(model_cache_path=tmp_path),
+    )
+    assert not plan.download_fits
+    assert not plan.fits
+    assert plan.fit_status == "insufficient-storage"
+
+
+def test_fp8_kv_halves_cache_estimate_without_converting_weights(tmp_path):
+    snapshot = ClusterSimulator("test").snapshot()
+    settings = Settings(model_cache_path=tmp_path)
+    bf16 = build_fit_plan(
+        ModelFitRequest(repo_id="acme/model", kv_cache_dtype="bf16"),
+        metadata(),
+        snapshot,
+        settings,
+    )
+    fp8 = build_fit_plan(
+        ModelFitRequest(repo_id="acme/model", kv_cache_dtype="fp8_e4m3"),
+        metadata(),
+        snapshot,
+        settings,
+    )
+    assert bf16.kv_cache_gib == pytest.approx(fp8.kv_cache_gib * 2, abs=0.02)
+    assert bf16.weights_gib == fp8.weights_gib

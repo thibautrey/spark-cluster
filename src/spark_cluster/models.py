@@ -97,6 +97,7 @@ class ModelFitRequest(BaseModel):
     bits_per_weight: float = Field(default=4, gt=0, le=32)
     context_length: int = Field(default=131072, gt=0, le=1_048_576)
     concurrent_sequences: int = Field(default=1, gt=0, le=1024)
+    kv_cache_dtype: Literal["auto", "bf16", "fp8_e4m3"] = "auto"
 
 
 class ModelFitPlan(BaseModel):
@@ -124,6 +125,41 @@ class ModelFitPlan(BaseModel):
     bits_per_weight: float = 4
     context_length: int = 131072
     concurrent_sequences: int = 1
+    kv_cache_dtype: str = "bf16"
+    runtime_fits: bool = False
+    download_fits: bool = False
+    launch_supported: bool = True
+    runtime_storage_fits: bool = True
+    fit_status: Literal[
+        "full-memory",
+        "hybrid-ready",
+        "engine-required",
+        "download-only",
+        "insufficient-storage",
+    ] = "download-only"
+    placement_strategy: Literal[
+        "full-memory",
+        "engram-nvme",
+        "kv-offload",
+        "expert-offload",
+        "mmap",
+        "unsupported",
+    ] = "full-memory"
+    engine_recommendation: str = "vLLM"
+    detected_format: str = "Unknown"
+    detected_bits_per_weight: float | None = None
+    library_name: str | None = None
+    pipeline_tag: str | None = None
+    resident_weights_gib: float = 0
+    offloaded_weights_gib: float = 0
+    resident_kv_cache_gib: float = 0
+    offloaded_kv_cache_gib: float = 0
+    ssd_required_gib_per_node: float = 0
+    additional_artifacts_bytes: int = 0
+    runtime_storage_required_gib: float = 0
+    performance_impact: Literal["none", "low", "moderate", "high", "unknown"] = "none"
+    requirements: list[str] = Field(default_factory=list)
+    tradeoffs: list[str] = Field(default_factory=list)
 
 
 class ModelDownloadRequest(ModelFitRequest):
