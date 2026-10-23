@@ -2,11 +2,11 @@ services:
   control-plane:
     build: .
     environment:
-      SPARK_DEEPSEEK_MODE: demo
-      SPARK_DEEPSEEK_DATABASE_PATH: /data/spark-deepseek.db
-      SPARK_DEEPSEEK_CLUSTER_NAME: gb10-lab
-      SPARK_DEEPSEEK_OPENAI_API_BASE: http://localhost:8000/v1
-      SPARK_DEEPSEEK_MODEL_CACHE_PATH: /models
+      SPARK_CLUSTER_MODE: demo
+      SPARK_CLUSTER_DATABASE_PATH: /data/spark-cluster.db
+      SPARK_CLUSTER_CLUSTER_NAME: gb10-lab
+      SPARK_CLUSTER_OPENAI_API_BASE: http://localhost:8000/v1
+      SPARK_CLUSTER_MODEL_CACHE_PATH: /models
     ports:
       - "8080:8080"
     volumes:

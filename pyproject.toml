@@ -3,14 +3,14 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "spark-deepseek"
+name = "spark-cluster"
 version = "0.1.0"
-description = "A persistent KV-cache control plane and cluster dashboard for DeepSeek on NVIDIA GB10 systems."
+description = "A visual control plane for building, operating, and observing NVIDIA DGX Spark clusters."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
 authors = [{ name = "Thibaut Rey" }]
-keywords = ["deepseek", "dgx-spark", "gb10", "vllm", "lmcache", "kv-cache"]
+keywords = ["dgx-spark", "gb10", "cluster", "vllm", "lmcache", "deepseek", "inference"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "License :: OSI Approved :: Apache Software License",
@@ -32,11 +32,11 @@ agent = ["nvidia-ml-py>=12.560"]
 test = ["pytest>=8.3", "pytest-asyncio>=0.25", "pytest-cov>=6", "ruff>=0.9"]
 
 [project.scripts]
-spark-deepseek = "spark_deepseek.cli:main"
+spark-cluster = "spark_cluster.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/spark_deepseek"]
-artifacts = ["src/spark_deepseek/chart/**"]
+packages = ["src/spark_cluster"]
+artifacts = ["src/spark_cluster/chart/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

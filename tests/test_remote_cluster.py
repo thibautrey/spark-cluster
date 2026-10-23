@@ -6,9 +6,9 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from spark_deepseek.app import create_app
-from spark_deepseek.config import Settings
-from spark_deepseek.remote_cluster import (
+from spark_cluster.app import create_app
+from spark_cluster.config import Settings
+from spark_cluster.remote_cluster import (
     RemoteClusterConnector,
     RemoteClusterProxyMiddleware,
     connection_path,
@@ -19,7 +19,7 @@ from spark_deepseek.remote_cluster import (
     valid_controller_signature,
     validated_cluster_url,
 )
-from spark_deepseek.setup_models import SetupJob, SetupRequest, SetupStep
+from spark_cluster.setup_models import SetupJob, SetupRequest, SetupStep
 
 
 def controller_settings(tmp_path, **values):

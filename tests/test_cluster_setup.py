@@ -8,17 +8,17 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from spark_deepseek.app import create_app
-from spark_deepseek.cluster_setup import (
+from spark_cluster.app import create_app
+from spark_cluster.cluster_setup import (
     ClusterSetupService,
     SetupFailure,
     SSHTransport,
     fingerprint,
 )
-from spark_deepseek.config import Settings
-from spark_deepseek.setup_models import DiscoveryRequest, SetupRequest
-from spark_deepseek.setup_scripts import chart_archive, registry_configuration
-from spark_deepseek.store import SnapshotStore
+from spark_cluster.config import Settings
+from spark_cluster.setup_models import DiscoveryRequest, SetupRequest
+from spark_cluster.setup_scripts import chart_archive, registry_configuration
+from spark_cluster.store import SnapshotStore
 
 PIN = "SHA256:" + "A" * 43
 
@@ -262,7 +262,7 @@ async def test_restart_requires_explicit_resume_and_preserves_plan(tmp_path):
     remote = FakeTransport()
     service = ClusterSetupService(settings(tmp_path), store, remote)
     # Persist the state that would remain after a process exit.
-    from spark_deepseek.setup_models import SetupJob, SetupStep
+    from spark_cluster.setup_models import SetupJob, SetupStep
 
     job = SetupJob(
         request=plan(),
@@ -370,15 +370,15 @@ def test_chart_is_packaged_in_bootstrap_archive():
     import tarfile
 
     with tarfile.open(fileobj=io.BytesIO(chart_archive()), mode="r:gz") as archive:
-        assert "spark-deepseek/Chart.yaml" in archive.getnames()
-        assert "spark-deepseek/templates/runtime.yaml" in archive.getnames()
+        assert "spark-cluster/Chart.yaml" in archive.getnames()
+        assert "spark-cluster/templates/runtime.yaml" in archive.getnames()
 
 
 def test_lan_registry_configuration_is_scoped_and_digest_ready(tmp_path):
     config = settings(
         tmp_path,
         setup_registry_endpoint="http://192.168.50.5:5002",
-        setup_image_repository="192.168.50.5:5002/spark-deepseek",
+        setup_image_repository="192.168.50.5:5002/spark-cluster",
         setup_image_digest="sha256:" + "a" * 64,
     )
     script = registry_configuration(config)
@@ -388,7 +388,7 @@ def test_lan_registry_configuration_is_scoped_and_digest_ready(tmp_path):
     with pytest.raises(SetupFailure, match="private LAN"):
         registry_configuration(config)
     config.setup_registry_endpoint = "http://192.168.50.5:5002"
-    config.setup_image_repository = "192.168.50.6:5002/spark-deepseek"
+    config.setup_image_repository = "192.168.50.6:5002/spark-cluster"
     with pytest.raises(SetupFailure, match="must belong"):
         registry_configuration(config)
 
@@ -396,8 +396,8 @@ def test_lan_registry_configuration_is_scoped_and_digest_ready(tmp_path):
 def test_packaged_chart_matches_development_chart():
     from pathlib import Path
 
-    source = Path(__file__).parents[1] / "deploy/helm/spark-deepseek"
-    packaged = Path(__file__).parents[1] / "src/spark_deepseek/chart"
+    source = Path(__file__).parents[1] / "deploy/helm/spark-cluster"
+    packaged = Path(__file__).parents[1] / "src/spark_cluster/chart"
     source_files = {path.relative_to(source) for path in source.rglob("*") if path.is_file()}
     packaged_files = {path.relative_to(packaged) for path in packaged.rglob("*") if path.is_file()}
     assert source_files == packaged_files

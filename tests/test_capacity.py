@@ -1,5 +1,5 @@
-from spark_deepseek.capacity import calculate_capacity
-from spark_deepseek.models import CapacityRequest
+from spark_cluster.capacity import calculate_capacity
+from spark_cluster.models import CapacityRequest
 
 
 def test_capacity_plan_scales_with_context_and_concurrency():

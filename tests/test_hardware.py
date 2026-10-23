@@ -1,5 +1,5 @@
-from spark_deepseek.hardware import build_hardware_topology
-from spark_deepseek.setup_models import SetupRequest
+from spark_cluster.hardware import build_hardware_topology
+from spark_cluster.setup_models import SetupRequest
 
 PIN = "SHA256:" + "A" * 43
 

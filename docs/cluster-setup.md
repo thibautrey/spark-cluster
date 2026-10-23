@@ -14,11 +14,11 @@ SSH key that those machines authorize. The Python package includes the deploymen
 
 ```bash
 python -m pip install -e .
-export SPARK_DEEPSEEK_MODE=live
-export SPARK_DEEPSEEK_SETUP_ENABLED=true
-export SPARK_DEEPSEEK_SETUP_SSH_IDENTITY=/absolute/path/to/existing-key
-# Set SPARK_DEEPSEEK_MODEL_ADMIN_TOKEN through your secret manager or environment.
-spark-deepseek serve --host 0.0.0.0 --port 8080
+export SPARK_CLUSTER_MODE=live
+export SPARK_CLUSTER_SETUP_ENABLED=true
+export SPARK_CLUSTER_SETUP_SSH_IDENTITY=/absolute/path/to/existing-key
+# Set SPARK_CLUSTER_MODEL_ADMIN_TOKEN through your secret manager or environment.
+spark-cluster serve --host 0.0.0.0 --port 8080
 ```
 
 Enter the same administration token in the wizard and click **Connect**. Live discovery and setup
@@ -34,7 +34,7 @@ To attach a bridge that is already installed, enter its head-node management IPv
 **Already configured**. No SSH access is needed for attachment. The controller authenticates
 `/api/v1/controller/verify`, stores only the bridge URL and cluster identity in
 `SETUP_STATE_PATH/active-cluster.json` with mode `0600`, then immediately begins relaying cluster data.
-Set `SPARK_DEEPSEEK_REMOTE_CLUSTER_URL=http://192.168.1.42:30080` for an explicitly managed connection
+Set `SPARK_CLUSTER_REMOTE_CLUSTER_URL=http://192.168.1.42:30080` for an explicitly managed connection
 without the UI. Public, loopback, link-local and URL-with-path targets are rejected.
 
 The controller and bridge share `MODEL_ADMIN_TOKEN`, but the token is never sent across the LAN.
@@ -125,7 +125,7 @@ k3s; temporary enrollment files are root-only and removed on exit.
 3. Install k3s `v1.34.1+k3s1` on the head and join the selected workers. The official installer verifies
    its versioned binary. Unmanaged k3s installations are rejected.
 4. Deploy NVIDIA's device plugin `v0.17.4` and verify an allocatable GPU on every selected node.
-5. Create shared model storage at `/var/lib/spark-deepseek/models` on the head. NFS exports allow only
+5. Create shared model storage at `/var/lib/spark-cluster/models` on the head. NFS exports allow only
    selected cluster node addresses and preserve root squashing. A retained static RWX volume binds to
    the model PVC. Its advertised 1 TiB is a scheduling capacity, not a disk reservation or quota;
    model downloads still check actual free space.

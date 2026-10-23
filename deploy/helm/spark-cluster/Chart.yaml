@@ -1,0 +1,6 @@
+apiVersion: v2
+name: spark-cluster
+description: Visual control plane, telemetry, orchestration, and persistent KV cache for DGX Spark clusters
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#080b12" />
+    <title>Spark Cluster — Cluster control plane</title>
+    <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/app.css" />
+  </head>
+  <body>
+    <div class="noise"></div>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="#">
+          <span class="brand-mark"><i></i><i></i><i></i></span>
+          <span><b>Spark</b><small>Cluster</small></span>
+        </a>
+        <nav>
+          <a href="#setup"><span>⚙</span>Cluster setup</a>
+          <a class="active" href="#overview"><span>⌁</span>Overview</a>
+          <a href="#api"><span>↗</span>API endpoint</a>
+          <a href="#models"><span>⬡</span>Models</a>
+          <a href="#launch"><span>▷</span>Launch</a>
+          <a href="#logs"><span>_</span>Runtime logs</a>
+          <a href="#topology"><span>◇</span>Topology</a>
+          <a href="#cache"><span>◫</span>KV cache</a>
+          <a href="#memory"><span>▤</span>Memory</a>
+        </nav>
+        <div class="runtime-card">
+          <span class="eyebrow">ACTIVE RUNTIME</span>
+          <b id="model-short">No model loaded</b>
+          <span><i class="status-dot"></i><span id="runtime-status">Healthy</span></span>
+          <dl><dt>Context</dt><dd id="runtime-context">512k</dd><dt>Parallel</dt><dd id="runtime-parallel">4 × 1</dd></dl>
+        </div>
+        <div class="sidebar-foot"><span id="connection-dot"></span><span id="connection-label">Connecting</span><small>v0.1</small></div>
+      </aside>
+
+      <main>
+        <header>
+          <div><p class="eyebrow">CONTROL PLANE / <span id="cluster-name">GB10 LAB</span></p><h1>Cluster overview</h1></div>
+          <div class="header-actions"><span class="live"><i></i>LIVE</span><span class="timestamp" id="timestamp">—</span></div>
+        </header>
+
+        <section class="panel setup-panel" id="setup">
+          <div class="panel-head"><div><p class="eyebrow">GET STARTED</p><h2>Connect or build your Spark cluster</h2></div><span class="pill" id="setup-mode">Connecting</span></div>
+          <div class="setup-intro"><div><h3>Run this controller on any LAN machine.</h3><p>The interface stays on this system while a lightweight bridge near the GPUs handles models, logs and Kubernetes operations. Connect an existing bridge or configure new Sparks step by step.</p></div><a class="secondary setup-link" href="https://docs.nvidia.com/sync/latest/cluster-assistant.html" target="_blank" rel="noopener">NVIDIA Sync guide ↗</a></div>
+          <ol class="setup-rail" id="setup-rail" aria-label="Setup progress"><li class="active">1 <span>Discover</span></li><li>2 <span>Configure</span></li><li>3 <span>Check</span></li><li>4 <span>Install</span></li><li>5 <span>Ready</span></li></ol>
+          <div class="setup-auth"><label>Administration token<input id="setup-token" type="password" autocomplete="off" placeholder="Required for live setup" /></label><button class="secondary" id="setup-connect" type="button">Connect</button><span id="setup-access">Demo works without credentials. Live setup must be enabled on the bootstrap dashboard.</span></div>
+          <div id="setup-error" class="setup-error" role="alert" hidden></div>
+          <div class="setup-page" data-setup-page="0">
+            <div class="setup-existing"><div><h3>Already configured?</h3><p>Enter the management IPv4 of the cluster head. This controller will authenticate the bridge and keep the connection after restarts.</p></div><label>Head IPv4<input id="setup-existing-address" placeholder="192.168.1.42" /></label><label>Bridge port<input id="setup-existing-port" type="number" min="1024" max="65535" value="30080" /></label><button class="secondary" id="setup-attach" type="button">Connect existing cluster</button></div>
+            <div class="setup-discovery"><div><h3>Find machines on your LAN</h3><p>Automatic discovery uses mDNS. You can also search a private /24 subnet or add an IPv4 address. GPU compatibility is checked after SSH pairing.</p></div><div class="setup-scan-fields"><label>Subnet <span class="optional">optional</span><input id="setup-subnet" placeholder="192.168.1.0/24" /></label><label>Machine IPv4 <span class="optional">optional</span><input id="setup-address" placeholder="192.168.1.42" /></label><button class="primary" id="setup-discover" type="button">Discover machines</button></div></div>
+            <p class="setup-note" id="discovery-note">Power on your Sparks and connect them to the same management network.</p>
+            <div class="setup-nodes" id="setup-nodes"><div class="empty-state">Discover machines to begin.</div></div>
+          </div>
+          <div class="setup-page" data-setup-page="1" hidden>
+            <h3>Choose roles and connect the fabric</h3><p class="setup-note">Select one head. For multiple Sparks, run NVIDIA Sync → Settings → Cluster Assistant, then leave fabric IPv4 blank for automatic detection, or enter it from Sync if several links are active. Four Sparks require a switch.</p>
+            <div class="setup-plan-fields"><label>Cluster name<input id="setup-name" value="spark-cluster" pattern="[a-z][a-z0-9-]{0,39}" /></label><label>Cabling topology<select id="setup-topology"><option value="switch">High-speed Ethernet switch</option><option value="direct">Direct cables (2–3 nodes)</option><option value="single">Single Spark</option></select></label></div>
+            <div id="setup-roles" class="setup-roles"></div>
+            <div class="setup-callout"><b>One-time access preparation</b><p>Use an existing SSH key on the bootstrap host and an account with noninteractive sudo. Verify each displayed fingerprint on its device with <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code>. Passwords and private keys are never requested in this page.</p><label class="setup-checkbox"><input id="setup-trust" type="checkbox" /> I verified the selected machines’ host fingerprints.</label></div>
+            <div class="hardware-assistant">
+              <div class="hardware-head"><div><p class="eyebrow">PHYSICAL CABLING</p><h3>ConnectX-7 cable assistant</h3><p>First see the expected layout, then inspect every Spark over SSH to detect cable carrier, negotiated speed, RDMA port and network placement.</p></div><div><span class="pill pending" id="hardware-verdict">Not inspected</span><button class="primary" id="setup-hardware-scan" type="button">Inspect cables</button></div></div>
+              <div class="hardware-guide">
+                <article><span class="hardware-guide-number">1</span><div><h4>Keep the control network connected</h4><p>Power on each Spark. Connect its RJ45 Ethernet port to the same LAN as this dashboard.</p><svg viewBox="0 0 300 84" role="img" aria-label="RJ45 management Ethernet connects each Spark to the LAN router and dashboard"><rect x="6" y="17" width="70" height="50" rx="9"/><text x="41" y="38">Spark</text><path d="M30 45h22v14H30z M35 43v5 M41 43v5 M47 43v5"/><path class="guide-wire lan" d="M52 53H145"/><rect x="145" y="28" width="68" height="39" rx="6"/><text x="179" y="51">LAN router</text><path class="guide-wire lan" d="M213 48h22"/><rect x="235" y="19" width="60" height="48" rx="5"/><text x="265" y="41">Control</text><text x="265" y="54">panel</text><text x="108" y="37">RJ45</text></svg></div></article>
+                <article><span class="hardware-guide-number">2</span><div><h4>Add the fast cluster cables</h4><p>Use the wide ConnectX-7 QSFP ports for Spark-to-Spark links. Follow the layout below.</p><svg viewBox="0 0 300 84" role="img" aria-label="A wide QSFP connector links the ConnectX-7 ports of two Sparks"><rect x="6" y="17" width="79" height="50" rx="9"/><text x="45" y="38">Spark A</text><rect class="guide-qsfp" x="28" y="46" width="34" height="13" rx="2"/><path class="guide-wire fabric" d="M62 53h176"/><rect class="guide-qsfp" x="238" y="46" width="34" height="13" rx="2"/><rect x="215" y="17" width="79" height="50" rx="9"/><text x="255" y="38">Spark B</text><text x="150" y="37">QSFP112 DAC</text></svg><small>Connector schematic. Match the port shape and device label; Linux interface names do not indicate left/right position.</small></div></article>
+                <article><span class="hardware-guide-number">3</span><div><h4>Inspect, correct, inspect again</h4><p>Fully seat both ends and wait for the link LEDs. Inspect cables to see which machine or link needs attention.</p><div class="hardware-guide-result"><span>✓ Verified</span><span>! Check</span><span>× Missing</span></div><small>Port carrier, speed and peer checks are measured over SSH. Power and the exact physical cable path cannot be identified remotely.</small></div></article>
+              </div>
+              <div class="hardware-summary" id="hardware-summary">Select a topology to see exactly how to connect the machines.</div>
+              <div class="hardware-canvas" id="hardware-canvas" aria-label="Expected cluster cabling diagram"></div>
+              <div class="hardware-legend"><span><i class="pass"></i>Correct</span><span><i class="warning"></i>Check speed or network</span><span><i class="error"></i>Missing or incorrect</span><span><i class="pending"></i>Not inspected</span></div>
+              <div class="hardware-instructions" id="hardware-instructions"></div>
+            </div>
+          </div>
+          <div class="setup-page" data-setup-page="2" hidden>
+            <div class="setup-check-head"><div><h3>Readiness & assisted fixes</h3><p class="setup-note">Checks cover GB10 hardware, memory, storage, SSH, sudo, driver consistency, clock and fabric reachability. Package repairs run during installation.</p></div><button class="secondary" id="setup-check" type="button">Run checks</button></div>
+            <div id="setup-checks" class="setup-checks"><div class="empty-state">Run checks before installing.</div></div>
+            <div class="setup-callout"><b>Review the installation</b><p id="setup-review">Select machines first.</p><p>The assistant installs pinned k3s, NVIDIA GPU scheduling, shared NFS model storage and the dashboard. Inference stays idle until you launch a model. Keep cluster ports on a trusted LAN.</p><label class="setup-checkbox"><input id="setup-approve" type="checkbox" /> Install these services on the selected machines.</label></div>
+          </div>
+          <div class="setup-page" data-setup-page="3" hidden>
+            <div class="setup-check-head"><div><h3 id="setup-job-title">Installing cluster services</h3><p class="setup-note">Progress is saved automatically. After an interruption, resume to verify and reconcile the configuration.</p></div><span class="pill" id="setup-job-status">queued</span></div>
+            <div class="setup-install-layout"><div id="setup-steps" class="setup-steps"></div><pre class="setup-terminal" id="setup-logs" aria-label="Setup logs"></pre></div>
+            <div id="setup-job-checks" class="setup-checks"></div>
+            <div class="setup-recovery" id="setup-recovery" hidden><p id="setup-job-error"></p><button class="primary" id="setup-resume" type="button">Retry / resume setup</button><button class="secondary" id="setup-revise" type="button">Revise plan</button></div>
+          </div>
+          <div class="setup-page setup-ready" data-setup-page="4" hidden><span class="setup-success">✓</span><h3>Your cluster services are ready</h3><p>Nodes, GPU scheduling, dashboard, telemetry and shared model storage passed verification.</p><p class="setup-note">Next, add a model and launch it to verify inference and collective GPU communication under load.</p><a class="primary setup-link" id="setup-open" href="#models">Open cluster dashboard →</a><button class="secondary" id="setup-new" type="button">Configure another cluster</button></div>
+          <div class="setup-footer"><span id="setup-summary">Select the machines to configure.</span><div><button class="secondary" id="setup-back" type="button" hidden>Back</button><button class="primary" id="setup-next" type="button">Choose machines →</button></div></div>
+        </section>
+
+        <section class="metrics" id="overview">
+          <article class="metric"><span>Cluster output</span><strong><b id="output-tps">—</b><small> tok/s</small></strong><canvas id="throughput-spark" width="180" height="42"></canvas><footer><em>↗</em> live generation rate</footer></article>
+          <article class="metric accent"><span>KV cache hit rate</span><strong><b id="hit-rate">—</b><small>%</small></strong><div class="ring" id="hit-ring"><span></span></div><footer><em>↗</em> across all tiers</footer></article>
+          <article class="metric"><span>Unified memory</span><strong><b id="memory-used">—</b><small> GiB</small></strong><div class="bar"><i id="memory-bar"></i></div><footer><span id="memory-total">— GiB total</span></footer></article>
+          <article class="metric"><span>Prefix reuse</span><strong><b id="prefix-reuse">—</b><small> tokens</small></strong><div class="stack"><i></i><i></i><i></i><i></i></div><footer>avoided recomputation</footer></article>
+        </section>
+
+        <section class="panel api-panel" id="api">
+          <div class="api-identity">
+            <div class="api-icon">API</div>
+            <div><p class="eyebrow">OPENAI COMPATIBLE</p><h2>Inference endpoint</h2></div>
+            <span class="pill" id="api-status">checking</span>
+          </div>
+          <div class="endpoint-box"><code id="api-endpoint">Loading endpoint…</code><button id="copy-endpoint" type="button">Copy</button></div>
+          <div class="api-routes"><span><b>Models</b><code id="api-models-route">—</code></span><span><b>Chat completions</b><code id="api-chat-route">—</code></span></div>
+        </section>
+
+        <section class="grid-main">
+          <article class="panel topology-panel" id="topology">
+            <div class="panel-head"><div><p class="eyebrow">FABRIC</p><h2>Cluster topology</h2></div><span class="pill" id="node-count">0 nodes</span></div>
+            <div class="topology" id="topology-map"><div class="fabric-line"></div></div>
+            <div class="legend"><span><i class="green"></i>Healthy</span><span><i class="amber"></i>Degraded</span><span><i class="muted"></i>Offline</span><span class="fabric-label">200G fabric</span></div>
+          </article>
+
+          <article class="panel cache-panel" id="cache">
+            <div class="panel-head"><div><p class="eyebrow">MULTI-TIER</p><h2>KV cache</h2></div><span class="pill persistent">● persistent</span></div>
+            <div id="cache-tiers" class="cache-tiers"></div>
+          </article>
+        </section>
+
+        <section class="panel memory-panel" id="memory">
+          <div class="panel-head"><div><p class="eyebrow">UNIFIED MEMORY</p><h2>Node allocation</h2></div><div class="segmented"><button class="active">Allocation</button><button>Utilization</button></div></div>
+          <div class="memory-grid" id="memory-grid"></div>
+        </section>
+
+        <section class="panel models-panel" id="models">
+          <div class="panel-head">
+            <div><p class="eyebrow">MODEL LIBRARY</p><h2>Local models</h2></div>
+            <span class="pill" id="model-count">0 models</span>
+          </div>
+          <div class="models-layout">
+            <div class="model-inventory" id="local-models">
+              <div class="empty-state"><b>No local model found</b><span>Add one from Hugging Face.</span></div>
+            </div>
+            <form class="model-form" id="model-form">
+              <div class="form-title"><span>＋</span><div><b>Add from Hugging Face</b><small>Inspect fit before downloading</small></div></div>
+              <label>Model ID<input id="repo-id" name="repo_id" placeholder="deepseek-ai/DeepSeek-R1" required /></label>
+              <div class="form-row">
+                <label>Revision<input id="revision" name="revision" value="main" /></label>
+                <label>Weight bits<select id="weight-bits" name="bits"><option value="4">4-bit</option><option value="8">8-bit</option><option value="16">BF16 / FP16</option></select></label>
+              </div>
+              <div class="form-row">
+                <label>Context<select id="context-length" name="context"><option value="131072">128k</option><option value="262144">256k</option><option value="524288" selected>512k</option></select></label>
+                <label>Concurrency<input id="concurrency" name="concurrency" type="number" min="1" max="1024" value="1" /></label>
+              </div>
+              <div class="fit-result neutral" id="fit-result"><span class="fit-symbol">?</span><div><b>Run a fit check</b><small>Weights, KV cache, runtime overhead, nodes and storage.</small></div></div>
+              <label class="override"><input id="allow-oversized" type="checkbox" /> Allow download when the model does not fit</label>
+              <label>Admin token <span class="optional">optional</span><input id="admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label>
+              <div class="form-actions"><button class="secondary" id="check-fit" type="button">Check fit</button><button class="primary" id="download-model" type="submit" disabled>Download model</button></div>
+            </form>
+          </div>
+          <div class="downloads-head"><p class="eyebrow">DOWNLOADS</p><span>Automatic resume is enabled</span></div>
+          <div class="download-list" id="download-list"><div class="empty-downloads">No downloads yet.</div></div>
+        </section>
+
+        <section class="panel launch-panel" id="launch">
+          <div class="panel-head">
+            <div><p class="eyebrow">RUNTIME ORCHESTRATION</p><h2>Launch a model</h2></div>
+            <span class="pill" id="launch-mode">detecting mode</span>
+          </div>
+          <div class="launch-layout">
+            <form class="launch-form" id="launch-form">
+              <label>Local model<select id="launch-model" required><option value="">Select a managed model</option></select></label>
+              <label>Served model name<input id="served-model-name" placeholder="deepseek-r1" required /></label>
+              <div class="form-row three">
+                <label>Context<select id="launch-context"><option value="131072">128k</option><option value="262144">256k</option><option value="524288" selected>512k</option></select></label>
+                <label>Tensor parallel<input id="tensor-parallel" type="number" min="1" max="64" value="4" /></label>
+                <label>Pipeline parallel<input id="pipeline-parallel" type="number" min="1" max="64" value="1" /></label>
+              </div>
+              <div class="form-row">
+                <label>Weight bits<select id="launch-bits"><option value="4">4-bit</option><option value="8">8-bit</option><option value="16">BF16 / FP16</option></select></label>
+                <label>GPU memory utilization<input id="gpu-memory-utilization" type="number" min="0.1" max="0.99" step="0.01" value="0.82" /></label>
+              </div>
+              <label>Admin token <span class="optional">optional</span><input id="launch-admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label>
+              <div class="fit-result neutral" id="launch-fit"><span class="fit-symbol">?</span><div><b>Select a model</b><small>The launch is revalidated against current cluster capacity.</small></div></div>
+              <button class="primary launch-button" id="launch-model-button" type="submit" disabled>Launch on cluster</button>
+            </form>
+            <div class="launch-status" id="launch-status">
+              <div class="launch-empty"><span>▷</span><b>No launch in progress</b><small>Select a local model to configure the runtime.</small></div>
+            </div>
+          </div>
+          <div class="launch-history" id="launch-history"></div>
+        </section>
+
+        <section class="panel logs-panel" id="logs">
+          <div class="panel-head logs-head">
+            <div><p class="eyebrow">RUNTIME INSTANCES</p><h2>Cluster logs</h2></div>
+            <div class="log-controls">
+              <select id="log-instance"><option value="">All instances</option></select>
+              <select id="log-level"><option value="">All levels</option><option value="debug">Debug</option><option value="info">Info</option><option value="warning">Warning</option><option value="error">Error</option></select>
+              <button id="pause-logs" type="button">Pause</button>
+              <button id="clear-logs" type="button">Clear view</button>
+            </div>
+          </div>
+          <div class="log-terminal" id="log-terminal"><div class="log-empty">Waiting for runtime logs…</div></div>
+          <footer class="log-footer"><span><i></i>Live stream</span><span id="log-count">0 lines</span><span>Newest entries follow automatically</span></footer>
+        </section>
+      </main>
+    </div>
+    <script src="/assets/app.js"></script>
+    <script src="/assets/setup.js"></script>
+  </body>
+</html>

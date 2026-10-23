@@ -1,0 +1,79 @@
+image:
+  repository: ghcr.io/thibautrey/spark-cluster
+  tag: latest
+  digest: ""
+  pullPolicy: IfNotPresent
+
+controlPlane:
+  replicas: 1
+  clusterName: gb10-lab
+  mode: live
+  runtimeLogsMode: auto
+  runtimeControlMode: auto
+  service:
+    type: ClusterIP
+    port: 8080
+    nodePort: null
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+  ingress:
+    enabled: false
+    className: ""
+    host: spark-cluster.local
+    tlsSecret: ""
+
+agent:
+  enabled: true
+  intervalSeconds: 2
+  nodeSelector: {}
+  tolerations: []
+
+models:
+  mountPath: /models
+  hfTokenSecret: ""
+  adminTokenSecret: ""
+  persistence:
+    enabled: true
+    existingClaim: ""
+    size: 1Ti
+    storageClass: ""
+    accessModes: [ReadWriteMany]
+
+runtime:
+  enabled: false
+  deferStart: false
+  hostNetwork: false
+  image:
+    repository: nvcr.io/nvidia/vllm
+    tag: 25.09-py3
+    pullPolicy: IfNotPresent
+  model: deepseek-ai/DeepSeek-R1
+  servedModelName: deepseek-r1
+  maxModelLen: 524288
+  tensorParallelSize: 4
+  pipelineParallelSize: 1
+  gpuMemoryUtilization: 0.82
+  openAIBaseUrl: http://spark-cluster-openai:8000/v1
+  apiKeySecret: ""
+  service:
+    type: ClusterIP
+    port: 8000
+    nodePort: null
+  cache:
+    cpuGiB: 32
+    diskGiB: 1536
+    hostPath: /var/lib/spark-cluster/lmcache
+    remoteUrl: ""
+    remoteSerde: cachegen
+  nodeSelector: {}
+  tolerations: []
+
+resources:
+  controlPlane:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  agent:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 200m, memory: 256Mi }

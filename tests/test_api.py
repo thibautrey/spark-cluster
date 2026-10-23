@@ -3,8 +3,8 @@ import time
 
 from fastapi.testclient import TestClient
 
-from spark_deepseek.app import create_app
-from spark_deepseek.config import Settings
+from spark_cluster.app import create_app
+from spark_cluster.config import Settings
 
 
 def make_client(tmp_path):
@@ -47,7 +47,7 @@ def test_history_metrics_and_capacity(tmp_path):
         assert client.get("/api/v1/history?minutes=5").status_code == 200
         metrics = client.get("/metrics")
         assert metrics.status_code == 200
-        assert "spark_deepseek_cache_hit_ratio" in metrics.text
+        assert "spark_cluster_cache_hit_ratio" in metrics.text
         result = client.post(
             "/api/v1/capacity",
             json={"parameter_count_billions": 70, "context_length": 131072},
@@ -154,7 +154,7 @@ def test_model_launch_and_runtime_logs_end_to_end(tmp_path):
         "context_length": 131072,
         "concurrent_sequences": 1,
     }
-    (model_path / ".spark-deepseek.json").write_text(
+    (model_path / ".spark-cluster.json").write_text(
         json.dumps(
             {
                 "repo_id": "acme/tiny-model",

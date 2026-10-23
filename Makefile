@@ -4,7 +4,7 @@ install:
 	python -m pip install -e '.[test,agent]'
 
 dev:
-	SPARK_DEEPSEEK_MODE=demo spark-deepseek serve --port 8080
+	SPARK_CLUSTER_MODE=demo spark-cluster serve --port 8080
 
 test:
 	pytest -q
@@ -14,7 +14,7 @@ lint:
 	ruff format --check .
 
 docker:
-	docker build -t spark-deepseek:local .
+	docker build -t spark-cluster:local .
 
 helm:
-	helm lint deploy/helm/spark-deepseek
+	helm lint deploy/helm/spark-cluster

@@ -19,5 +19,5 @@ jobs:
       - run: pip install -e '.[test]'
       - run: ruff check .
       - run: ruff format --check .
-      - run: pytest --cov=spark_deepseek --cov-report=term-missing
-      - run: docker build -t spark-deepseek:ci .
+      - run: pytest --cov=spark_cluster --cov-report=term-missing
+      - run: docker build -t spark-cluster:ci .

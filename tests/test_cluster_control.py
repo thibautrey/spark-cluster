@@ -2,10 +2,10 @@ import asyncio
 
 import pytest
 
-from spark_deepseek.cluster_control import RuntimeDeploymentService, RuntimeLogService
-from spark_deepseek.config import Settings
-from spark_deepseek.models import LocalModel, ModelFitPlan, ModelLaunchRequest
-from spark_deepseek.store import SnapshotStore
+from spark_cluster.cluster_control import RuntimeDeploymentService, RuntimeLogService
+from spark_cluster.config import Settings
+from spark_cluster.models import LocalModel, ModelFitPlan, ModelLaunchRequest
+from spark_cluster.store import SnapshotStore
 
 
 @pytest.mark.asyncio
@@ -23,7 +23,7 @@ async def test_demo_log_service_streams_and_persists_runtime_logs(tmp_path):
         await asyncio.sleep(0.9)
         entries = await service.history()
         assert entries
-        assert entries[0].pod.startswith("spark-deepseek-runtime-")
+        assert entries[0].pod.startswith("spark-cluster-runtime-")
         assert entries[0].container in {"engine", "ray-worker"}
         assert await service.instances()
     finally:
@@ -34,7 +34,7 @@ async def test_demo_log_service_streams_and_persists_runtime_logs(tmp_path):
 def test_runtime_log_filters_are_persistent(tmp_path):
     settings = Settings(database_path=tmp_path / "logs.db", model_cache_path=tmp_path / "models")
     store = SnapshotStore(settings.database_path)
-    from spark_deepseek.models import RuntimeLog
+    from spark_cluster.models import RuntimeLog
 
     store.append_runtime_log(
         RuntimeLog(id="one", pod="head", container="engine", level="info", message="ready")

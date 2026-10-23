@@ -1,270 +1,241 @@
-# Spark DeepSeek
+# Spark Cluster
 
-Spark DeepSeek is an open control plane for running and observing DeepSeek inference across NVIDIA
-GB10 systems. It combines distributed vLLM execution, multi-tier LMCache configuration, durable KV
-cache storage, per-node telemetry, capacity planning, and a live cluster dashboard.
+<p align="center">
+  <strong>A visual control plane for NVIDIA DGX Spark clusters.</strong><br>
+  Discover machines, verify cabling, configure the cluster, launch models, and understand runtime health from one dashboard.
+</p>
 
-![Spark DeepSeek dashboard](docs/dashboard.png)
+<p align="center">
+  <a href="https://github.com/thibautrey/spark-cluster/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/thibautrey/spark-cluster/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="Apache 2.0" src="https://img.shields.io/badge/license-Apache--2.0-63f2b3"></a>
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-63d7f2">
+  <img alt="DGX Spark / GB10" src="https://img.shields.io/badge/platform-DGX%20Spark%20%2F%20GB10-f6c766">
+</p>
 
-## What it provides
+![Spark Cluster overview](docs/screenshots/overview.jpg)
 
-- **Guided cluster setup** — discover LAN machines, verify SSH and GB10 compatibility, configure roles,
-  install cluster services, diagnose failures and resume interrupted setup from the dashboard.
-- **Visual hardware preparation** — inspect ConnectX-7 carrier, RDMA devices, negotiated speed and
-  point-to-point subnets, then show the exact missing cable on 2-node, 3-node ring or switch diagrams.
-- **External controller mode** — host the dashboard on another Linux, macOS, NAS, VM, or container
-  host and transparently control a Spark cluster through its authenticated LAN bridge.
-- **Distributed inference** — a Ray-backed vLLM runtime with tensor and pipeline parallel settings.
-- **Long-context configuration** — first-class 128k, 256k, and 512k deployment profiles.
-- **Restart-resilient KV cache** — GPU, unified memory, local NVMe, and shared-cache tiers through
-  vLLM's LMCache connector. NVMe blocks live outside the inference pod lifecycle.
-- **Cluster visibility** — live topology, health, throughput, temperature, allocation, and request load.
-- **Cache visibility** — utilization, hit/miss ratios, latency, persistence state, and prefix reuse.
-- **Open telemetry** — JSON APIs, WebSocket updates, Prometheus metrics, and a lightweight node agent.
-- **Capacity planning** — estimate weight, runtime, and KV memory before changing a deployment.
-- **Model library** — inspect Hugging Face repositories, verify cluster fit, download with live progress,
-  and automatically resume interrupted transfers.
-- **OpenAI endpoint discovery** — display and copy the configured `/v1` endpoint and show models that
-  are currently loaded by the inference runtime.
-- **Runtime log console** — stream, filter, and retain logs from every vLLM head and Ray worker.
-- **Model launcher** — select a managed model, revalidate capacity, scale workers, roll the vLLM head,
-  and follow readiness from the dashboard.
+Spark Cluster turns a set of DGX Spark systems into an approachable inference cluster. The dashboard can run on a NAS, VM, workstation, or one of the Sparks and control GPU machines on the same trusted LAN. Its guided setup covers physical preparation, network discovery, SSH verification, NVIDIA fabric checks, Kubernetes installation, model storage, observability, and runtime operations.
 
-The dashboard is responsive and has no frontend build step. The control plane stores a bounded history
-in SQLite WAL mode and exposes the same snapshot used by the UI through `/api/v1/snapshot`.
+The runtime is model-agnostic and works with Hugging Face models supported by the selected vLLM image. DeepSeek models are fully supported, including architecture-aware MLA memory estimates.
 
-## Guided setup
+## Why Spark Cluster
 
-The dashboard can run directly in Kubernetes or as an external controller on any system that can reach
-the Spark management LAN. The external controller keeps the UI and connection state locally. A small
-bridge in the cluster owns GPU-local model storage, Kubernetes logs and rollout operations; HTTP APIs
-and WebSocket streams are relayed transparently, so every existing dashboard screen continues to work.
-Control requests use timestamped HMAC signatures, and the administration token never crosses the LAN.
+| Capability | What it changes for the operator |
+| --- | --- |
+| **Plug-and-play discovery** | Finds candidate machines with mDNS or a bounded private subnet scan and verifies SSH reachability. |
+| **Visual hardware assistant** | Draws the required topology, distinguishes RJ45 management from QSFP fabric links, and highlights missing or uncertain cables. |
+| **Remote control plane** | Runs away from the GPU nodes while an authenticated bridge performs cluster-local operations. |
+| **Automated installation** | Installs pinned k3s components, NVIDIA scheduling, shared model storage, telemetry, and idle runtime resources. |
+| **Actionable diagnostics** | Turns failed checks into a concrete remedy and lets interrupted setup resume from persisted state. |
+| **Model lifecycle** | Checks capacity before download, resumes transfers, lists cached models, and launches a selected model across the cluster. |
+| **Operational visibility** | Shows topology, memory, throughput, KV-cache tiers, GPU state, endpoints, and per-runtime logs in real time. |
+| **Open interfaces** | Exposes JSON APIs, WebSockets, Prometheus metrics, an OpenAI-compatible endpoint, Docker, and Helm deployment paths. |
 
-Open **Cluster setup** to attach an existing bridge by head-node IPv4, or use the full assistant:
-discover machines → configure roles and NVIDIA Sync fabric → run diagnostics → install services →
-connect this controller. It automates k3s, GPU scheduling, shared model storage, the cluster bridge and
-idle inference resources over verified SSH connections. See the [setup guide](docs/cluster-setup.md)
-for host, network, access and recovery details.
+## Product tour
 
-## OpenAI-compatible endpoint
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/hardware-setup.jpg" alt="Visual hardware and cabling assistant"><br><strong>Guided hardware preparation</strong><br>Follow illustrated RJ45 and QSFP steps, inspect negotiated links, and correct the highlighted machine or port.</td>
+    <td width="50%"><img src="docs/screenshots/topology-cache.jpg" alt="Cluster topology and KV cache"><br><strong>Topology and cache health</strong><br>See node roles, fabric health, output rate, memory allocation, cache hit rate, and persistent tiers.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/model-library.jpg" alt="Model library and capacity check"><br><strong>Model library</strong><br>Inspect a Hugging Face repository, calculate fit, protect mutations with an admin token, and resume downloads.</td>
+    <td width="50%"><img src="docs/screenshots/model-launcher.jpg" alt="Distributed model launcher"><br><strong>Cluster model launcher</strong><br>Choose context and parallelism, revalidate capacity, scale workers, and follow rollout readiness.</td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/runtime-logs.jpg" alt="Runtime log console"><br><strong>Runtime log console</strong><br>Stream and filter structured logs from the vLLM head and every Ray worker without leaving the dashboard.</td>
+  </tr>
+</table>
 
-The dashboard shows the exact base URL clients should use. Configure it with
-`SPARK_DEEPSEEK_OPENAI_API_BASE`:
+## How it works
 
-```bash
-export OPENAI_BASE_URL=http://spark-deepseek.example.com/v1
-export OPENAI_API_KEY=unused
-curl "$OPENAI_BASE_URL/models"
+```mermaid
+flowchart LR
+    Operator[Browser] --> Control[Spark Cluster control plane]
+    Control --> DB[(SQLite WAL)]
+    Control --> Bridge[Authenticated cluster bridge]
+    Bridge --> K8s[k3s API]
+    K8s --> Head[vLLM head]
+    K8s --> Workers[Ray workers]
+    Head & Workers --> Models[(Shared model cache)]
+    Head & Workers --> KV[LMCache tiers]
+    Agent[Node telemetry agents] --> Control
+    Client[OpenAI-compatible clients] --> Head
 ```
 
-The control plane probes `<base-url>/models`, marks the endpoint ready when it responds, and merges the
-returned model IDs into the local model inventory. Chat completions use
-`<base-url>/chat/completions`. Set `SPARK_DEEPSEEK_OPENAI_API_KEY` when the runtime requires bearer
-authentication; the key is used for the server-side readiness probe and is never returned by the API.
+The inference hot path stays between clients and vLLM. Dashboard availability does not proxy or gate generated tokens. Cluster commands remain in the bridge, and the external controller does not need Kubernetes credentials or direct access to model storage.
 
-## Model library and fit check
+## Guided cluster setup
 
-Enter a Hugging Face model ID in the dashboard, select weight precision, context size, and concurrency,
-then run **Check fit**. The preflight reads repository metadata without downloading model weights and
-reports:
+The setup flow is deliberately sequential:
 
-- repository download size and free model-cache storage;
-- estimated weight memory at the selected precision;
-- architecture-aware KV memory, including DeepSeek MLA metadata when present;
-- runtime overhead, usable cluster memory, minimum node count, and remaining headroom.
+1. **Discover** — find SSH machines on the management LAN or enter their addresses.
+2. **Configure** — select head and worker roles and choose direct or switched fabric topology.
+3. **Prepare hardware** — follow connector diagrams, verify host fingerprints, and inspect ConnectX-7 links.
+4. **Check readiness** — validate GB10, memory, storage, sudo, toolkit, clock, OS/driver parity, RDMA, peers, and fabric reachability.
+5. **Install** — deploy pinned k3s, GPU scheduling, NFS model storage, the bridge, dashboard, and telemetry agents.
+6. **Verify** — confirm GPU registration, workloads, storage, dashboard health, and a cross-node read/write check.
 
-Downloads use Hugging Face's resumable snapshot cache. Jobs, attempts, progress, fit results, and errors
-are persisted in SQLite. An interrupted `queued`, `resolving`, or `downloading` job is requeued when the
-control plane restarts, while completed files and `.incomplete` shards are reused. Failed jobs expose a
-one-click retry. Set `HF_TOKEN` through `SPARK_DEEPSEEK_HF_TOKEN` for gated or private repositories.
-Set `SPARK_DEEPSEEK_MODEL_ADMIN_TOKEN` to require a bearer token for download and retry actions; the
-dashboard accepts it in the model form and keeps it in the page only.
+For direct links, a green result requires the expected point-to-point subnet, sufficient negotiated speed, successful interface-bound peer checks, and a neighbor MAC matching the remote fabric interface. Carrier alone stays amber. See the [cluster setup guide](docs/cluster-setup.md) for access, networking, supported layouts, recovery, and security boundaries.
 
-Managed models are stored under `SPARK_DEEPSEEK_MODEL_CACHE_PATH` and are listed alongside models found
-in the standard Hugging Face cache and models reported by the live OpenAI-compatible runtime.
+## Run the dashboard
 
-## Runtime logs and model launches
-
-The log console reads the Kubernetes pod log API for every container matching the runtime label
-selector. It persists a bounded history in SQLite, streams new entries over WebSocket, infers log
-levels, and filters by instance and severity. Pausing or clearing the view only affects the browser;
-the retained cluster history stays intact.
-
-The launch screen accepts only models in the managed shared cache. Before launch, it recalculates the
-fit from the local manifest and `config.json`, so it works without another Hugging Face lookup. A launch
-then:
-
-1. scales the Ray worker StatefulSet to match tensor × pipeline parallelism;
-2. applies the model path, served name, context, parallelism, and memory target to the vLLM head;
-3. performs a `Recreate` rollout so the existing head releases its GPU;
-4. waits for all workers and the vLLM `/health` readiness probe;
-5. records every stage and exposes retryable failures in the dashboard.
-
-Queued launches are recovered after a control-plane restart. Kubernetes operations use a namespace
-Role restricted to reading pod logs and patching only the named runtime Deployment and StatefulSet.
-
-## Quick start
+### Docker Compose
 
 ```bash
 docker compose up --build
 ```
 
-Open [http://localhost:8080](http://localhost:8080). The compose profile starts with deterministic
-cluster telemetry so the topology, memory, cache, history, WebSocket, and Prometheus paths are active.
+Open [http://localhost:8080](http://localhost:8080). The default demo mode provides deterministic telemetry and safe simulated setup screens.
 
-For local development:
+### Python
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[test,agent]'
-spark-deepseek serve
+spark-cluster serve --host 0.0.0.0 --port 8080
 ```
 
-## Architecture
-
-```mermaid
-flowchart LR
-    Client[OpenAI-compatible clients] --> Head[vLLM head]
-    Head <--> Workers[vLLM Ray workers]
-    Head & Workers --> GPU[GPU KV cache]
-    GPU --> UM[Unified memory]
-    UM --> NVMe[Persistent NVMe]
-    NVMe --> Shared[Shared cache tier]
-    Head & Workers --> Agent[Node agents]
-    Agent --> API[Control plane]
-    API --> DB[(SQLite WAL)]
-    API --> UI[Live dashboard]
-    API --> Prom[Prometheus]
-```
-
-The hot path stays inside vLLM and LMCache. The control plane receives telemetry and never proxies
-inference payloads, so dashboard availability does not affect generation.
-
-## Capacity plan
+### External controller on a LAN host
 
 ```bash
-spark-deepseek plan --parameters 671 --bits 4 --context 524288 --concurrency 1
+export SPARK_CLUSTER_MODE=live
+export SPARK_CLUSTER_SETUP_ENABLED=true
+export SPARK_CLUSTER_SETUP_SSH_IDENTITY=/absolute/path/to/id_ed25519
+export SPARK_CLUSTER_MODEL_ADMIN_TOKEN='set-with-your-secret-manager'
+spark-cluster serve --host 0.0.0.0 --port 8080
 ```
 
-The result separates weights, KV cache, and runtime overhead. `kv_bytes_per_token_billions` is exposed
-by the API because KV size varies with architecture, cache dtype, MLA implementation, and engine build.
-For a deployment decision, feed the value measured from the selected model and runtime image.
+Keep the dashboard on a trusted management network. Verify every displayed SSH host fingerprint on the corresponding device before authorizing setup.
 
-## Kubernetes
+## Model compatibility
 
-Install the dashboard and node agents:
+Spark Cluster manages repositories and runtime settings without hard-coding a model family. Compatibility depends on the vLLM runtime image, quantization kernels, and model architecture available on the target GB10 systems.
+
+Common use cases include:
+
+- DeepSeek R1 and DeepSeek V3 derivatives, with MLA-aware capacity metadata when available;
+- Qwen, Llama, Mistral, and other Hugging Face causal language models supported by vLLM;
+- BF16/FP16, 8-bit, and 4-bit capacity planning;
+- 128k, 256k, and 512k serving profiles;
+- tensor and pipeline parallel layouts across one to four nodes.
+
+Always run **Check fit** before downloading or launching. It separates weights, KV cache, runtime overhead, storage, usable unified memory, required node count, and remaining headroom.
+
+## Model library and launch flow
+
+Downloads use Hugging Face's resumable snapshot cache. Jobs, attempts, progress, fit results, and errors are persisted in SQLite. Interrupted jobs are requeued after a controller restart, and completed files plus partial shards are reused.
+
+A launch performs these steps:
+
+1. validates that the selected managed model still fits the current cluster;
+2. scales the Ray worker StatefulSet for the requested parallelism;
+3. applies model path, served name, context, quantization, and memory target;
+4. recreates the vLLM head so the previous process releases its GPU;
+5. waits for workers and the vLLM readiness endpoint;
+6. persists progress and exposes retryable failures in the dashboard.
+
+## OpenAI-compatible endpoint
+
+The endpoint card displays the exact URL once a runtime is ready:
 
 ```bash
-helm upgrade --install spark-deepseek deploy/helm/spark-deepseek \
-  --namespace inference --create-namespace \
-  --set image.repository=ghcr.io/thibautrey/spark-deepseek \
+export OPENAI_BASE_URL=http://spark-head.local:30000/v1
+export OPENAI_API_KEY=unused
+curl "$OPENAI_BASE_URL/models"
+```
+
+Set `SPARK_CLUSTER_OPENAI_API_KEY` when the runtime requires bearer authentication. The key is used server-side for readiness and model discovery and is never returned by the API.
+
+## Kubernetes and Helm
+
+```bash
+helm upgrade --install spark-cluster deploy/helm/spark-cluster \
+  --namespace inference \
+  --create-namespace \
+  --set image.repository=ghcr.io/thibautrey/spark-cluster \
   --set image.tag=v0.1.0
 ```
 
-To deploy the inference runtime too, provide a GB10-compatible image containing vLLM, Ray, LMCache,
-and the model's quantization kernels, then enable the runtime:
+Enable the runtime with a GB10-compatible image containing vLLM, Ray, LMCache, and the quantization kernels required by the selected model:
 
 ```bash
-helm upgrade --install spark-deepseek deploy/helm/spark-deepseek \
-  --namespace inference --create-namespace \
+helm upgrade --install spark-cluster deploy/helm/spark-cluster \
+  --namespace inference \
+  --create-namespace \
   --set runtime.enabled=true \
   --set runtime.image.repository=REGISTRY/gb10-vllm-lmcache \
   --set runtime.image.tag=VERSION \
   --set runtime.tensorParallelSize=4
 ```
 
-Each runtime pod requests one NVIDIA GPU and anti-affinity places the head and workers on distinct
-hosts. The LMCache directory is mounted from each node at `/var/lib/spark-deepseek/lmcache`, preserving
-cached blocks when an engine pod restarts. Set a dedicated storage path in production.
-
-The chart provisions a shared model-cache PVC mounted read-write by the control plane and read-only by
-the vLLM head and workers. Set `models.persistence.existingClaim` when using an existing RWX volume and
-`models.hfTokenSecret` to the name of a secret whose `token` key contains a Hugging Face access token.
-`models.adminTokenSecret` can similarly protect model mutations with a separate bearer token.
-Set `runtime.openAIBaseUrl` to the URL clients can reach and `runtime.apiKeySecret` when its model-list
-probe requires a bearer token.
-
-Set `runtime.cache.remoteUrl` to an LMCache-compatible remote backend when cache blocks should be
-reused across nodes. `runtime.cache.remoteSerde` selects its serialization format; local NVMe remains
-the durable node-level tier.
-
-`MAX_MODEL_LEN=524288` reserves the serving envelope. The model weights and tokenizer configuration
-must support the chosen context policy; context extension changes belong in the model configuration,
-not in the dashboard.
-
-## APIs and metrics
-
-| Endpoint | Purpose |
-| --- | --- |
-| `GET /api/v1/snapshot` | Current cluster, runtime, cache, and memory state |
-| `GET /api/v1/history?minutes=30` | Bounded snapshot history |
-| `POST /api/v1/nodes` | Node-agent telemetry ingestion |
-| `POST /api/v1/snapshot` | Full collector snapshot ingestion |
-| `POST /api/v1/capacity` | Memory and node-count estimate |
-| `GET /api/v1/runtime` | OpenAI base URL, routes, status, and loaded model IDs |
-| `GET /api/v1/models` | Managed, Hugging Face-cached, and runtime-loaded models |
-| `POST /api/v1/models/fit` | Hugging Face metadata and cluster fit preflight |
-| `POST /api/v1/models/download` | Queue a resumable model download |
-| `GET /api/v1/downloads` | Download progress, attempts, and errors |
-| `POST /api/v1/downloads/{id}/retry` | Resume a failed download job |
-| `GET /api/v1/logs` | Filtered persisted runtime log history |
-| `GET /api/v1/logs/instances` | Runtime instances available to the log console |
-| `WS /api/v1/logs/stream` | Live structured runtime logs |
-| `GET /api/v1/launches` | Model launch history and rollout progress |
-| `POST /api/v1/launches` | Validate and launch a managed model |
-| `POST /api/v1/launches/{id}/retry` | Retry a failed rollout |
-| `GET /api/v1/control` | Aggregated runtime, model, download, and launch dashboard state |
-| `WS /api/v1/stream` | Live dashboard updates |
-| `POST /api/v1/setup/connect` | Attach this dashboard to an existing LAN bridge |
-| `POST /api/v1/setup/hardware` | Detect ports and return the visual physical-topology plan |
-| `GET /api/v1/controller/verify` | Authenticate and identify a cluster bridge |
-| `GET /metrics` | Prometheus exposition |
-
-Set `SPARK_DEEPSEEK_INGEST_TOKEN` on the server and every agent to authenticate writes. Read endpoints
-can be placed behind an ingress authentication policy.
+The chart uses anti-affinity to place the head and workers on distinct nodes, a shared RWX model volume, per-node persistent LMCache paths, and namespace-scoped RBAC. Runtime resources stay idle until a model is launched.
 
 ## Configuration
 
-All control-plane settings use the `SPARK_DEEPSEEK_` prefix:
+All settings use the `SPARK_CLUSTER_` prefix.
 
-| Variable | Default | Description |
+| Setting | Default | Purpose |
 | --- | --- | --- |
-| `MODE` | `demo` | `demo` produces live synthetic telemetry; `live` accepts collectors |
-| `DATABASE_PATH` | `./spark-deepseek.db` | SQLite history database |
-| `SAMPLE_INTERVAL_SECONDS` | `2` | Demo sample interval |
-| `HISTORY_RETENTION_HOURS` | `24` | Stored history window |
-| `INGEST_TOKEN` | unset | Bearer token required for telemetry writes |
-| `CLUSTER_NAME` | `gb10-lab` | Dashboard cluster label |
-| `OPENAI_API_BASE` | `http://localhost:8000/v1` | OpenAI-compatible base URL shown in the UI |
-| `OPENAI_API_KEY` | unset | Bearer token for probing the runtime model endpoint |
-| `MODEL_CACHE_PATH` | `./models` | Managed Hugging Face model directory |
-| `HF_TOKEN` | unset | Access token for gated or private Hugging Face models |
-| `MODEL_ADMIN_TOKEN` | unset | Bearer token required for download and retry actions |
-| `HF_DOWNLOAD_WORKERS` | `4` | Parallel Hugging Face file transfers per job |
-| `MODEL_USABLE_MEMORY_FRACTION` | `0.82` | Per-node memory envelope used by fit checks |
-| `RUNTIME_LOGS_MODE` | `auto` | `kubernetes`, `demo`, or automatic detection |
-| `RUNTIME_CONTROL_MODE` | `auto` | `kubernetes`, `demo`, or automatic detection |
-| `RUNTIME_LOG_RETENTION` | `10000` | Maximum persisted runtime log lines |
-| `RUNTIME_POD_SELECTOR` | runtime label | Kubernetes selector used by the log collector |
-| `SETUP_ENABLED` | `false` | Explicitly enable live LAN discovery and SSH provisioning |
-| `SETUP_STATE_PATH` | `./setup-state` | Verified setup host keys |
-| `SETUP_SSH_IDENTITY` | unset | Existing SSH private key path on the bootstrap host |
-| `SETUP_SSH_CONFIG` | unset | Optional dedicated OpenSSH client configuration |
-| `SETUP_IMAGE_REPOSITORY` | `ghcr.io/thibautrey/spark-deepseek` | Dashboard/agent image installed by setup |
-| `SETUP_IMAGE_TAG` | `latest` | Published dashboard/agent image version |
-| `SETUP_IMAGE_DIGEST` | unset | Optional immutable `sha256:` image digest used instead of the tag |
-| `SETUP_REGISTRY_ENDPOINT` | unset | Optional private LAN registry origin configured on k3s nodes |
-| `REMOTE_CLUSTER_URL` | unset | Existing bridge URL, such as `http://192.168.1.42:30080` |
+| `MODE` | `demo` | `demo` for deterministic UI data or `live` for collectors and remote control. |
+| `DATABASE_PATH` | `./spark-cluster.db` | SQLite state, bounded history, downloads, launches, logs, and setup jobs. |
+| `MODEL_CACHE_PATH` | `./models` | Managed Hugging Face model cache. |
+| `MODEL_ADMIN_TOKEN` | unset | Protects setup, download, retry, and launch mutations. |
+| `INGEST_TOKEN` | unset | Authenticates node telemetry writes. |
+| `OPENAI_API_BASE` | `http://localhost:8000/v1` | Runtime endpoint exposed to clients. |
+| `OPENAI_API_KEY` | unset | Optional server-side runtime bearer token. |
+| `SETUP_ENABLED` | `false` | Enables discovery and SSH-based provisioning. |
+| `SETUP_SSH_IDENTITY` | unset | Existing private key used for verified bootstrap access. |
+| `SETUP_IMAGE_REPOSITORY` | `ghcr.io/thibautrey/spark-cluster` | Image installed on cluster nodes. |
+| `SETUP_IMAGE_DIGEST` | unset | Immutable image digest used instead of a mutable tag. |
+| `REMOTE_CLUSTER_URL` | unset | Authenticated cluster bridge attached to an external controller. |
+
+The complete setup-specific reference is in [docs/cluster-setup.md](docs/cluster-setup.md).
+
+## APIs and observability
+
+| Interface | Purpose |
+| --- | --- |
+| `GET /api/v1/snapshot` | Current cluster, runtime, cache, memory, and node state. |
+| `GET /api/v1/history` | Bounded telemetry history. |
+| `POST /api/v1/capacity` | Model memory and node-count estimate. |
+| `GET /api/v1/models` | Managed, cached, and runtime-reported models. |
+| `POST /api/v1/models/fit` | Repository metadata and fit preflight. |
+| `POST /api/v1/models/download` | Resumable model download. |
+| `GET /api/v1/logs` | Persisted, filterable runtime logs. |
+| `WS /api/v1/logs/stream` | Live runtime log stream. |
+| `POST /api/v1/launches` | Validate and launch a managed model. |
+| `POST /api/v1/setup/discover` | Bounded LAN discovery. |
+| `POST /api/v1/setup/hardware` | Read-only fabric and cable inspection. |
+| `POST /api/v1/setup/jobs` | Persisted cluster installation workflow. |
+| `WS /api/v1/stream` | Live dashboard updates. |
+| `GET /metrics` | Prometheus exposition. |
+
+## Security model
+
+- SSH host keys are pinned before any remote command runs.
+- The browser never submits passwords or private keys.
+- Setup state and structured logs exclude command output that may contain secrets.
+- External bridge requests use timestamped HMAC signatures with replay protection.
+- Kubernetes RBAC is scoped to telemetry, pod logs, and the named runtime resources.
+- Image digests can be pinned for every installed workload.
+- Discovery accepts only private IPv4 targets and limits subnet scans to `/24`.
+
+Read [SECURITY.md](SECURITY.md) before exposing the service beyond a trusted LAN.
 
 ## Development
 
 ```bash
-make install
-make lint
-make test
-make docker
+pip install -e '.[test,agent]'
+ruff check .
+ruff format --check .
+pytest
+helm lint deploy/helm/spark-cluster
 ```
 
-The project is licensed under Apache 2.0.
+The frontend is dependency-free HTML, CSS, and JavaScript served by FastAPI. No frontend build step is required.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).

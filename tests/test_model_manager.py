@@ -4,17 +4,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from spark_deepseek.config import Settings
-from spark_deepseek.model_manager import (
+from spark_cluster.config import Settings
+from spark_cluster.model_manager import (
     GIB,
     ModelManager,
     RepositoryMetadata,
     build_fit_plan,
     safe_repo_parts,
 )
-from spark_deepseek.models import DownloadJob, ModelDownloadRequest, ModelFitRequest
-from spark_deepseek.simulator import ClusterSimulator
-from spark_deepseek.store import SnapshotStore
+from spark_cluster.models import DownloadJob, ModelDownloadRequest, ModelFitRequest
+from spark_cluster.simulator import ClusterSimulator
+from spark_cluster.store import SnapshotStore
 
 
 def metadata(parameters: int = 70_000_000_000) -> RepositoryMetadata:
@@ -137,7 +137,7 @@ async def test_download_job_completes_and_model_is_in_inventory(tmp_path, monkey
         models = await manager.local_models()
         assert [(model.id, model.source) for model in models] == [("acme/model", "managed")]
         manifest = json.loads(
-            (settings.model_cache_path / "acme" / "model" / ".spark-deepseek.json").read_text()
+            (settings.model_cache_path / "acme" / "model" / ".spark-cluster.json").read_text()
         )
         assert manifest["repo_id"] == "acme/model"
     finally:
