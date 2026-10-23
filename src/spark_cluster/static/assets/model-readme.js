@@ -21,9 +21,10 @@ function renderModelReadme(content, model) {
     const attribute = image ? 'src' : 'href';
     const value = element.getAttribute(attribute);
     if (!value) return;
-    if (!image && value.startsWith('#')) return;
     try {
-      const url = new URL(value, `${base}/${image ? 'resolve' : 'blob'}/${revision}/${directory ? `${directory}/` : ''}`);
+      const urlBase = !image && value.startsWith('#') ? base
+        : `${base}/${image ? 'resolve' : 'blob'}/${revision}/${directory ? `${directory}/` : ''}`;
+      const url = new URL(value, urlBase);
       if (!['https:', 'http:', ...(!image ? ['mailto:'] : [])].includes(url.protocol)) {
         element.removeAttribute(attribute);
         return;

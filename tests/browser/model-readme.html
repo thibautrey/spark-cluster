@@ -33,6 +33,7 @@ try {
   check('active HTML and styles removed', !unsafe.querySelector('script,iframe,form,input,svg,[onerror],[onload],[style]'));
   check('unsafe URLs removed', [...unsafe.querySelectorAll('a,img')].every(el => !/^(javascript|data|file):/i.test(el.getAttribute('href') || el.getAttribute('src') || '')));
   check('no code executed', !window.compromised);
+  check('anchors do not change dashboard routes', render('[Section](#best-practices)').querySelector('a').href === 'https://huggingface.co/owner/model#best-practices');
   check('empty README supported', render('').textContent === '');
   output.textContent += `\n${passed} checks passed`; document.title = `${passed} README checks passed`;
 } catch (error) {
