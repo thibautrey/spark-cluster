@@ -261,7 +261,9 @@ class DockerEngineClient:
             command.append("--enable-chunked-prefill")
         name = self.container_name(cluster.id)
         await self._remove_existing(name)
-        device_ids = [str(item.index) for item in cluster.gpus]
+        device_ids = [
+            str(item.index) for item in cluster.gpus[: tensor_parallel * pipeline_parallel]
+        ]
         payload = {
             "Image": image,
             "Entrypoint": ["vllm", "serve"],

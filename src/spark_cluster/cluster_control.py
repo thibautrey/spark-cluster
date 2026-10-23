@@ -436,7 +436,13 @@ class RuntimeDeploymentService:
             await asyncio.sleep(0.35)
 
     async def _run_docker(self, job: ModelLaunchJob) -> None:
-        cluster = self.registry.active() if self.registry else None
+        cluster = (
+            self.registry.get(job.target_cluster_id)
+            if self.registry and job.target_cluster_id
+            else self.registry.active()
+            if self.registry
+            else None
+        )
         if cluster is None or cluster.kind != "local-docker":
             raise RuntimeError("Select a local Docker GPU cluster before launching")
         plan = job.execution_plan
@@ -462,11 +468,13 @@ class RuntimeDeploymentService:
         )
         await self._update(job, "waiting-ready", 75, "Waiting for vLLM health endpoint")
         await self.docker.wait_ready(cluster)
-        self.settings.runtime_model = job.request.model_id
-        self.settings.runtime_quantization = job.fit.detected_format
-        self.settings.runtime_context_length = job.request.context_length
-        self.settings.runtime_tensor_parallel = job.request.tensor_parallel
-        self.settings.runtime_pipeline_parallel = job.request.pipeline_parallel
+        active = self.registry.active() if self.registry else None
+        if active and active.id == cluster.id:
+            self.settings.runtime_model = job.request.model_id
+            self.settings.runtime_quantization = job.fit.detected_format
+            self.settings.runtime_context_length = job.request.context_length
+            self.settings.runtime_tensor_parallel = job.request.tensor_parallel
+            self.settings.runtime_pipeline_parallel = job.request.pipeline_parallel
         await self._update(job, "ready", 100, "Model is ready on the local GPU cluster")
 
     async def _run_kubernetes(self, job: ModelLaunchJob) -> None:

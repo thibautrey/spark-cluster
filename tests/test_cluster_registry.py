@@ -103,7 +103,8 @@ def test_local_snapshot_represents_each_gpu_and_storage(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_docker_runtime_launch_uses_selected_gpus_and_shared_models(tmp_path):
+@pytest.mark.parametrize("parallel", [1, 2])
+async def test_docker_runtime_launch_uses_selected_gpus_and_shared_models(tmp_path, parallel):
     socket = tmp_path / "docker.sock"
     socket.touch()
     config = settings(
@@ -145,7 +146,7 @@ async def test_docker_runtime_launch_uses_selected_gpus_and_shared_models(tmp_pa
         model_path=str(model),
         served_model_name="test-model",
         context_length=8192,
-        tensor_parallel=2,
+        tensor_parallel=parallel,
         pipeline_parallel=1,
         gpu_memory_utilization=0.85,
         kv_cache_dtype="auto",
@@ -158,7 +159,9 @@ async def test_docker_runtime_launch_uses_selected_gpus_and_shared_models(tmp_pa
     create = next(item for item in calls if item[1] == "/containers/create")
     payload = json.loads(create[2])
     assert payload["Cmd"][0] == "/models/acme/model"
-    assert payload["HostConfig"]["DeviceRequests"][0]["DeviceIDs"] == ["0", "1"]
+    assert payload["HostConfig"]["DeviceRequests"][0]["DeviceIDs"] == [
+        str(i) for i in range(parallel)
+    ]
     assert payload["HostConfig"]["Binds"] == [f"{config.docker_host_model_path}:/models:ro"]
 
 
