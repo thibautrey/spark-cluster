@@ -294,18 +294,12 @@ function connectLogs() {
 
 async function refreshLibrary() {
   try {
-    const [endpoint, models, downloads, launches, health] = await Promise.all([
-      api('/api/v1/runtime'),
-      api('/api/v1/models'),
-      api('/api/v1/downloads'),
-      api('/api/v1/launches'),
-      api('/healthz'),
-    ]);
-    renderEndpoint(endpoint);
-    renderModels(models);
-    renderDownloads(downloads);
-    renderLaunches(launches);
-    $('launch-mode').textContent = health.runtime_control_mode;
+    const state = await api('/api/v1/control');
+    renderEndpoint(state.runtime);
+    renderModels(state.models);
+    renderDownloads(state.downloads);
+    renderLaunches(state.launches);
+    $('launch-mode').textContent = state.runtime_control_mode;
   } catch (error) {
     $('api-status').textContent = 'control plane error';
     $('api-status').className = 'pill unreachable';

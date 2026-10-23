@@ -30,6 +30,16 @@ def test_dashboard_and_live_snapshot(tmp_path):
         assert payload["cluster_name"] == "test-cluster"
         assert len(payload["nodes"]) == 4
         assert payload["runtime"]["context_length"] == 524288
+        control = client.get("/api/v1/control")
+        assert control.status_code == 200
+        assert set(control.json()) == {
+            "runtime",
+            "models",
+            "downloads",
+            "launches",
+            "logs_mode",
+            "runtime_control_mode",
+        }
 
 
 def test_history_metrics_and_capacity(tmp_path):

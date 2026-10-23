@@ -284,6 +284,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def launches() -> list[ModelLaunchJob]:
         return await deployment_service.launches()
 
+    @app.get("/api/v1/control")
+    async def control_state() -> dict:
+        endpoint, models, downloads_value, launches_value = await asyncio.gather(
+            model_manager.runtime_endpoint(),
+            model_manager.local_models(),
+            model_manager.downloads(),
+            deployment_service.launches(),
+        )
+        return {
+            "runtime": endpoint,
+            "models": models,
+            "downloads": downloads_value,
+            "launches": launches_value,
+            "logs_mode": log_service.mode,
+            "runtime_control_mode": deployment_service.mode,
+        }
+
     @app.post(
         "/api/v1/launches",
         response_model=ModelLaunchJob,

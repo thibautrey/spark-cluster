@@ -195,6 +195,7 @@ not in the dashboard.
 | `GET /api/v1/launches` | Model launch history and rollout progress |
 | `POST /api/v1/launches` | Validate and launch a managed model |
 | `POST /api/v1/launches/{id}/retry` | Retry a failed rollout |
+| `GET /api/v1/control` | Aggregated runtime, model, download, and launch dashboard state |
 | `WS /api/v1/stream` | Live dashboard updates |
 | `GET /metrics` | Prometheus exposition |
 
