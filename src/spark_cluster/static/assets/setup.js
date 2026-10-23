@@ -268,3 +268,34 @@ setInterval(async () => {
   finally { setupPolling = false; }
 }, 2000);
 setupNavigate(0);
+
+let setupSheetOpener = null;
+let setupSheetCloseTimer = null;
+function openSetupSheet(opener) {
+  const wasHidden = $('setup-sheet').hidden;
+  clearTimeout(setupSheetCloseTimer);
+  setupSheetOpener = opener || setupSheetOpener;
+  $('setup-sheet').hidden = false;
+  document.body.classList.add('bottom-sheet-open');
+  requestAnimationFrame(() => {
+    $('setup-sheet').classList.add('open');
+    if (wasHidden) $('setup-sheet-close').focus({preventScroll: true});
+  });
+}
+function closeSetupSheet() {
+  if ($('setup-sheet').hidden) return;
+  $('setup-sheet').classList.remove('open');
+  document.body.classList.remove('bottom-sheet-open');
+  const opener = setupSheetOpener;
+  setupSheetCloseTimer = setTimeout(() => {
+    $('setup-sheet').hidden = true;
+    if (opener?.isConnected) opener.focus({preventScroll: true});
+  }, 220);
+}
+$('setup-open-sheet').addEventListener('click', event => openSetupSheet(event.currentTarget));
+$('setup-sheet-close').addEventListener('click', closeSetupSheet);
+$('setup-sheet-backdrop').addEventListener('click', closeSetupSheet);
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !$('setup-sheet').hidden) closeSetupSheet();
+});
+window.addEventListener('hashchange', closeSetupSheet);

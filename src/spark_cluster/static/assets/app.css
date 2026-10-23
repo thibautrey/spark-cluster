@@ -313,3 +313,11 @@ body.bottom-sheet-open{overflow:hidden}
 .active-download-actions{flex:none;padding:0;border:0}.download-control{padding:5px 7px;font-size:7px}.download-control.danger{background:transparent}
 @media(max-width:1000px){.hf-token-form{grid-template-columns:1fr}.active-download-footer{align-items:flex-start;flex-direction:column}.active-download-actions{align-self:flex-end}}
 @media(max-width:700px){.hf-token-fields{grid-template-columns:1fr}.active-download-summary{flex-wrap:wrap;row-gap:5px}.active-download-actions{align-self:stretch}.active-download-actions button{flex:1}.catalog-route{display:none}}
+
+/* Add-cluster wizard lives in the shared bottom-sheet pattern. */
+.cluster-fleet-actions{display:flex;align-items:center;gap:8px}.cluster-fleet-actions .primary{border:0;border-radius:6px;padding:9px 12px;font-size:9px;cursor:pointer}
+.setup-sheet-panel{width:min(1500px,calc(100vw - 56px));height:min(88vh,940px)}
+.setup-sheet-guide{margin-left:auto;color:#839d90;font-size:10px;text-decoration:none}.setup-sheet-guide:hover{color:var(--green)}
+.setup-sheet-header .catalog-sheet-close{margin-left:0}.setup-sheet-content{min-height:0;flex:1;padding:18px 24px 28px;overflow:auto;scrollbar-width:thin}
+.setup-sheet .setup-rail{margin-top:0}.setup-sheet .setup-footer{position:sticky;bottom:-28px;margin-left:-24px;margin-right:-24px;padding:14px 24px 18px;background:#0a1311f2;backdrop-filter:blur(12px);z-index:2}
+@media(max-width:780px){.cluster-fleet-actions{width:100%}.cluster-fleet-actions button{flex:1}.setup-sheet-panel{width:100vw;height:calc(100dvh - 8px)}.setup-sheet-guide{display:none}.setup-sheet-content{padding:14px 16px 24px}.setup-sheet .setup-footer{bottom:-24px;margin-left:-16px;margin-right:-16px;padding:12px 16px 16px}}

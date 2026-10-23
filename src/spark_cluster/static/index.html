@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=downloads-clean-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=setup-sheet-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -37,9 +37,12 @@
 
         <section class="panel setup-panel" id="setup" data-route-view="setup">
           <div class="panel-head"><div><p class="eyebrow">CLUSTERS</p><h2>Cluster setup</h2></div><span class="pill" id="setup-mode">Connecting</span></div>
-          <section class="cluster-fleet"><div class="cluster-fleet-head"><div><h3>Your clusters</h3><p>Select the cluster controlled by this dashboard.</p></div><button class="secondary" id="cluster-add-local" type="button">Detect local GPUs</button></div><div id="cluster-list" class="cluster-list"><div class="empty-state">Loading clusters…</div></div><p class="sr-only" id="cluster-fleet-status">The selected cluster receives fit checks, downloads, launches, logs and telemetry.</p></section>
-          <section class="setup-flow">
-            <div class="setup-flow-head"><div><p class="eyebrow">ADD A CLUSTER</p><h3>Set up a new target</h3></div><a href="https://docs.nvidia.com/sync/latest/cluster-assistant.html" target="_blank" rel="noopener">NVIDIA Sync guide ↗</a></div>
+          <section class="cluster-fleet"><div class="cluster-fleet-head"><div><h3>Your clusters</h3><p>Select the cluster controlled by this dashboard.</p></div><div class="cluster-fleet-actions"><button class="secondary" id="cluster-add-local" type="button">Detect local GPUs</button><button class="primary" id="setup-open-sheet" type="button">＋ Add cluster</button></div></div><div id="cluster-list" class="cluster-list"><div class="empty-state">Loading clusters…</div></div><p class="sr-only" id="cluster-fleet-status">The selected cluster receives fit checks, downloads, launches, logs and telemetry.</p></section>
+          <div class="bottom-sheet setup-sheet" id="setup-sheet" hidden>
+            <button class="bottom-sheet-backdrop" id="setup-sheet-backdrop" type="button" tabindex="-1" aria-label="Close cluster setup"></button>
+            <section class="bottom-sheet-panel setup-sheet-panel" role="dialog" aria-modal="true" aria-labelledby="setup-sheet-title">
+              <header class="bottom-sheet-header"><span class="catalog-sheet-handle" aria-hidden="true"></span><div><p class="eyebrow">ADD A CLUSTER</p><h3 id="setup-sheet-title">Set up a new target</h3></div><a class="setup-sheet-guide" href="https://docs.nvidia.com/sync/latest/cluster-assistant.html" target="_blank" rel="noopener">NVIDIA Sync guide ↗</a><button class="catalog-sheet-close" id="setup-sheet-close" type="button" aria-label="Close cluster setup">×</button></header>
+              <div class="setup-sheet-content">
             <ol class="setup-rail" id="setup-rail" aria-label="Setup progress"><li class="active">1 <span>Discover</span></li><li>2 <span>Configure</span></li><li>3 <span>Check</span></li><li>4 <span>Install</span></li><li>5 <span>Ready</span></li></ol>
             <div class="setup-auth"><div class="setup-auth-copy"><span class="setup-lock" aria-hidden="true">⌁</span><div><b>Administrator access</b><span id="setup-access">Enter the controller token to make changes.</span></div></div><label><span class="sr-only">Administration token</span><input id="setup-token" type="password" autocomplete="off" placeholder="Administration token" /></label><button class="secondary" id="setup-connect" type="button">Unlock</button></div>
             <div id="setup-error" class="setup-error" role="alert" hidden></div>
@@ -83,7 +86,9 @@
           </div>
           <div class="setup-page setup-ready" data-setup-page="4" hidden><span class="setup-success">✓</span><h3>Your cluster services are ready</h3><p>Nodes, GPU scheduling, dashboard, telemetry and shared model storage passed verification.</p><p class="setup-note">Next, add a model and launch it to verify inference and collective GPU communication under load.</p><a class="primary setup-link" id="setup-open" href="#models">Open cluster dashboard →</a><button class="secondary" id="setup-new" type="button">Configure another cluster</button></div>
           <div class="setup-footer"><span id="setup-summary">Select the machines to configure.</span><div><button class="secondary" id="setup-back" type="button" hidden>Back</button><button class="primary" id="setup-next" type="button">Choose machines →</button></div></div>
-          </section>
+              </div>
+            </section>
+          </div>
         </section>
 
         <section class="metrics" id="overview" data-route-view="overview">
@@ -331,6 +336,6 @@
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>
     <script src="/assets/catalog.js?v=readme-render-v1"></script>
-    <script src="/assets/setup.js?v=setup-clean-v1"></script>
+    <script src="/assets/setup.js?v=setup-sheet-v1"></script>
   </body>
 </html>

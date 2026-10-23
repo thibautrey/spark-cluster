@@ -391,6 +391,8 @@ def test_demo_wizard_end_to_end_without_network_or_ssh(tmp_path, monkeypatch):
         assert "Cluster setup" in page
         assert "Discover machines" in page
         assert "Connect an existing cluster" in page
+        assert 'id="setup-open-sheet"' in page
+        assert 'id="setup-sheet" hidden' in page
         tree = SectionTree()
         tree.feed(page)
         assert tree.parents["models"] is None
