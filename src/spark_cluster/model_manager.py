@@ -1044,7 +1044,10 @@ class ModelManager:
         thread = threading.Thread(target=download, daemon=True, name=f"hf-{job.id[:8]}")
         thread.start()
         while thread.is_alive():
-            job.downloaded_bytes = min(job.total_bytes, self._staging_progress(staging))
+            job.downloaded_bytes = min(
+                job.total_bytes,
+                await asyncio.to_thread(self._staging_progress, staging),
+            )
             job.progress = (
                 round(job.downloaded_bytes / job.total_bytes * 100, 2) if job.total_bytes else 0
             )
