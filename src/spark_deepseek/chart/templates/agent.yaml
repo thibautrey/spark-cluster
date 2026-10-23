@@ -21,6 +21,8 @@ spec:
           args: ["agent", "--server", "http://spark-deepseek:8080", "--node-id", "$(NODE_NAME)", "--interval", {{ .Values.agent.intervalSeconds | quote }}]
           env:
             - { name: NODE_NAME, valueFrom: { fieldRef: { fieldPath: spec.nodeName } } }
+            - { name: NVIDIA_VISIBLE_DEVICES, value: all }
+            - { name: NVIDIA_DRIVER_CAPABILITIES, value: utility,compute }
             - name: SPARK_DEEPSEEK_INGEST_TOKEN
               valueFrom: { secretKeyRef: { name: spark-deepseek-ingest, key: token } }
           resources: {{- toYaml .Values.resources.agent | nindent 12 }}

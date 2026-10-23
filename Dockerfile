@@ -1,5 +1,5 @@
 FROM python:3.12-slim AS runtime
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 SPARK_DEEPSEEK_DATABASE_PATH=/data/spark-deepseek.db SPARK_DEEPSEEK_MODEL_CACHE_PATH=/models
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 SPARK_DEEPSEEK_DATABASE_PATH=/data/spark-deepseek.db SPARK_DEEPSEEK_MODEL_CACHE_PATH=/models SPARK_DEEPSEEK_SETUP_STATE_PATH=/data/setup-state
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends openssh-client && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml README.md LICENSE ./
