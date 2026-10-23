@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import json
 import shutil
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -61,7 +62,12 @@ from .models import (
     ModelRuntime,
     NodeSnapshot,
     RuntimeEndpoint,
+    RuntimeInstallJob,
     RuntimeLog,
+    RuntimeReadiness,
+    RuntimeReadinessRequest,
+    RuntimeTerminalRequest,
+    RuntimeTerminalTicket,
 )
 from .performance import PerformancePlan, PerformancePlanRequest, build_performance_plan
 from .prometheus import render_metrics
@@ -73,6 +79,7 @@ from .remote_cluster import (
     valid_controller_signature,
     validated_cluster_url,
 )
+from .runtime_prerequisites import RuntimePrerequisiteService
 from .setup_models import ClusterConnectRequest, DiscoveryRequest, SetupRequest
 from .simulator import ClusterSimulator
 from .store import SnapshotStore
@@ -131,6 +138,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings, runtime.store, model_manager, log_service
     )
     setup_service = ClusterSetupService(settings, runtime.store)
+    runtime_prerequisites = RuntimePrerequisiteService(settings, runtime.store, setup_service)
     cluster_connector = RemoteClusterConnector(settings)
 
     async def activate_cluster(job) -> None:
@@ -180,6 +188,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await setup_service.start()
         yield
         await setup_service.stop()
+        await runtime_prerequisites.stop()
         await deployment_service.stop()
         await log_service.stop()
         await model_manager.stop()
@@ -194,6 +203,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.log_service = log_service
     app.state.deployment_service = deployment_service
     app.state.setup_service = setup_service
+    app.state.runtime_prerequisites = runtime_prerequisites
     app.state.settings = settings
     app.state.cluster_connector = cluster_connector
     app.add_middleware(RemoteClusterProxyMiddleware, settings=settings)
@@ -681,6 +691,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Launch job not found") from error
 
+    @app.post(
+        "/api/v1/runtime-management/readiness",
+        response_model=RuntimeReadiness,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def runtime_readiness(request: RuntimeReadinessRequest) -> RuntimeReadiness:
+        return await runtime_prerequisites.inspect(request.model_id)
+
+    @app.post(
+        "/api/v1/runtime-management/install",
+        response_model=RuntimeInstallJob,
+        status_code=202,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def install_runtime(request: RuntimeReadinessRequest) -> RuntimeInstallJob:
+        try:
+            return await runtime_prerequisites.install(request.model_id)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.get(
+        "/api/v1/runtime-management/install/{job_id}",
+        response_model=RuntimeInstallJob,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def runtime_install(job_id: str) -> RuntimeInstallJob:
+        try:
+            return await runtime_prerequisites.get_install(job_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Runtime installation not found") from error
+
+    @app.post(
+        "/api/v1/runtime-management/terminal-ticket",
+        response_model=RuntimeTerminalTicket,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def terminal_ticket(request: RuntimeTerminalRequest) -> RuntimeTerminalTicket:
+        try:
+            return runtime_prerequisites.issue_terminal_ticket(request.address)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Managed cluster node not found") from error
+
     @app.get("/metrics", response_class=PlainTextResponse)
     async def metrics() -> str:
         if runtime.latest is None:
@@ -716,6 +768,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             pass
         finally:
             log_service.subscribers.discard(queue)
+
+    @app.websocket("/api/v1/runtime-management/terminal/{ticket}")
+    async def runtime_terminal(websocket: WebSocket, ticket: str) -> None:
+        try:
+            terminal = await runtime_prerequisites.terminal_process(ticket)
+        except (KeyError, AttributeError):
+            await websocket.accept()
+            await websocket.close(code=4403, reason="Terminal ticket is invalid or expired")
+            return
+        await websocket.accept()
+
+        async def send_output() -> None:
+            while terminal.stdout and (chunk := await terminal.stdout.read(4096)):
+                await websocket.send_json({"type": "output", "data": chunk.decode(errors="replace")})
+
+        async def receive_input() -> None:
+            while True:
+                payload = json.loads(await websocket.receive_text())
+                if payload.get("type") != "input":
+                    continue
+                data = str(payload.get("data", ""))[:4096]
+                if terminal.stdin:
+                    terminal.stdin.write(data.encode())
+                    await terminal.stdin.drain()
+
+        tasks = {asyncio.create_task(send_output()), asyncio.create_task(receive_input())}
+        try:
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                with contextlib.suppress(WebSocketDisconnect, json.JSONDecodeError):
+                    task.result()
+            for task in pending:
+                task.cancel()
+        finally:
+            for task in tasks:
+                task.cancel()
+            if terminal.returncode is None:
+                terminal.terminate()
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(terminal.wait(), timeout=3)
+                if terminal.returncode is None:
+                    terminal.kill()
+                    await terminal.wait()
 
     return app
 

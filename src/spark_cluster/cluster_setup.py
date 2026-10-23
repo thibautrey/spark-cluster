@@ -125,7 +125,9 @@ class SSHTransport:
         temporary.chmod(0o600)
         temporary.replace(self.known_hosts)
 
-    async def run(self, node: SetupNode, script: str, timeout: float = 60) -> str:
+    def command(
+        self, node: SetupNode, remote: list[str] | None = None, *, tty: bool = False
+    ) -> list[str]:
         args = [
             "ssh",
             "-F",
@@ -153,7 +155,14 @@ class SSHTransport:
         ]
         if self.settings.setup_ssh_identity:
             args += ["-i", str(self.settings.setup_ssh_identity), "-o", "IdentitiesOnly=yes"]
-        args += [f"{node.username}@{node.address}", "bash", "-se"]
+        if tty:
+            args.append("-tt")
+        args.append(f"{node.username}@{node.address}")
+        args.extend(remote or ["bash", "-se"])
+        return args
+
+    async def run(self, node: SetupNode, script: str, timeout: float = 60) -> str:
+        args = self.command(node)
         return (await process(args, script.encode(), timeout)).decode()
 
     async def upload(self, node: SetupNode, archive: bytes) -> None:

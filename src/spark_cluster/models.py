@@ -296,3 +296,63 @@ class ModelLaunchJob(BaseModel):
     attempts: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+RuntimeNodeStatus = Literal[
+    "ready", "missing", "outdated", "unreachable", "installing", "failed"
+]
+
+
+class RuntimeNodeState(BaseModel):
+    address: str
+    role: Literal["head", "worker"]
+    status: RuntimeNodeStatus
+    installed_version: str | None = None
+    required_version: str
+    message: str
+
+
+class RuntimeReadiness(BaseModel):
+    model_id: str
+    runtime_id: Literal["vllm", "tensorfold", "llama-cpp"]
+    runtime_name: str
+    required_version: str
+    image: str | None = None
+    ready: bool = False
+    install_supported: bool = False
+    nodes: list[RuntimeNodeState] = Field(default_factory=list)
+    message: str
+
+
+class RuntimeReadinessRequest(BaseModel):
+    model_id: str = Field(min_length=1, max_length=200)
+
+
+class RuntimeInstallLog(BaseModel):
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    node: str
+    level: Literal["info", "success", "error"] = "info"
+    message: str
+
+
+class RuntimeInstallJob(BaseModel):
+    id: str
+    model_id: str
+    runtime_id: Literal["vllm", "tensorfold", "llama-cpp"]
+    status: Literal["queued", "running", "completed", "failed"] = "queued"
+    progress: float = Field(default=0, ge=0, le=100)
+    nodes: list[RuntimeNodeState] = Field(default_factory=list)
+    logs: list[RuntimeInstallLog] = Field(default_factory=list)
+    error: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class RuntimeTerminalRequest(BaseModel):
+    address: str
+
+
+class RuntimeTerminalTicket(BaseModel):
+    ticket: str
+    address: str
+    expires_in: int = 60

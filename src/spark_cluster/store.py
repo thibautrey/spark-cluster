@@ -4,7 +4,7 @@ import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from .models import ClusterSnapshot, DownloadJob, ModelLaunchJob, RuntimeLog
+from .models import ClusterSnapshot, DownloadJob, ModelLaunchJob, RuntimeInstallJob, RuntimeLog
 from .setup_models import SetupJob
 
 
@@ -32,6 +32,10 @@ class SnapshotStore:
         )
         self._connection.execute(
             "CREATE TABLE IF NOT EXISTS model_launches (id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
+        )
+        self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS runtime_install_jobs "
+            "(id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
         )
         self._connection.commit()
 
@@ -215,6 +219,30 @@ class SnapshotStore:
                 self.save_launch(job)
                 recovered.append(job)
         return recovered
+
+    def save_runtime_install(self, job: RuntimeInstallJob) -> None:
+        with self._lock:
+            self._connection.execute(
+                "INSERT OR REPLACE INTO runtime_install_jobs(id, payload) VALUES (?, ?)",
+                (job.id, job.model_dump_json()),
+            )
+            self._connection.commit()
+
+    def get_runtime_install(self, job_id: str) -> RuntimeInstallJob | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT payload FROM runtime_install_jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+        return RuntimeInstallJob.model_validate_json(row[0]) if row else None
+
+    def list_runtime_installs(self, limit: int = 20) -> list[RuntimeInstallJob]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT payload FROM runtime_install_jobs "
+                "ORDER BY json_extract(payload, '$.created_at') DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [RuntimeInstallJob.model_validate_json(row[0]) for row in rows]
 
     def close(self) -> None:
         with self._lock:

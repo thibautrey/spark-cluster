@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     runtime_pod_selector: str = "app.kubernetes.io/name=spark-cluster-runtime"
     runtime_head_deployment: str = "spark-cluster-runtime-head"
     runtime_worker_statefulset: str = "spark-cluster-runtime-worker"
+    runtime_vllm_image: str = "nvcr.io/nvidia/vllm:25.09-py3"
+    runtime_tensorfold_image: str | None = None
+    runtime_llama_cpp_image: str | None = None
     setup_enabled: bool = False
     setup_state_path: Path = Path("./setup-state")
     setup_ssh_identity: Path | None = None

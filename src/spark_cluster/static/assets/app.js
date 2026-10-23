@@ -11,6 +11,11 @@ let logsPaused = false;
 let pendingModelAction = null;
 let actionSheetOpener = null;
 let actionSheetCloseTimer = null;
+let runtimeReadiness = null;
+let runtimeInstallJob = null;
+let runtimeInstallTimer = null;
+let pendingLaunchPayload = null;
+let runtimeTerminalSocket = null;
 
 const formatNumber = (value) => value >= 1e9 ? `${(value / 1e9).toFixed(1)}B` : value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : value >= 1e3 ? `${(value / 1e3).toFixed(1)}k` : `${Math.round(value)}`;
 const formatBytes = (value) => value >= 2 ** 30 ? `${(value / 2 ** 30).toFixed(1)} GiB` : value >= 2 ** 20 ? `${(value / 2 ** 20).toFixed(1)} MiB` : `${Math.round(value / 1024)} KiB`;
@@ -336,6 +341,168 @@ async function checkLaunchFit() {
     $('launch-model-button').disabled = true;
     $('launch-fit').className = 'fit-result no-fit';
     $('launch-fit').innerHTML = `<span class="fit-symbol">!</span><div><b>Launch validation failed</b><small>${escapeHtml(error.message)}</small></div>`;
+  }
+}
+
+function renderRuntimeReadiness(report) {
+  runtimeReadiness = report;
+  $('runtime-name').textContent = report.runtime_name;
+  $('runtime-message').textContent = report.message;
+  $('runtime-version').textContent = report.required_version;
+  $('runtime-node-grid').innerHTML = report.nodes.length ? report.nodes.map((node, index) => `
+    <article class="runtime-node ${escapeHtml(node.status)}">
+      <i>${node.role === 'head' ? 'H' : index + 1}</i>
+      <div><b>${escapeHtml(node.address)}</b><small>${escapeHtml(node.installed_version ? `Installed ${node.installed_version} · ${node.message}` : node.message)}</small></div>
+      <span>${escapeHtml(node.status)}</span>
+    </article>`).join('') : '<div class="catalog-empty">No SSH-managed nodes are available.<br>Complete Cluster setup before installing a runtime.</div>';
+  const selected = $('runtime-terminal-node').value;
+  $('runtime-terminal-node').innerHTML = report.nodes.map(node => `<option value="${escapeHtml(node.address)}">${escapeHtml(node.address)} · ${escapeHtml(node.role)}</option>`).join('');
+  if (report.nodes.some(node => node.address === selected)) $('runtime-terminal-node').value = selected;
+  $('runtime-terminal-connect').disabled = !report.nodes.length;
+  const hasOutdated = report.nodes.some(node => node.status === 'outdated');
+  const button = $('runtime-install');
+  button.textContent = report.ready ? 'Launch model' : hasOutdated ? 'Update all nodes' : 'Install on all nodes';
+  button.disabled = !report.ready && (!report.install_supported || !report.nodes.length);
+  $('runtime-sheet-error').hidden = true;
+}
+
+function openRuntimeReadinessSheet(report, opener) {
+  pendingLaunchPayload = launchPayload();
+  renderRuntimeReadiness(report);
+  $('runtime-technical').hidden = true;
+  $('runtime-technical-toggle').textContent = 'Open terminal & logs';
+  $('runtime-sheet').hidden = false;
+  document.body.classList.add('bottom-sheet-open');
+  requestAnimationFrame(() => {
+    $('runtime-sheet').classList.add('open');
+    $('runtime-sheet-close').focus({preventScroll: true});
+  });
+  $('runtime-sheet').dataset.opener = opener?.id || '';
+}
+
+function closeRuntimeReadinessSheet() {
+  if ($('runtime-sheet').hidden) return;
+  clearTimeout(runtimeInstallTimer);
+  if (runtimeTerminalSocket) runtimeTerminalSocket.close();
+  runtimeTerminalSocket = null;
+  $('runtime-sheet').classList.remove('open');
+  document.body.classList.remove('bottom-sheet-open');
+  setTimeout(() => {
+    $('runtime-sheet').hidden = true;
+    const opener = $($('runtime-sheet').dataset.opener);
+    if (opener) opener.focus({preventScroll: true});
+  }, 220);
+}
+
+function renderRuntimeInstallJob(job) {
+  runtimeInstallJob = job;
+  $('runtime-install-progress').hidden = false;
+  $('runtime-install-bar').style.width = `${job.progress}%`;
+  $('runtime-install-label').textContent = `${job.status.replaceAll('-', ' ')} · ${job.progress.toFixed(0)}%`;
+  if (job.nodes?.length) {
+    renderRuntimeReadiness({...runtimeReadiness, nodes: job.nodes, ready: job.status === 'completed', message: job.status === 'completed' ? 'Required runtime is ready on every node' : 'Installing the runtime on cluster nodes'});
+  }
+  if (!['completed', 'failed'].includes(job.status)) {
+    $('runtime-install').disabled = true;
+    $('runtime-install').textContent = 'Installing…';
+  }
+  $('runtime-install-logs').innerHTML = job.logs.length ? job.logs.map(log => `<div class="runtime-install-log ${escapeHtml(log.level)}"><time>${new Date(log.timestamp).toLocaleTimeString([], {hour12: false})}</time><b>${escapeHtml(log.node)}</b><span>${escapeHtml(log.message)}</span></div>`).join('') : '<span>Waiting for node installation logs…</span>';
+  $('runtime-install-logs').scrollTop = $('runtime-install-logs').scrollHeight;
+}
+
+async function pollRuntimeInstall() {
+  if (!runtimeInstallJob || $('runtime-sheet').hidden) return;
+  try {
+    const job = await api(`/api/v1/runtime-management/install/${runtimeInstallJob.id}`, {headers: launchAuthHeaders()});
+    renderRuntimeInstallJob(job);
+    if (job.status === 'completed') {
+      const report = await api('/api/v1/runtime-management/readiness', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({model_id: pendingLaunchPayload.model_id})});
+      renderRuntimeReadiness(report);
+      return;
+    }
+    if (job.status === 'failed') {
+      $('runtime-sheet-error').textContent = job.error || 'One or more nodes need attention.';
+      $('runtime-sheet-error').hidden = false;
+      $('runtime-technical').hidden = false;
+      $('runtime-technical-toggle').textContent = 'Hide terminal & logs';
+      return;
+    }
+    runtimeInstallTimer = setTimeout(pollRuntimeInstall, 1000);
+  } catch (error) {
+    $('runtime-sheet-error').textContent = error.message;
+    $('runtime-sheet-error').hidden = false;
+  }
+}
+
+async function installRuntimeOnNodes() {
+  if (runtimeReadiness?.ready) {
+    closeRuntimeReadinessSheet();
+    await queueModelLaunch(pendingLaunchPayload);
+    return;
+  }
+  const button = $('runtime-install');
+  button.disabled = true;
+  button.textContent = 'Starting installation…';
+  try {
+    runtimeInstallJob = await api('/api/v1/runtime-management/install', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({model_id: pendingLaunchPayload.model_id})});
+    renderRuntimeInstallJob(runtimeInstallJob);
+    runtimeInstallTimer = setTimeout(pollRuntimeInstall, 500);
+  } catch (error) {
+    $('runtime-sheet-error').textContent = error.message;
+    $('runtime-sheet-error').hidden = false;
+    button.disabled = false;
+    button.textContent = 'Install on all nodes';
+  }
+}
+
+function appendTerminalOutput(value) {
+  const clean = value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, '').replace(/\r/g, '');
+  const terminal = $('runtime-terminal-output');
+  terminal.textContent = (terminal.textContent + clean).slice(-100000);
+  terminal.scrollTop = terminal.scrollHeight;
+}
+
+async function connectRuntimeTerminal() {
+  if (runtimeTerminalSocket) runtimeTerminalSocket.close();
+  const address = $('runtime-terminal-node').value;
+  if (!address) return;
+  $('runtime-terminal-output').textContent = `Connecting to ${address}…\n`;
+  try {
+    const ticket = await api('/api/v1/runtime-management/terminal-ticket', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({address})});
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    runtimeTerminalSocket = new WebSocket(`${protocol}//${location.host}/api/v1/runtime-management/terminal/${encodeURIComponent(ticket.ticket)}`);
+    runtimeTerminalSocket.onopen = () => {
+      $('runtime-terminal-command').disabled = false;
+      $('runtime-terminal-interrupt').disabled = false;
+      $('runtime-terminal-command').focus();
+    };
+    runtimeTerminalSocket.onmessage = event => {
+      const payload = JSON.parse(event.data);
+      if (payload.type === 'output') appendTerminalOutput(payload.data);
+    };
+    runtimeTerminalSocket.onclose = () => {
+      appendTerminalOutput('\n[terminal disconnected]\n');
+      $('runtime-terminal-command').disabled = true;
+      $('runtime-terminal-interrupt').disabled = true;
+      runtimeTerminalSocket = null;
+    };
+  } catch (error) {
+    appendTerminalOutput(`[connection failed] ${error.message}\n`);
+  }
+}
+
+async function queueModelLaunch(payload) {
+  $('launch-model-button').disabled = true;
+  $('launch-model-button').textContent = 'Launching…';
+  try {
+    await api('/api/v1/launches', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify(payload)});
+    $('launch-model-button').textContent = 'Launch queued';
+    await refreshLibrary();
+  } catch (error) {
+    $('launch-fit').className = 'fit-result no-fit';
+    $('launch-fit').innerHTML = `<span class="fit-symbol">!</span><div><b>Launch failed</b><small>${escapeHtml(error.message)}</small></div>`;
+    $('launch-model-button').textContent = 'Launch on cluster';
+    $('launch-model-button').disabled = false;
   }
 }
 
@@ -681,17 +848,48 @@ $('launch-form').addEventListener('submit', async event => {
   event.preventDefault();
   if (!launchFit?.fits || !launchFit?.parallel_fits) return;
   $('launch-model-button').disabled = true;
-  $('launch-model-button').textContent = 'Launching…';
+  $('launch-model-button').textContent = 'Checking runtimes…';
+  const payload = launchPayload();
   try {
-    await api('/api/v1/launches', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify(launchPayload())});
-    $('launch-model-button').textContent = 'Launch queued';
-    await refreshLibrary();
+    const report = await api('/api/v1/runtime-management/readiness', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({model_id: payload.model_id})});
+    if (!report.ready) {
+      pendingLaunchPayload = payload;
+      openRuntimeReadinessSheet(report, $('launch-model-button'));
+      $('launch-model-button').textContent = 'Launch on cluster';
+      $('launch-model-button').disabled = false;
+      return;
+    }
+    await queueModelLaunch(payload);
   } catch (error) {
     $('launch-fit').className = 'fit-result no-fit';
-    $('launch-fit').innerHTML = `<span class="fit-symbol">!</span><div><b>Launch failed</b><small>${escapeHtml(error.message)}</small></div>`;
+    $('launch-fit').innerHTML = `<span class="fit-symbol">!</span><div><b>Runtime check failed</b><small>${escapeHtml(error.message)}</small></div>`;
     $('launch-model-button').textContent = 'Launch on cluster';
     $('launch-model-button').disabled = false;
   }
+});
+$('runtime-install').addEventListener('click', installRuntimeOnNodes);
+$('runtime-sheet-close').addEventListener('click', closeRuntimeReadinessSheet);
+$('runtime-sheet-later').addEventListener('click', closeRuntimeReadinessSheet);
+$('runtime-sheet-backdrop').addEventListener('click', closeRuntimeReadinessSheet);
+$('runtime-technical-toggle').addEventListener('click', () => {
+  $('runtime-technical').hidden = !$('runtime-technical').hidden;
+  $('runtime-technical-toggle').textContent = $('runtime-technical').hidden ? 'Open terminal & logs' : 'Hide terminal & logs';
+});
+$('runtime-terminal-connect').addEventListener('click', connectRuntimeTerminal);
+$('runtime-terminal-interrupt').addEventListener('click', () => {
+  if (runtimeTerminalSocket?.readyState === WebSocket.OPEN) runtimeTerminalSocket.send(JSON.stringify({type: 'input', data: '\u0003'}));
+});
+$('runtime-terminal-command').addEventListener('keydown', event => {
+  if (event.key !== 'Enter' || event.shiftKey) return;
+  event.preventDefault();
+  const input = $('runtime-terminal-command');
+  if (runtimeTerminalSocket?.readyState === WebSocket.OPEN && input.value) {
+    runtimeTerminalSocket.send(JSON.stringify({type: 'input', data: `${input.value}\n`}));
+    input.value = '';
+  }
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !$('runtime-sheet').hidden) closeRuntimeReadinessSheet();
 });
 $('launch-history').addEventListener('click', async event => {
   const button = event.target.closest('[data-launch-id]');

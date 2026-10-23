@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=model-lifecycle-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=runtime-readiness-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -235,6 +235,30 @@
             </div>
           </div>
           <div class="launch-history" id="launch-history"></div>
+          <div class="bottom-sheet runtime-sheet" id="runtime-sheet" hidden>
+            <button class="bottom-sheet-backdrop" id="runtime-sheet-backdrop" type="button" tabindex="-1" aria-label="Close runtime readiness"></button>
+            <section class="bottom-sheet-panel runtime-sheet-panel" role="dialog" aria-modal="true" aria-labelledby="runtime-sheet-title">
+              <header class="bottom-sheet-header">
+                <span class="catalog-sheet-handle" aria-hidden="true"></span>
+                <div><p class="eyebrow">RUNTIME READINESS</p><h3 id="runtime-sheet-title">Prepare the cluster runtime</h3></div>
+                <button class="catalog-sheet-close" id="runtime-sheet-close" type="button" aria-label="Close runtime readiness">×</button>
+              </header>
+              <div class="runtime-sheet-content">
+                <div class="runtime-summary"><span>↯</span><div><h4 id="runtime-name">Runtime</h4><p id="runtime-message">Checking every node…</p></div><div><small>Required version</small><b id="runtime-version">—</b></div></div>
+                <div class="runtime-node-grid" id="runtime-node-grid"></div>
+                <div class="runtime-install-progress" id="runtime-install-progress" hidden><div><i id="runtime-install-bar"></i></div><span id="runtime-install-label">Preparing nodes…</span></div>
+                <p class="action-sheet-error" id="runtime-sheet-error" role="alert" hidden></p>
+                <div class="runtime-sheet-actions"><button class="secondary" id="runtime-technical-toggle" type="button">Open terminal &amp; logs</button><button class="secondary" id="runtime-sheet-later" type="button">Not now</button><button class="primary" id="runtime-install" type="button">Install on all nodes</button></div>
+                <section class="runtime-technical" id="runtime-technical" hidden>
+                  <div class="runtime-technical-head"><div><p class="eyebrow">POWER USER VIEW</p><h4>Node installation logs and WebTTY</h4></div><span>Trusted SSH session</span></div>
+                  <div class="runtime-install-logs" id="runtime-install-logs"><span>Installation logs will appear here.</span></div>
+                  <div class="runtime-terminal-toolbar"><label>Node<select id="runtime-terminal-node"></select></label><button class="secondary" id="runtime-terminal-connect" type="button">Open terminal</button><button class="secondary" id="runtime-terminal-interrupt" type="button" disabled>Ctrl+C</button></div>
+                  <pre class="runtime-terminal-output" id="runtime-terminal-output">Select a managed node and open a terminal.</pre>
+                  <div class="runtime-terminal-input"><span>$</span><input id="runtime-terminal-command" autocomplete="off" spellcheck="false" placeholder="Type a command and press Enter" disabled /></div>
+                </section>
+              </div>
+            </section>
+          </div>
         </section>
 
         <section class="panel logs-panel" id="logs" data-route-view="logs">
@@ -253,8 +277,8 @@
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=model-lifecycle-v1"></script>
-    <script src="/assets/catalog.js?v=model-lifecycle-v1"></script>
+    <script src="/assets/app.js?v=runtime-readiness-v1"></script>
+    <script src="/assets/catalog.js?v=runtime-readiness-v1"></script>
     <script src="/assets/setup.js"></script>
   </body>
 </html>
