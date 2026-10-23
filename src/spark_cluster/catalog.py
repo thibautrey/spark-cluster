@@ -64,6 +64,9 @@ class CatalogFile(BaseModel):
 class CatalogDetail(CatalogModel):
     revision: str
     license: str | None = None
+    readme: str | None = None
+    readme_path: str | None = None
+    readme_truncated: bool = False
     architecture: str | None = None
     files: list[CatalogFile]
     repository_bytes: int
@@ -369,6 +372,51 @@ class ModelBrowser:
                 return url
         return f"https://huggingface.co/avatars/{quote(author, safe='')}.svg"
 
+    async def _readme(
+        self, repo_id: str, revision: str, data: dict
+    ) -> tuple[str | None, str | None, bool]:
+        names = [item.get("rfilename", "") for item in data.get("siblings", [])]
+        readme_path = next((name for name in names if name.casefold() == "readme.md"), None)
+        if not readme_path:
+            return None, None, False
+        immutable_revision = revision != "main" and revision == data.get("sha")
+        cache_key = json.dumps(
+            ("catalog-readme-v1", repo_id, revision, readme_path), separators=(",", ":")
+        )
+        cached = await asyncio.to_thread(self.persistent_cache.get_metadata, cache_key)
+        if cached:
+            payload = cached[0]
+            return payload["text"], readme_path, payload["truncated"]
+        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
+        encoded_path = "/".join(quote(part, safe="") for part in readme_path.split("/"))
+        path = f"/{quote(repo_id, safe='/')}/resolve/{quote(revision, safe='')}/{encoded_path}"
+        limit = 512 * 1024
+        content = bytearray()
+        async with httpx.AsyncClient(
+            base_url="https://huggingface.co",
+            timeout=20,
+            headers=headers,
+            transport=self.transport,
+            follow_redirects=True,
+        ) as client:
+            async with client.stream("GET", path) as response:
+                response.raise_for_status()
+                async for chunk in response.aiter_bytes():
+                    content.extend(chunk)
+                    if len(content) > limit:
+                        break
+        truncated = len(content) > limit
+        text = bytes(content[:limit]).decode("utf-8", errors="replace")
+        payload = {"text": text, "truncated": truncated}
+        await asyncio.to_thread(
+            self.persistent_cache.set_metadata,
+            cache_key,
+            payload,
+            None,
+            30 * 86400 if immutable_revision else 600,
+        )
+        return text, readme_path, truncated
+
     async def detail(self, repo_id: str, revision: str) -> CatalogDetail:
         safe_repo_parts(repo_id)
         path = f"/api/models/{quote(repo_id, safe='/')}/revision/{quote(revision, safe='')}"
@@ -379,10 +427,14 @@ class ModelBrowser:
         ]
         config = data.get("config") or {}
         architectures = config.get("architectures") or []
+        readme, readme_path, readme_truncated = await self._readme(repo_id, revision, data)
         return CatalogDetail(
             **summary(data).model_dump(),
             revision=revision,
             license=(data.get("cardData") or {}).get("license"),
+            readme=readme,
+            readme_path=readme_path,
+            readme_truncated=readme_truncated,
             architecture=architectures[0] if architectures else config.get("model_type"),
             files=files,
             repository_bytes=sum(item.size or 0 for item in files),

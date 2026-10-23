@@ -391,3 +391,59 @@ def test_user_avatar_falls_back_after_organization_lookup(catalog):
         "/api/organizations/TheBloke/overview",
         "/api/users/TheBloke/overview",
     ]
+
+
+def test_detail_loads_and_caches_root_readme_as_plain_text(catalog):
+    client, browser, requests = catalog
+
+    def handle(request):
+        requests.append(request.url.path)
+        if request.url.path.startswith("/api/models/"):
+            return httpx.Response(
+                200,
+                json={
+                    "id": "acme/readme-model",
+                    "sha": "commit123",
+                    "siblings": [
+                        {"rfilename": "README.md", "size": 80},
+                        {"rfilename": "model.safetensors", "size": 4096},
+                    ],
+                },
+            )
+        assert request.url.path == "/acme/readme-model/resolve/commit123/README.md"
+        return httpx.Response(
+            200,
+            text="# Model title\n\n<script>alert('unsafe')</script>\n",
+        )
+
+    browser.transport = httpx.MockTransport(handle)
+    url = "/api/v1/catalog/models/acme/readme-model?revision=commit123"
+    result = client.get(url)
+    assert result.status_code == 200
+    assert result.json()["readme_path"] == "README.md"
+    assert result.json()["readme"] == "# Model title\n\n<script>alert('unsafe')</script>\n"
+    assert result.json()["readme_truncated"] is False
+    assert requests.count("/acme/readme-model/resolve/commit123/README.md") == 1
+    assert client.get(url).json()["readme"] == result.json()["readme"]
+    assert requests.count("/acme/readme-model/resolve/commit123/README.md") == 1
+
+
+def test_detail_truncates_oversized_readme(catalog):
+    client, browser, _ = catalog
+
+    def handle(request):
+        if request.url.path.startswith("/api/models/"):
+            return httpx.Response(
+                200,
+                json={
+                    "id": "acme/large-readme",
+                    "sha": "large123",
+                    "siblings": [{"rfilename": "README.md", "size": 600_000}],
+                },
+            )
+        return httpx.Response(200, content=b"x" * 600_000)
+
+    browser.transport = httpx.MockTransport(handle)
+    result = client.get("/api/v1/catalog/models/acme/large-readme?revision=large123").json()
+    assert len(result["readme"].encode()) == 512 * 1024
+    assert result["readme_truncated"] is True

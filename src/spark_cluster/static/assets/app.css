@@ -221,3 +221,11 @@ body.bottom-sheet-open{overflow:hidden}
 .catalog-avatar{position:relative;overflow:hidden}
 .catalog-avatar>span{grid-area:1/1}
 .catalog-avatar img{grid-area:1/1;width:100%;height:100%;display:block;object-fit:cover;background:#111b18;z-index:1}
+.catalog-readme{padding:18px 20px;border-bottom:1px solid #294238;background:#09110e}
+.catalog-readme-head{display:flex;align-items:end;justify-content:space-between;gap:14px;margin-bottom:12px}
+.catalog-readme-head h4{margin:3px 0 0;font-size:14px}
+.catalog-readme-head .eyebrow{margin:0;color:#658071;font-size:8px;text-transform:uppercase;letter-spacing:.12em}
+.catalog-readme-head>span{max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#6f887a;font:9px DM Mono}
+.catalog-readme pre{max-height:430px;margin:0;padding:16px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #20342a;border-radius:8px;background:#070d0b;color:#b8c7bf;font:10px/1.7 DM Mono;tab-size:2}
+.catalog-readme pre:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.catalog-readme-note{margin:10px 0 0;color:var(--amber);font-size:9px}
