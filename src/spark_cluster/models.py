@@ -240,6 +240,8 @@ class RuntimeEndpoint(BaseModel):
     chat_completions_url: str
     status: Literal["ready", "unreachable"]
     loaded_model_ids: list[str] = Field(default_factory=list)
+    routing_mode: Literal["direct-runtime"] = "direct-runtime"
+    controller_required: bool = False
 
 
 LogLevel = Literal["debug", "info", "warning", "error"]

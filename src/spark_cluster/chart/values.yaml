@@ -5,6 +5,7 @@ image:
   pullPolicy: IfNotPresent
 
 controlPlane:
+  enabled: true
   replicas: 1
   clusterName: gb10-lab
   mode: live
@@ -62,9 +63,9 @@ runtime:
   openAIBaseUrl: http://spark-cluster-openai:8000/v1
   apiKeySecret: ""
   service:
-    type: ClusterIP
+    type: NodePort
     port: 8000
-    nodePort: null
+    nodePort: 30000
   cache:
     cpuGiB: 32
     diskGiB: 1536

@@ -131,6 +131,9 @@ function renderEndpoint(endpoint) {
   $('api-chat-route').textContent = endpoint.chat_completions_url;
   $('api-status').textContent = endpoint.status === 'ready' ? '● ready' : '○ awaiting runtime';
   $('api-status').className = `pill ${endpoint.status}`;
+  $('api-routing-mode').textContent = endpoint.controller_required
+    ? 'Controller routed'
+    : 'Direct to cluster runtime · controller independent';
 }
 
 function renderModels(models) {

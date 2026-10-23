@@ -1,3 +1,4 @@
+{{- if .Values.controlPlane.enabled }}
 {{- $token := randAlphaNum 40 -}}
 {{- $existing := lookup "v1" "Secret" .Release.Namespace "spark-cluster-ingest" -}}
 {{- if $existing -}}
@@ -10,6 +11,8 @@ metadata:
 type: Opaque
 stringData:
   token: {{ $token | quote }}
+{{- end }}
+{{- if .Values.runtime.enabled }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -35,7 +38,8 @@ data:
     TENSOR_PARALLEL_SIZE={{ .Values.runtime.tensorParallelSize }}
     PIPELINE_PARALLEL_SIZE={{ .Values.runtime.pipelineParallelSize }}
     GPU_MEMORY_UTILIZATION={{ .Values.runtime.gpuMemoryUtilization }}
-{{- if .Values.controlPlane.ingress.enabled }}
+{{- end }}
+{{- if and .Values.controlPlane.enabled .Values.controlPlane.ingress.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress

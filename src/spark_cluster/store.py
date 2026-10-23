@@ -229,16 +229,19 @@ class SnapshotStore:
         return [ModelLaunchJob.model_validate_json(row[0]) for row in rows]
 
     def recover_launches(self) -> list[ModelLaunchJob]:
-        recovered: list[ModelLaunchJob] = []
+        # Controller startup must never replay a Kubernetes mutation. The inference
+        # deployment has its own lifecycle and may still be serving normally.
         for job in self.list_launches():
             if job.status not in {"ready", "failed"}:
-                job.status = "queued"
-                job.message = "Recovered after control-plane restart"
-                job.error = None
+                job.status = "failed"
+                job.message = "Controller restarted; runtime was left unchanged"
+                job.error = (
+                    "Inspect the direct runtime endpoint, then retry explicitly only if a new "
+                    "Kubernetes rollout is required"
+                )
                 job.updated_at = datetime.now(UTC)
                 self.save_launch(job)
-                recovered.append(job)
-        return recovered
+        return []
 
     def save_runtime_install(self, job: RuntimeInstallJob) -> None:
         with self._lock:

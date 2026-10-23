@@ -229,6 +229,18 @@ async def test_full_bootstrap_uses_valid_scripts_and_keeps_tokens_out_of_state(t
     assert any('"deferStart": true' in script for script in remote.scripts)
     assert any('"clusterName": "test-cluster"' in script for script in remote.scripts)
     assert any('"nodePort": 30000' in script for script in remote.scripts)
+    dashboard_script = next(
+        script for script in remote.scripts if "helm upgrade --install" in script
+    )
+    assert "spark-cluster-controller" in dashboard_script
+    assert "controller-values.json" in dashboard_script
+    assert "spark-cluster-runtime" in dashboard_script
+    assert "runtime-values.json" in dashboard_script
+    assert dashboard_script.index("spark-cluster-controller") < dashboard_script.index(
+        "spark-cluster-runtime"
+    )
+    assert '"controlPlane": {"enabled": false' in dashboard_script
+    assert '"runtime": {"enabled": false' in dashboard_script
     store.close()
 
 

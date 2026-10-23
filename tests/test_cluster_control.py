@@ -58,6 +58,73 @@ def test_runtime_log_sanitizer_redacts_credentials_and_signed_urls():
 
 
 @pytest.mark.asyncio
+async def test_controller_shutdown_never_scales_or_stops_runtime_resources(tmp_path):
+    class KubernetesMustRemainUntouched:
+        available = True
+
+        async def patch_statefulset(self, *args, **kwargs):
+            raise AssertionError("controller shutdown must not mutate runtime workers")
+
+        async def patch_deployment(self, *args, **kwargs):
+            raise AssertionError("controller shutdown must not mutate the inference head")
+
+    class Logs:
+        kubernetes = KubernetesMustRemainUntouched()
+
+    settings = Settings(
+        mode="live",
+        runtime_control_mode="kubernetes",
+        database_path=tmp_path / "state.db",
+        model_cache_path=tmp_path / "models",
+    )
+    store = SnapshotStore(settings.database_path)
+    service = RuntimeDeploymentService(settings, store, object(), Logs())
+    await service.start()
+    await service.stop()
+    store.close()
+
+
+def test_controller_restart_does_not_replay_an_incomplete_runtime_rollout(tmp_path):
+    store = SnapshotStore(tmp_path / "state.db")
+    fit = ModelFitPlan(
+        repo_id="acme/model",
+        revision="main",
+        repository_bytes=1,
+        weight_bytes=1,
+        weights_gib=1,
+        kv_cache_gib=1,
+        runtime_overhead_gib=1,
+        total_required_gib=3,
+        cluster_nodes=1,
+        usable_per_node_gib=100,
+        usable_cluster_gib=100,
+        minimum_nodes=1,
+        headroom_gib=97,
+        memory_fits=True,
+        storage_available_gib=100,
+        storage_fits=True,
+        fits=True,
+        confidence="repository",
+    )
+    from spark_cluster.models import ModelLaunchJob
+
+    job = ModelLaunchJob(
+        id="interrupted",
+        request=ModelLaunchRequest(model_id="acme/model", served_model_name="model"),
+        model_path="/models/acme/model",
+        status="starting-runtime",
+        fit=fit,
+    )
+    store.save_launch(job)
+    assert store.recover_launches() == []
+    recovered = store.get_launch(job.id)
+    assert recovered.status == "failed"
+    assert recovered.message == "Controller restarted; runtime was left unchanged"
+    assert "retry explicitly" in recovered.error
+    store.close()
+
+
+@pytest.mark.asyncio
 async def test_kubernetes_launch_patches_runtime_resources_and_waits_for_readiness(tmp_path):
     class FakeKubernetes:
         available = True

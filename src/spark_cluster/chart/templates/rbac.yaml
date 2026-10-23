@@ -1,3 +1,4 @@
+{{- if .Values.controlPlane.enabled }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -37,3 +38,4 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: spark-cluster-runtime-control
+{{- end }}

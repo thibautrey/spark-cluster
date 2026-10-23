@@ -324,6 +324,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "has_snapshot": runtime.latest is not None,
         }
 
+    @app.api_route(
+        "/v1", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False
+    )
+    @app.api_route(
+        "/v1/{path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        include_in_schema=False,
+    )
+    async def reject_inference_proxy(path: str = "") -> None:
+        raise HTTPException(
+            status_code=421,
+            detail=(
+                "Inference is never routed through the Spark Cluster controller. "
+                "Send OpenAI-compatible requests directly to "
+                f"{settings.openai_api_base.rstrip('/')}"
+            ),
+        )
+
     @app.get("/api/v1/snapshot", response_model=ClusterSnapshot)
     async def snapshot() -> ClusterSnapshot:
         if runtime.latest is None:

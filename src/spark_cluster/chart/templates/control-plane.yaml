@@ -1,3 +1,4 @@
+{{- if .Values.controlPlane.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -96,6 +97,7 @@ spec:
   storageClassName: {{ .Values.controlPlane.persistence.storageClass }}
   {{- end }}
   resources: { requests: { storage: {{ .Values.controlPlane.persistence.size }} } }
+{{- end }}
 {{- end }}
 {{- if and .Values.models.persistence.enabled (not .Values.models.persistence.existingClaim) }}
 ---

@@ -287,13 +287,14 @@ sudo -n install -m 0755 "$helmdir/linux-$arch/helm" /usr/local/bin/helm
         digest = service.settings.setup_image_digest or ""
         if digest and not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
             raise SetupFailure("SETUP_IMAGE_DIGEST must be a lowercase sha256 digest")
-        values = {
+        shared_values = {
             "image": {
                 "repository": service.settings.setup_image_repository,
                 "tag": service.settings.setup_image_tag,
                 "digest": digest,
             },
             "controlPlane": {
+                "enabled": True,
                 "clusterName": name,
                 "mode": "live",
                 "service": {"type": "NodePort", "nodePort": 30080},
@@ -313,16 +314,31 @@ sudo -n install -m 0755 "$helmdir/linux-$arch/helm" /usr/local/bin/helm
             },
             "agent": {"nodeSelector": {"spark-cluster.io/managed": "true"}},
         }
+        controller_values = json.loads(json.dumps(shared_values))
+        controller_values["runtime"]["enabled"] = False
+        runtime_values = json.loads(json.dumps(shared_values))
+        runtime_values["controlPlane"]["enabled"] = False
+        runtime_values["agent"]["enabled"] = False
         await run(
             head,
             "sudo -n k3s kubectl apply -f - <<'SECRET' >/dev/null\n"
             + json.dumps(secret)
             + "\nSECRET\n"
-            "sudo -n tee /var/lib/spark-cluster/bootstrap/values.json "
-            "<<'VALUES' >/dev/null\n" + json.dumps(values) + "\nVALUES\n"
+            "sudo -n tee /var/lib/spark-cluster/bootstrap/controller-values.json "
+            "<<'CONTROLLER_VALUES' >/dev/null\n"
+            + json.dumps(controller_values)
+            + "\nCONTROLLER_VALUES\n"
+            "sudo -n tee /var/lib/spark-cluster/bootstrap/runtime-values.json "
+            "<<'RUNTIME_VALUES' >/dev/null\n" + json.dumps(runtime_values) + "\nRUNTIME_VALUES\n"
             "sudo -n env KUBECONFIG=/etc/rancher/k3s/k3s.yaml helm upgrade --install "
-            "spark-cluster /var/lib/spark-cluster/bootstrap/spark-cluster --namespace inference "
-            "--values /var/lib/spark-cluster/bootstrap/values.json "
+            "spark-cluster-controller /var/lib/spark-cluster/bootstrap/spark-cluster "
+            "--namespace inference "
+            "--values /var/lib/spark-cluster/bootstrap/controller-values.json "
+            "--wait --timeout 10m >/dev/null 2>&1\n"
+            "sudo -n env KUBECONFIG=/etc/rancher/k3s/k3s.yaml helm upgrade --install "
+            "spark-cluster-runtime /var/lib/spark-cluster/bootstrap/spark-cluster "
+            "--namespace inference "
+            "--values /var/lib/spark-cluster/bootstrap/runtime-values.json "
             "--wait --timeout 10m >/dev/null 2>&1\n",
             timeout=660,
         )

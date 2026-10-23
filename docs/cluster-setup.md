@@ -151,9 +151,11 @@ k3s; temporary enrollment files are root-only and removed on exit.
    selected cluster node addresses and preserve root squashing. A retained static RWX volume binds to
    the model PVC. Its advertised 1 TiB is a scheduling capacity, not a disk reservation or quota;
    model downloads still check actual free space.
-6. Verify Helm `v3.19.0` against its published SHA256, then install the bundled chart, telemetry agents,
-   authenticated cluster bridge and idle runtime resources. The image must be accessible from every
-   node. Configure `SETUP_IMAGE_REPOSITORY` and `SETUP_IMAGE_TAG` for your published build.
+6. Verify Helm `v3.19.0` against its published SHA256, then install two independent releases from
+   the bundled chart. `spark-cluster-controller` owns the bridge, dashboard and agents;
+   `spark-cluster-runtime` owns the direct OpenAI service and idle inference resources. Updating the
+   controller release cannot reconcile or restart runtime objects. The image must be accessible from
+   every node. Configure `SETUP_IMAGE_REPOSITORY` and `SETUP_IMAGE_TAG` for your published build.
 7. Check GPU registration, deployment/agent readiness, PVC binding, dashboard HTTP health and actual
    NFS read/write access from each selected machine as the application UID.
 

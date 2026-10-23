@@ -74,6 +74,21 @@ def test_history_metrics_and_capacity(tmp_path):
         assert performance.json()["tensor_parallel"] == 4
 
 
+def test_controller_refuses_to_proxy_inference_and_advertises_direct_runtime(tmp_path):
+    with make_client(tmp_path) as client:
+        endpoint = client.get("/api/v1/runtime").json()
+        assert endpoint["routing_mode"] == "direct-runtime"
+        assert endpoint["controller_required"] is False
+        assert endpoint["chat_completions_url"] == "http://127.0.0.1:9/v1/chat/completions"
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "anything", "messages": []},
+        )
+        assert response.status_code == 421
+        assert "never routed" in response.json()["detail"]
+        assert endpoint["base_url"] in response.json()["detail"]
+
+
 def test_ingest_token_is_enforced(tmp_path):
     app = create_app(
         Settings(

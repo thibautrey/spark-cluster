@@ -67,6 +67,8 @@ flowchart LR
 
 The inference hot path stays between clients and vLLM. Dashboard availability does not proxy or gate generated tokens. Cluster commands remain in the bridge, and the external controller does not need Kubernetes credentials or direct access to model storage.
 
+Guided setup installs the controller and runtime as separate Helm releases. Controller restarts and upgrades therefore cannot roll, scale, or delete inference pods. The controller rejects `/v1` requests with HTTP 421 to prevent accidental proxy use. See [controller-independent inference](docs/runtime-independence.md).
+
 ## Guided cluster setup
 
 The setup flow is deliberately sequential:
