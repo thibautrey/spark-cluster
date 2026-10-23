@@ -661,15 +661,27 @@ function connectLogs() {
 
 let libraryRefreshRunning = false;
 let modelInventoryRefreshRunning = false;
+let modelInventoryLoadedAt = 0;
 
-async function refreshModelInventory() {
-  if (modelInventoryRefreshRunning) return;
+function modelInventoryIsNeeded() {
+  return document.body.dataset.route === 'launch' || $('local-models-section').open;
+}
+
+async function refreshModelInventory(force = false) {
+  if (modelInventoryRefreshRunning || (!force && Date.now() - modelInventoryLoadedAt < 10_000)) return;
   modelInventoryRefreshRunning = true;
+  if (!localModels.length) {
+    $('local-model-count').textContent = '…';
+    $('launch-model').options[0].textContent = 'Loading models…';
+  }
   try {
     renderModels(await api('/api/v1/models'));
+    modelInventoryLoadedAt = Date.now();
+    $('local-model-count').removeAttribute('title');
   } catch {
     $('local-model-count').textContent = '!';
     $('local-model-count').title = 'Inventory is temporarily unavailable';
+    if (!localModels.length) $('launch-model').options[0].textContent = 'Models unavailable';
   } finally {
     modelInventoryRefreshRunning = false;
   }
@@ -678,7 +690,7 @@ async function refreshModelInventory() {
 async function refreshLibrary() {
   if (libraryRefreshRunning) return;
   libraryRefreshRunning = true;
-  void refreshModelInventory();
+  if (modelInventoryIsNeeded()) void refreshModelInventory();
   const requests = [
     Promise.all([api('/api/v1/downloads'), api('/api/v1/controller/huggingface')]).then(([downloads, status]) => {
       hfTokenStatus = status;
@@ -1137,6 +1149,13 @@ $('cluster-list').addEventListener('click', event => {
   const button = event.target.closest('[data-select-cluster]');
   if (button) selectCluster(button.dataset.selectCluster);
 });
+$('local-models-section').addEventListener('toggle', event => {
+  if (event.currentTarget.open) void refreshModelInventory(true);
+});
+window.addEventListener('hashchange', () => {
+  if (document.body.dataset.route === 'launch') void refreshModelInventory(true);
+});
+
 $('cluster-add-local').addEventListener('click', async () => {
   $('cluster-add-local').disabled = true;
   $('cluster-fleet-status').textContent = 'Inspecting Docker and NVIDIA GPUs…';

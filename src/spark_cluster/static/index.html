@@ -231,7 +231,7 @@
           <div class="view-toolbar"><span class="pill" id="launch-mode">detecting mode</span></div>
           <div class="launch-layout">
             <form class="launch-form" id="launch-form">
-              <label>Local model<select id="launch-model" required><option value="">Select a managed model</option></select></label>
+              <label>Local model<select id="launch-model" required><option value="">Loading models…</option></select></label>
               <label>Served model name<input id="served-model-name" placeholder="deepseek-r1" required /></label>
               <div class="form-row three">
                 <label>Context<select id="launch-context"><option value="131072">128k</option><option value="262144">256k</option><option value="524288" selected>512k</option><option value="1048576">1M</option></select></label>
@@ -320,7 +320,7 @@
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=decoupled-status-v1"></script>
+    <script src="/assets/app.js?v=lazy-inventory-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>

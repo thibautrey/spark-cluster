@@ -44,6 +44,7 @@ def test_dashboard_and_live_snapshot(tmp_path):
         assert "api('/api/v1/runtime')" in dashboard_js
         assert "api('/api/v1/models')" in dashboard_js
         assert "api('/api/v1/launches')" in dashboard_js
+        assert "if (modelInventoryIsNeeded()) void refreshModelInventory();" in dashboard_js
         assert "await api('/api/v1/control')" not in dashboard_js
 
 
