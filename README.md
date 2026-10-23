@@ -169,7 +169,7 @@ Always run **Check fit** before downloading or launching. It separates weights, 
 
 Downloads use Hugging Face's resumable snapshot cache on the external controller. After the internet download completes, Spark Cluster creates a signed manifest with the size and SHA-256 digest of every model file. The bridge resumes file-by-file HTTP transfers from the controller, verifies every digest, and installs the result into the cluster's shared model volume. GPU nodes mount that volume instead of contacting Hugging Face individually.
 
-Jobs, attempts, internet progress, LAN delivery progress, fit results, and errors are persisted in SQLite on both sides. Interrupted internet downloads and partial LAN files are reused after a restart. If cluster delivery fails, the complete controller copy remains available and **Retry** restarts only the LAN stage.
+Jobs, attempts, internet progress, LAN delivery progress, fit results, and errors are persisted in SQLite on both sides. Interrupted internet downloads and partial LAN files are reused after a restart. Downloads can be paused without losing partial files, resumed from their previous position, or cancelled with partial-file cleanup on both the controller and cluster. Deleting a managed model removes the controller copy and the shared cluster copy after confirmation. If cluster delivery fails, the complete controller copy remains available and **Retry** restarts only the LAN stage.
 
 A launch performs these steps:
 
@@ -251,6 +251,10 @@ The complete setup-specific reference is in [docs/cluster-setup.md](docs/cluster
 | `GET /api/v1/models/storage` | Available bytes in the cluster's shared model volume. |
 | `POST /api/v1/performance/plan` | Model, workload, node, and topology-aware launch settings. |
 | `POST /api/v1/models/download` | Resumable model download. |
+| `POST /api/v1/downloads/{id}/pause` | Suspend an internet or LAN transfer and preserve partial files. |
+| `POST /api/v1/downloads/{id}/resume` | Continue a paused transfer from preserved files. |
+| `POST /api/v1/downloads/{id}/cancel` | Stop a transfer and remove partial controller and cluster files. |
+| `DELETE /api/v1/model-management/models/{repo}` | Delete a managed model from controller and cluster storage. |
 | `POST /api/v1/models/import` | Ask the bridge to copy a staged controller model into shared storage. |
 | `GET /api/v1/controller/downloads/{id}/manifest` | Signed file manifest used by the cluster bridge. |
 | `GET /api/v1/controller/downloads/{id}/files/{path}` | Range-capable authenticated LAN file delivery. |

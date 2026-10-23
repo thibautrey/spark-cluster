@@ -208,6 +208,10 @@ All setup endpoints use the model administration bearer token in live mode.
 | `POST /api/v1/models/import` | Start or resume a controller-to-cluster model copy |
 | `GET /api/v1/models/storage` | Report free space in shared cluster model storage |
 | `GET /api/v1/downloads/{id}` | Read internet or LAN transfer progress |
+| `POST /api/v1/downloads/{id}/pause` | Pause a transfer while preserving partial files |
+| `POST /api/v1/downloads/{id}/resume` | Resume a paused transfer from partial files |
+| `POST /api/v1/downloads/{id}/cancel` | Cancel and delete partial files on controller and cluster storage |
+| `DELETE /api/v1/model-management/models/{repo}` | Delete a managed model from controller and shared cluster storage |
 | `GET /api/v1/controller/downloads/{id}/manifest` | Retrieve the signed model file manifest |
 | `GET /api/v1/controller/downloads/{id}/files/{path}` | Resume an authenticated model file transfer |
 | `GET /api/v1/controller/verify` | HMAC-authenticated bridge identity check |
