@@ -134,8 +134,12 @@ function renderMemory(nodes) {
     const runtime = Math.max(1, Math.round((node.memory.used_gib - node.memory.model_gib - node.memory.kv_cache_gib) / 3));
     const free = Math.max(1, 16 - model - kv - runtime);
     const blocks = (className, count) => Array(Math.max(0, count)).fill(`<i class="${className}"></i>`).join('');
-    return `<div><div class="memory-node-head"><b>${escapeHtml(node.hostname)}</b><span>${node.memory.used_gib.toFixed(0)} / ${node.memory.total_gib.toFixed(0)} GiB</span></div><div class="memory-block">${blocks('model', model)}${blocks('kv', kv)}${blocks('runtime', runtime)}${blocks('free', free)}</div><div class="memory-labels"><span><i class="m"></i>model</span><span title="${kvKnown ? `${node.memory.kv_cache_source} KV allocation` : 'Runtime does not expose KV allocation'}"><i class="k"></i>${kvKnown ? 'KV' : 'KV unavailable'}</span><span><i class="r"></i>runtime</span><span><i class="f"></i>free</span></div></div>`;
+    return `<div><div class="memory-node-head"><b>${escapeHtml(node.hostname)}</b><span>${node.memory.used_gib.toFixed(0)} / ${node.memory.total_gib.toFixed(0)} GiB</span></div><div class="memory-block">${blocks('model', model)}${blocks('kv', kv)}${blocks('runtime', runtime)}${blocks('free', free)}</div></div>`;
   }).join('');
+  const knownKvNodes = nodes.filter(node => node.memory.kv_cache_source !== 'unavailable').length;
+  const legend = $('memory-legend');
+  legend.hidden = nodes.length === 0;
+  legend.innerHTML = `<span><i class="m"></i>model</span><span title="${knownKvNodes ? `KV allocation reported by ${knownKvNodes} of ${nodes.length} nodes` : 'Runtime does not expose KV allocation'}"><i class="k"></i>${knownKvNodes ? 'KV' : 'KV unavailable'}</span><span><i class="r"></i>runtime</span><span><i class="f"></i>free</span>`;
 }
 
 function drawSparkline(values) {
