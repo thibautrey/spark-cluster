@@ -3,6 +3,7 @@ import json
 import subprocess
 import time
 from copy import deepcopy
+from html.parser import HTMLParser
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,6 +20,25 @@ from spark_cluster.config import Settings
 from spark_cluster.setup_models import DiscoveryRequest, SetupRequest
 from spark_cluster.setup_scripts import chart_archive, registry_configuration
 from spark_cluster.store import SnapshotStore
+
+class SectionTree(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.sections = []
+        self.parents = {}
+
+    def handle_starttag(self, tag, attrs):
+        if tag != "section":
+            return
+        section_id = dict(attrs).get("id")
+        if section_id:
+            self.parents[section_id] = self.sections[-1] if self.sections else None
+        self.sections.append(section_id)
+
+    def handle_endtag(self, tag):
+        if tag == "section":
+            self.sections.pop()
+
 
 PIN = "SHA256:" + "A" * 43
 
@@ -370,6 +390,9 @@ def test_demo_wizard_end_to_end_without_network_or_ssh(tmp_path, monkeypatch):
         assert "Cluster setup" in page
         assert "Discover machines" in page
         assert "Connect an existing cluster" in page
+        tree = SectionTree()
+        tree.feed(page)
+        assert tree.parents["models"] is None
         assert client.get("/assets/setup.js").status_code == 200
         discovery = client.post("/api/v1/setup/discover", json={}).json()
         assert len(discovery["nodes"]) == 4

@@ -281,8 +281,8 @@ function renderActiveDownloads(downloads) {
     downloadSamples.clear();
     return;
   }
-  $('active-download-count').textContent = `${active.length} active`;
-  $('active-download-title').textContent = active.length === 1 ? 'Model transfer in progress' : `${active.length} model transfers in progress`;
+  $('active-download-count').textContent = `${active.length} in progress`;
+  $('active-download-title').textContent = 'Downloads';
   const activeIds = new Set(active.map(job => job.id));
   for (const id of downloadSamples.keys()) if (!activeIds.has(id)) downloadSamples.delete(id);
   $('active-download-list').innerHTML = active.map(job => {
@@ -293,14 +293,10 @@ function renderActiveDownloads(downloads) {
     const rate = paused ? 0 : downloadRate(job);
     const remaining = Math.max(0, job.total_bytes - currentBytes);
     const destination = job.destination === 'cluster' ? 'Cluster storage' : 'Controller storage';
-    const finalStage = job.destination === 'cluster' ? 'Distribute' : 'Install';
-    const phase = downloadPhase(job);
     return `<article class="active-download-card ${paused ? 'paused' : ''}">
       <div class="active-download-identity"><span class="active-download-icon">↓</span><div><p>${escapeHtml(downloadPhaseLabel(job))}</p><h4>${escapeHtml(job.repo_id)}</h4><small>${escapeHtml(job.target_cluster_name || 'Controller storage')} · ${escapeHtml(job.message || job.status)}</small></div><span class="active-download-status">${escapeHtml(job.status.replaceAll('-', ' '))}</span></div>
       <div class="active-download-progress"><div><i style="width:${progress}%"></i></div><b>${progress.toFixed(2)}%</b></div>
-      <div class="active-download-stats"><span><small>Transferred</small><b>${formatBytes(currentBytes)} <em>/ ${formatBytes(job.total_bytes)}</em></b></span><span><small>Current speed</small><b>${paused ? 'Paused' : rate ? `${formatBytes(rate)}/s` : 'Measuring…'}</b></span><span><small>Estimated time</small><b>${paused ? 'Paused' : rate ? formatDuration(remaining / rate) : 'Calculating…'}</b></span><span><small>Destination</small><b>${destination}</b></span></div>
-      <div class="active-download-phases">${['Resolve', 'Download', finalStage].map((label, index) => `<span class="${index < phase ? 'done' : index === phase ? 'active' : ''}"><i>${index < phase ? '✓' : index + 1}</i>${label}</span>`).join('')}</div>
-      <div class="active-download-actions"><button class="download-control" type="button" data-download-action="${paused ? 'resume' : 'pause'}" data-job-id="${escapeHtml(job.id)}" data-repo-id="${escapeHtml(job.repo_id)}">${paused ? 'Resume' : 'Pause'}</button><button class="download-control danger" type="button" data-download-action="cancel" data-job-id="${escapeHtml(job.id)}" data-repo-id="${escapeHtml(job.repo_id)}">Cancel &amp; remove files</button></div>
+      <div class="active-download-footer"><div class="active-download-summary"><span><b>${formatBytes(currentBytes)}</b> of ${formatBytes(job.total_bytes)}</span><span>${paused ? 'Paused' : rate ? `${formatBytes(rate)}/s` : 'Measuring speed…'}</span><span>${paused ? 'Paused' : rate ? `${formatDuration(remaining / rate)} remaining` : 'Estimating time…'}</span><span>${escapeHtml(destination)}</span></div><div class="active-download-actions"><button class="download-control" type="button" data-download-action="${paused ? 'resume' : 'pause'}" data-job-id="${escapeHtml(job.id)}" data-repo-id="${escapeHtml(job.repo_id)}">${paused ? 'Resume' : 'Pause'}</button><button class="download-control danger" type="button" data-download-action="cancel" data-job-id="${escapeHtml(job.id)}" data-repo-id="${escapeHtml(job.repo_id)}">Cancel</button></div></div>
     </article>`;
   }).join('');
 }

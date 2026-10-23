@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=setup-clean-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=downloads-clean-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -83,6 +83,7 @@
           </div>
           <div class="setup-page setup-ready" data-setup-page="4" hidden><span class="setup-success">✓</span><h3>Your cluster services are ready</h3><p>Nodes, GPU scheduling, dashboard, telemetry and shared model storage passed verification.</p><p class="setup-note">Next, add a model and launch it to verify inference and collective GPU communication under load.</p><a class="primary setup-link" id="setup-open" href="#models">Open cluster dashboard →</a><button class="secondary" id="setup-new" type="button">Configure another cluster</button></div>
           <div class="setup-footer"><span id="setup-summary">Select the machines to configure.</span><div><button class="secondary" id="setup-back" type="button" hidden>Back</button><button class="primary" id="setup-next" type="button">Choose machines →</button></div></div>
+          </section>
         </section>
 
         <section class="metrics" id="overview" data-route-view="overview">
@@ -145,9 +146,8 @@
               <span id="active-download-count">0 active</span>
             </div>
             <form id="hf-token-form" class="hf-token-form" hidden>
-              <div><b>Download with your Hugging Face account</b><p>A read token gives you higher request limits and can reduce throttling. Transfer speed still depends on the network and storage.</p><a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer">Create a read token ↗</a></div>
-              <div class="hf-token-fields"><label>Hugging Face token<input id="hf-download-token" type="password" autocomplete="off" placeholder="hf_…" required /></label><label id="hf-token-admin-label" hidden>Controller admin token<input id="hf-token-admin" type="password" autocomplete="off" /></label><button type="submit" id="hf-token-save">Save &amp; resume downloads</button></div>
-              <small>Stored on this controller. Active Hub downloads restart with the new token and preserve downloaded files. Paused downloads stay paused.</small>
+              <div class="hf-token-copy"><span aria-hidden="true">HF</span><div><b>Faster Hub downloads</b><small>Add a read token to reduce throttling. <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer">Get a token ↗</a></small></div></div>
+              <div class="hf-token-fields"><label><span class="sr-only">Hugging Face token</span><input id="hf-download-token" type="password" autocomplete="off" placeholder="Hugging Face token · hf_…" required /></label><label id="hf-token-admin-label" hidden><span class="sr-only">Controller admin token</span><input id="hf-token-admin" type="password" autocomplete="off" placeholder="Controller admin token" /></label><button type="submit" id="hf-token-save">Save token</button></div>
               <p id="hf-token-message" role="status"></p>
             </form>
             <p id="hf-token-saved" role="status" hidden></p>
@@ -326,7 +326,7 @@
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=optimization-lab-v1"></script>
+    <script src="/assets/app.js?v=downloads-clean-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>
