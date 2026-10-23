@@ -35,9 +35,7 @@ spark-deepseek = "spark_deepseek.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/spark_deepseek"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"deploy/helm/spark-deepseek" = "spark_deepseek/chart"
+artifacts = ["src/spark_deepseek/chart/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

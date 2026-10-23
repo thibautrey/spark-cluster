@@ -16,8 +16,8 @@ GPU_PLUGIN_VERSION = "v0.17.4"
 
 def chart_archive() -> bytes:
     chart = Path(__file__).parent / "chart"
-    if not chart.exists():
-        chart = Path(__file__).resolve().parents[2] / "deploy/helm/spark-deepseek"
+    if not (chart / "Chart.yaml").exists():
+        raise SetupFailure("The packaged Helm chart is unavailable")
     output = io.BytesIO()
     with tarfile.open(fileobj=output, mode="w:gz") as archive:
         archive.add(chart, arcname="spark-deepseek")
@@ -272,7 +272,8 @@ sudo -n install -m 0755 "$helmdir/linux-$arch/helm" /usr/local/bin/helm
             "<<'VALUES' >/dev/null\n" + json.dumps(values) + "\nVALUES\n"
             "sudo -n env KUBECONFIG=/etc/rancher/k3s/k3s.yaml helm upgrade --install "
             "spark-deepseek /var/lib/spark-deepseek/bootstrap/spark-deepseek --namespace inference "
-            "--values /var/lib/spark-deepseek/bootstrap/values.json --wait --timeout 10m >/dev/null 2>&1\n",
+            "--values /var/lib/spark-deepseek/bootstrap/values.json "
+            "--wait --timeout 10m >/dev/null 2>&1\n",
             timeout=660,
         )
     elif step == "verify":
