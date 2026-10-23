@@ -53,7 +53,6 @@ function renderClusters(state) {
   $('cluster-list').innerHTML = state.clusters.length ? state.clusters.map(cluster => `<article class="cluster-card ${cluster.active ? 'active' : ''}" data-cluster-id="${escapeHtml(cluster.id)}"><div class="cluster-card-head"><span class="cluster-card-icon">${cluster.kind === 'local-docker' ? 'GPU' : 'LAN'}</span><div><b>${escapeHtml(cluster.name)}</b><small>${escapeHtml(cluster.kind)} · ${escapeHtml(cluster.hardware)} · ${escapeHtml(cluster.status)}</small></div></div><div class="cluster-card-meta"><span>${cluster.gpu_count ? `${cluster.gpu_count} × ${escapeHtml(cluster.gpu_model || 'NVIDIA GPU')}` : escapeHtml(cluster.endpoint || 'endpoint pending')}</span>${cluster.gpu_memory_gib ? `<span>${cluster.gpu_memory_gib} GiB / GPU</span>` : ''}<span>runtime :${cluster.runtime_port}</span></div>${cluster.active ? '<span class="pill ready">Active</span>' : `<button class="secondary" type="button" data-select-cluster="${escapeHtml(cluster.id)}">Use this cluster</button>`}</article>`).join('') : '<div class="empty-state"><b>No cluster configured</b><span>Detect local GPUs or attach a remote bridge.</span></div>';
   const active = state.clusters.find(cluster => cluster.id === state.active_cluster_id);
   if (active) {
-    $('cluster-name').textContent = active.name.toUpperCase();
     $('cluster-fleet-status').textContent = `${active.name} is the active target for capacity, downloads, launches, logs and telemetry.`;
   }
 }
@@ -80,7 +79,6 @@ async function selectCluster(clusterId) {
 function render(snapshot) {
   const memoryUsed = snapshot.nodes.reduce((sum, node) => sum + node.memory.used_gib, 0);
   const memoryTotal = snapshot.nodes.reduce((sum, node) => sum + node.memory.total_gib, 0);
-  $('cluster-name').textContent = snapshot.cluster_name.toUpperCase();
   $('timestamp').textContent = new Date(snapshot.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
   $('output-tps').textContent = Math.round(snapshot.total_output_tokens_per_second);
   $('hit-rate').textContent = snapshot.cache_hit_rate.toFixed(1);

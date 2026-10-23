@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=compact-logs-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=clean-copy-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -31,7 +31,7 @@
 
       <main>
         <header>
-          <div><p class="eyebrow">CONTROL PLANE / <span id="cluster-name">GB10 LAB</span></p><h1 id="page-title">Cluster overview</h1></div>
+          <div><h1 id="page-title">Cluster overview</h1></div>
           <div class="header-actions"><label class="cluster-switch"><span>Cluster</span><select id="cluster-select" aria-label="Active cluster"><option value="">No cluster</option></select></label><label class="route-select"><span>Section</span><select id="route-select" aria-label="Dashboard section"><option value="setup">Cluster setup</option><option value="overview" selected>Overview</option><option value="api">API endpoint</option><option value="models">Models</option><option value="launch">Launch</option><option value="logs">Runtime logs</option><option value="topology">Topology</option><option value="cache">KV cache</option><option value="memory">Memory</option></select></label><span class="live"><i></i>LIVE</span><span class="timestamp" id="timestamp">—</span></div>
         </header>
 
@@ -111,7 +111,7 @@
         <section class="grid-main">
           <article class="panel topology-panel" id="topology" data-route-view="topology">
             <div class="topology" id="topology-map"><div class="fabric-line"></div></div>
-            <div class="legend"><span class="pill topology-count" id="node-count">0 nodes</span><span><i class="green"></i>Healthy</span><span><i class="amber"></i>Degraded</span><span><i class="muted"></i>Offline</span><span class="fabric-label">200G fabric</span></div>
+            <div class="legend"><span class="pill topology-count" id="node-count">0 nodes</span><span><i class="green"></i>Healthy</span><span><i class="amber"></i>Degraded</span><span><i class="muted"></i>Offline</span></div>
           </article>
 
           <article class="panel cache-panel" id="cache" data-route-view="cache">
@@ -134,7 +134,6 @@
         </section>
 
         <section class="panel memory-panel" id="memory" data-route-view="memory">
-          <div class="view-toolbar"><div class="segmented"><button class="active">Allocation</button><button>Utilization</button></div></div>
           <div class="memory-grid" id="memory-grid"></div>
         </section>
 
