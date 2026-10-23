@@ -456,4 +456,6 @@ def test_catalog_filters_are_hidden_until_requested(catalog):
     assert 'id="catalog-filter-sheet" hidden' in page
     assert '<details class="catalog-secondary" id="local-models-section">' in page
     assert '<details class="catalog-secondary" id="download-history-section">' in page
+    assert '<details class="download-options" id="download-options">' in page
+    assert "Download once, distribute over LAN" not in page
     assert "catalog-ranking-help" not in page

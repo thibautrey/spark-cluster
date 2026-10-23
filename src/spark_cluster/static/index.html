@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=inventory-clean-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=clean-detail-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -190,22 +190,16 @@
               <div class="catalog-sheet-body" id="catalog-sheet-body">
                 <div class="catalog-sheet-detail"><div id="catalog-detail" hidden></div></div>
                 <form class="model-form" id="model-form" hidden>
-                  <div class="form-title"><span>＋</span><div><b>Download once, distribute over LAN</b><small>The controller downloads from Hugging Face; the cluster copies from the controller into shared storage.</small></div></div>
+                  <div class="form-title"><span>↓</span><div><b>Download to controller</b><small>Nodes copy the model over the LAN.</small></div></div>
                   <label id="manual-repo-label" hidden>Repository ID<input id="repo-id" name="repo_id" placeholder="organization/model-name" required /></label>
-                  <div class="form-row">
-                    <label>Revision<input id="revision" name="revision" value="main" /></label>
-                    <label>Fallback weight precision<select id="weight-bits" name="bits"><option value="4">4-bit</option><option value="8">8-bit</option><option value="16">BF16 / FP16</option></select></label>
-                  </div>
-                  <div class="form-row three">
-                    <label>Context<select id="context-length" name="context"><option value="8192">8k</option><option value="32768" selected>32k</option><option value="131072">128k</option><option value="262144">256k</option><option value="524288">512k</option></select></label>
-                    <label>Concurrency<input id="concurrency" name="concurrency" type="number" min="1" max="1024" value="1" /></label>
-                    <label>KV precision<select id="fit-kv-dtype"><option value="auto">Automatic</option><option value="bf16">BF16</option><option value="fp8_e4m3">FP8</option></select></label>
-                  </div>
-                  <div class="fit-result neutral" id="fit-result"><span class="fit-symbol">?</span><div><b>Run an intelligent fit check</b><small>Repository precision, architecture, sharding, KV tiers, NVMe placement, engine support, and storage.</small></div></div>
+                  <details class="download-options" id="download-options"><summary><span>Download options</span><small>Automatic defaults</small></summary><div class="download-options-body">
+                    <div class="form-row"><label>Revision<input id="revision" name="revision" value="main" /></label><label>Fallback precision<select id="weight-bits" name="bits"><option value="4">4-bit</option><option value="8">8-bit</option><option value="16">BF16 / FP16</option></select></label></div>
+                    <div class="form-row three"><label>Context<select id="context-length" name="context"><option value="8192">8k</option><option value="32768" selected>32k</option><option value="131072">128k</option><option value="262144">256k</option><option value="524288">512k</option></select></label><label>Concurrency<input id="concurrency" name="concurrency" type="number" min="1" max="1024" value="1" /></label><label>KV precision<select id="fit-kv-dtype"><option value="auto">Automatic</option><option value="bf16">BF16</option><option value="fp8_e4m3">FP8</option></select></label></div>
+                    <label>Admin token <span class="optional">optional</span><input id="admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label>
+                  </div></details>
+                  <div class="fit-result neutral" id="fit-result"><span class="fit-symbol">?</span><div><b>Check compatibility</b><small>Memory, storage, and runtime support.</small></div></div>
                   <div class="fit-details" id="fit-details" hidden></div>
-                  <p class="catalog-note">Detected repository precision takes priority over the fallback selector. Downloads preserve original files and may require extra runtime artifacts reported by the plan.</p>
-                  <label>Admin token <span class="optional">optional</span><input id="admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label>
-                  <div class="form-actions"><button class="secondary" id="check-fit" type="button">Check fit</button><button class="primary" id="download-model" type="submit" disabled>Download once</button></div>
+                  <div class="form-actions"><button class="secondary" id="check-fit" type="button">Check fit</button><button class="primary" id="download-model" type="submit" disabled>Download</button></div>
                 </form>
               </div>
             </section>
@@ -330,7 +324,7 @@
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>
-    <script src="/assets/catalog.js?v=clean-cards-v1"></script>
+    <script src="/assets/catalog.js?v=clean-detail-v1"></script>
     <script src="/assets/setup.js?v=setup-sheet-v1"></script>
   </body>
 </html>

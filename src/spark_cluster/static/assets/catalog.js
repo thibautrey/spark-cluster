@@ -136,7 +136,7 @@ function catalogReadme(model) {
 
 function recommendationBadge(model, detail = false) {
   const info = model.recommendation;
-  if (!info) return '';
+  if (!info || (detail && info.priority === 0)) return '';
   if (!detail) {
     if (info.priority === 0 || info.priority === 1) return '';
     return `<span class="catalog-spark-badge ${info.priority < 0 ? 'caution' : ''}" title="${escapeHtml([...info.reasons, ...info.caveats].join(' '))}">${escapeHtml(info.label)}</span>`;
@@ -303,9 +303,9 @@ function resetModelFit() {
   $('check-fit').disabled = false;
   $('check-fit').textContent = 'Check fit';
   $('download-model').disabled = true;
-  $('download-model').textContent = 'Download once';
+  $('download-model').textContent = 'Download';
   $('fit-result').className = 'fit-result neutral';
-  $('fit-result').innerHTML = '<span class="fit-symbol">?</span><div><b>Run an intelligent fit check</b><small>Architecture, memory tiers, engine support, and storage.</small></div>';
+  $('fit-result').innerHTML = '<span class="fit-symbol">?</span><div><b>Check compatibility</b><small>Memory, storage, and runtime support.</small></div>';
   $('fit-details').hidden = true;
 }
 
@@ -315,6 +315,7 @@ async function inspectCatalogModel(repo, revision = 'main', opener = null) {
   $('repo-id').value = repo;
   $('revision').value = revision;
   resetModelFit();
+  $('download-options').open = false;
   renderCatalogCards();
   openCatalogSheet(opener, repo.split('/').pop());
   $('catalog-detail').hidden = false;
@@ -378,6 +379,7 @@ $('catalog-manual').addEventListener('click', () => {
   ++detailRequest;
   catalogSelection = null;
   resetModelFit();
+  $('download-options').open = false;
   $('repo-id').value = $('catalog-query').value.includes('/') ? $('catalog-query').value.trim() : '';
   $('revision').value = 'main';
   $('catalog-detail').hidden = true;
