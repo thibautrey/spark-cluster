@@ -398,18 +398,27 @@ function connectLogs() {
   socket.onclose = () => setTimeout(connectLogs, 1500);
 }
 
+let libraryRefreshRunning = false;
+
 async function refreshLibrary() {
-  try {
-    const [state, downloads] = await Promise.all([api('/api/v1/control'), api('/api/v1/downloads')]);
-    renderEndpoint(state.runtime);
-    renderModels(state.models);
+  if (libraryRefreshRunning) return;
+  libraryRefreshRunning = true;
+  const downloadsRequest = api('/api/v1/downloads').then(downloads => {
     renderDownloads(downloads);
     document.dispatchEvent(new CustomEvent('library-updated', {detail: downloads}));
+  }).catch(() => {});
+  try {
+    const state = await api('/api/v1/control');
+    renderEndpoint(state.runtime);
+    renderModels(state.models);
     renderLaunches(state.launches);
     $('launch-mode').textContent = state.runtime_control_mode;
   } catch (error) {
     $('api-status').textContent = 'control plane error';
     $('api-status').className = 'pill unreachable';
+  } finally {
+    await downloadsRequest;
+    libraryRefreshRunning = false;
   }
 }
 

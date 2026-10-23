@@ -425,3 +425,32 @@ def test_cached_repository_does_not_need_double_disk_space(tmp_path, monkeypatch
     )
     assert plan.runtime_storage_fits
     assert plan.fits
+
+
+def test_managed_inventory_only_scans_valid_repository_depth(tmp_path):
+    model_root = tmp_path / "models"
+    valid = model_root / "acme" / "model"
+    partial = model_root / ".partial" / "job"
+    nested = model_root / "acme" / "model" / "unexpected"
+    for path, repo_id in (
+        (valid, "acme/model"),
+        (partial, "ignored/partial"),
+        (nested, "ignored/deep"),
+    ):
+        path.mkdir(parents=True, exist_ok=True)
+        (path / ".spark-cluster.json").write_text(
+            json.dumps(
+                {
+                    "repo_id": repo_id,
+                    "revision": "main",
+                    "downloaded_at": "2026-10-23T12:00:00+00:00",
+                }
+            )
+        )
+    manager = ModelManager(
+        Settings(model_cache_path=model_root),
+        SnapshotStore(tmp_path / "inventory.db"),
+        SimpleNamespace(latest=None),
+    )
+    assert [model.id for model in manager._scan_managed_models(set())] == ["acme/model"]
+    manager.store.close()

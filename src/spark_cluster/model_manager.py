@@ -936,9 +936,26 @@ class ModelManager:
 
     def _scan_managed_models(self, loaded: set[str]) -> list[LocalModel]:
         models: list[LocalModel] = []
-        for manifest_path in self.settings.model_cache_path.glob("**/.spark-cluster.json"):
-            if ".partial" in manifest_path.parts:
+        root = self.settings.model_cache_path
+        if not root.exists():
+            return models
+        manifest_paths: list[Path] = []
+        for owner in root.iterdir():
+            if not owner.is_dir() or owner.name.startswith("."):
                 continue
+            direct_manifest = owner / ".spark-cluster.json"
+            if direct_manifest.is_file():
+                manifest_paths.append(direct_manifest)
+                continue
+            try:
+                manifest_paths.extend(
+                    model / ".spark-cluster.json"
+                    for model in owner.iterdir()
+                    if model.is_dir() and (model / ".spark-cluster.json").is_file()
+                )
+            except OSError:
+                continue
+        for manifest_path in manifest_paths:
             try:
                 manifest = json.loads(manifest_path.read_text())
                 downloaded_at = datetime.fromisoformat(manifest["downloaded_at"])
