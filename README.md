@@ -336,3 +336,41 @@ credential is never sent to the browser. Catalog requests have bounded page size
 ### Evidence-based model discovery
 
 The catalog combines technical metadata, exact-revision community recipes and bounded popularity signals. Every recommendation explains its evidence and caveats; capacity and runtime launch support remain separate checks. See the [research and deterministic ranking policy](docs/research/model-selection-2026-10-23.md).
+
+## MCP server for AI clients
+
+The controller exposes a stateless [Model Context Protocol](https://modelcontextprotocol.io/) Streamable HTTP endpoint:
+
+```text
+http://sparkcluster.lan/mcp
+```
+
+Point any Streamable HTTP MCP client at that URL. Read-only tools require no credential:
+
+| Tool | Purpose |
+| --- | --- |
+| `search_model_catalog` | Search the live Hugging Face shortlist with the evidence-based Spark ranking or an explicit Hub sort. |
+| `inspect_model` | Read exact repository metadata, recommendation evidence, license, files and README. Repository content is returned with an explicit untrusted-content notice. |
+| `check_model_fit` | Compare memory, storage, runtime and placement feasibility for up to 12 models on 1–16 Sparks. |
+| `get_cluster_status` | Read the latest cluster, node, memory, cache and runtime snapshot. |
+| `list_installed_models` | Inspect models available to the controller or cluster runtime. |
+| `list_model_activity` | Follow download and launch jobs. |
+
+The `recommend-models` MCP prompt guides a client through search, repository inspection and capacity checks rather than treating downloads, names or README claims as proof.
+
+When `SPARK_CLUSTER_MODEL_ADMIN_TOKEN` is configured, clients that send the same token as an `Authorization: Bearer …` header additionally receive `download_model` and `launch_model`. Keep that credential in the MCP client's secret store. A client without the header remains read-only. If the controller has no administration token configured, its existing unprotected mutation policy also applies to MCP.
+
+Generic client configuration:
+
+```json
+{
+  "mcpServers": {
+    "spark-cluster": {
+      "type": "streamable-http",
+      "url": "http://sparkcluster.lan/mcp"
+    }
+  }
+}
+```
+
+For administrative access, configure an `Authorization` header through the client's secret mechanism. Do not commit the token to a repository or client configuration file.

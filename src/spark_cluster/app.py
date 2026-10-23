@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import hmac
 import json
 import shutil
 from collections.abc import AsyncIterator
@@ -19,7 +20,13 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.staticfiles import StaticFiles
 
 from .capacity import calculate_capacity
@@ -40,6 +47,7 @@ from .cluster_control import (
 )
 from .cluster_setup import ClusterSetupService, SetupFailure
 from .config import Settings
+from .mcp_server import SparkClusterMCP
 from .model_manager import (
     ModelAlreadyInstalled,
     ModelDeletionBlocked,
@@ -189,6 +197,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             }
         )
 
+    async def enqueue_model_download(
+        request: ModelDownloadRequest, request_base_url: str
+    ) -> DownloadJob:
+        fit_plan = await model_fit_plan(request)
+        destination = "cluster" if settings.remote_cluster_url else "local"
+        controller_url = (
+            model_relay.controller_url(request_base_url) if destination == "cluster" else None
+        )
+        return await model_manager.enqueue(
+            request,
+            destination=destination,
+            controller_url=controller_url,
+            fit_plan=fit_plan,
+        )
+
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         await runtime.start()
@@ -220,6 +243,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.optimization_lab = optimization_lab
     app.state.settings = settings
     app.state.cluster_connector = cluster_connector
+    mcp_server = SparkClusterMCP(
+        browser=browser,
+        runtime=runtime,
+        model_manager=model_manager,
+        deployment_service=deployment_service,
+        model_fit_plan=model_fit_plan,
+        download_model=enqueue_model_download,
+    )
+    app.state.mcp_server = mcp_server
     app.add_middleware(RemoteClusterProxyMiddleware, settings=settings)
     app.add_middleware(
         CORSMiddleware,
@@ -315,6 +347,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/", include_in_schema=False)
     async def index() -> FileResponse:
         return FileResponse(static_dir / "index.html")
+
+    @app.api_route("/mcp", methods=["GET", "POST", "DELETE"], include_in_schema=False)
+    async def mcp_endpoint(request: Request):
+        if request.method != "POST":
+            return JSONResponse(
+                status_code=405,
+                headers={"Allow": "POST"},
+                content={
+                    "name": "spark-cluster",
+                    "transport": "MCP Streamable HTTP",
+                    "endpoint": str(request.base_url).rstrip("/") + "/mcp",
+                    "message": "Connect an MCP client with HTTP POST.",
+                },
+            )
+        origin = request.headers.get("origin")
+        controller_origin = str(request.base_url).rstrip("/")
+        allowed_origins = {*settings.cors_origin_list, controller_origin}
+        if origin and origin not in allowed_origins:
+            return JSONResponse(status_code=403, content={"detail": "Origin not allowed"})
+        try:
+            payload = await request.json()
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return JSONResponse(
+                status_code=400,
+                content=SparkClusterMCP.error(None, -32700, "Parse error"),
+            )
+        expected = settings.model_admin_token
+        authorization = request.headers.get("authorization", "")
+        admin = not expected or hmac.compare_digest(authorization, f"Bearer {expected}")
+        messages = payload if isinstance(payload, list) else [payload]
+        if not messages or any(not isinstance(item, dict) for item in messages):
+            return JSONResponse(
+                status_code=400,
+                content=SparkClusterMCP.error(None, -32600, "Invalid Request"),
+            )
+        responses = []
+        base_url = str(request.base_url).rstrip("/")
+        for message in messages:
+            response = await mcp_server.request(message, admin=admin, base_url=base_url)
+            if response is not None:
+                responses.append(response)
+        if not responses:
+            return Response(status_code=202)
+        content = responses if isinstance(payload, list) else responses[0]
+        return JSONResponse(content=content)
 
     @app.get("/healthz")
     async def health() -> dict:
@@ -554,19 +631,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     async def download_model(request: ModelDownloadRequest, http_request: Request) -> DownloadJob:
         try:
-            fit_plan = await model_fit_plan(request)
-            destination = "cluster" if settings.remote_cluster_url else "local"
-            controller_url = (
-                model_relay.controller_url(str(http_request.base_url).rstrip("/"))
-                if destination == "cluster"
-                else None
-            )
-            return await model_manager.enqueue(
-                request,
-                destination=destination,
-                controller_url=controller_url,
-                fit_plan=fit_plan,
-            )
+            return await enqueue_model_download(request, str(http_request.base_url).rstrip("/"))
         except RemoteClusterUnavailable:
             raise
         except ModelDoesNotFit as error:

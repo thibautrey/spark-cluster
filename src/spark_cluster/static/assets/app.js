@@ -884,6 +884,12 @@ $('copy-endpoint').addEventListener('click', async () => {
   $('copy-endpoint').textContent = 'Copied';
   setTimeout(() => { $('copy-endpoint').textContent = 'Copy'; }, 1200);
 });
+$('mcp-endpoint').textContent = `${window.location.origin}/mcp`;
+$('copy-mcp-endpoint').addEventListener('click', async () => {
+  await navigator.clipboard.writeText($('mcp-endpoint').textContent);
+  $('copy-mcp-endpoint').textContent = 'Copied';
+  setTimeout(() => { $('copy-mcp-endpoint').textContent = 'Copy'; }, 1200);
+});
 $('check-fit').addEventListener('click', checkFit);
 $('model-form').addEventListener('input', event => {
   if (event.target.id === 'admin-token') return;

@@ -229,3 +229,8 @@ body.bottom-sheet-open{overflow:hidden}
 .catalog-readme pre{max-height:430px;margin:0;padding:16px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #20342a;border-radius:8px;background:#070d0b;color:#b8c7bf;font:10px/1.7 DM Mono;tab-size:2}
 .catalog-readme pre:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
 .catalog-readme-note{margin:10px 0 0;color:var(--amber);font-size:9px}
+.mcp-access{display:grid;gap:12px;margin-top:18px;padding-top:18px;border-top:1px solid #26352f}
+.mcp-access h3{margin:3px 0 6px;font-size:16px}
+.mcp-access p{max-width:780px;margin:0;color:var(--muted);font-size:11px;line-height:1.7}
+.mcp-access .endpoint-box{margin:0}
+.mcp-transport{color:#6f887a;font:9px DM Mono;text-transform:uppercase;letter-spacing:.07em}
