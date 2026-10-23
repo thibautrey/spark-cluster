@@ -19,6 +19,7 @@ from spark_deepseek.remote_cluster import (
     valid_controller_signature,
     validated_cluster_url,
 )
+from spark_deepseek.setup_models import SetupJob, SetupRequest, SetupStep
 
 
 def controller_settings(tmp_path, **values):
@@ -84,9 +85,7 @@ def test_controller_signature_covers_target_body_and_expiry():
     assert "authorization" not in headers
 
 
-def test_external_controller_attaches_and_forwards_http_without_bearer_token(
-    tmp_path, monkeypatch
-):
+def test_external_controller_attaches_and_forwards_http_without_bearer_token(tmp_path, monkeypatch):
     calls = []
 
     def handler(request: httpx.Request):
@@ -142,9 +141,7 @@ def test_remote_bridge_failure_is_reported_as_bad_gateway(tmp_path, monkeypatch)
         raise httpx.ConnectError("offline", request=request)
 
     monkeypatch.setattr(RemoteClusterProxyMiddleware, "transport", httpx.MockTransport(handler))
-    app = create_app(
-        controller_settings(tmp_path, remote_cluster_url="http://192.168.50.10:30080")
-    )
+    app = create_app(controller_settings(tmp_path, remote_cluster_url="http://192.168.50.10:30080"))
     with TestClient(app) as client:
         response = client.get("/api/v1/snapshot")
     assert response.status_code == 502
@@ -174,4 +171,38 @@ def test_bridge_verification_requires_admin_authentication(tmp_path):
             "/api/v1/controller/verify",
             headers={"Authorization": "Bearer controller-secret"},
         )
+        signed = client.get(
+            "/api/v1/controller/verify",
+            headers=signed_controller_headers(
+                "controller-secret", "GET", "/api/v1/controller/verify"
+            ),
+        )
     assert response.json() == {"status": "ready", "cluster_name": "gb10-lab"}
+    assert signed.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_successful_live_setup_automatically_attaches_controller(tmp_path, monkeypatch):
+    app = create_app(controller_settings(tmp_path))
+    attached = []
+
+    async def attach(address, port):
+        attached.append((address, port))
+        return {"cluster_name": "created-lab"}
+
+    monkeypatch.setattr(app.state.cluster_connector, "attach", attach)
+    request = SetupRequest(
+        name="created-lab",
+        topology="single",
+        nodes=[
+            {
+                "address": "192.168.50.10",
+                "username": "nvidia",
+                "fingerprint": "SHA256:" + "A" * 43,
+                "role": "head",
+            }
+        ],
+    )
+    job = SetupJob(request=request, mode="ssh", steps=[SetupStep(id="verify", label="Verify")])
+    await app.state.setup_service.on_cluster_ready(job)
+    assert attached == [("192.168.50.10", 30080)]

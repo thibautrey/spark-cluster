@@ -165,7 +165,14 @@ function reviseSetup() {
 }
 $('setup-revise').addEventListener('click', reviseSetup);
 $('setup-new').addEventListener('click', () => { setupJob = null; setupSelection.clear(); setupCandidates = []; invalidateSetup(); renderSetupCandidates(); setupNavigate(0); });
-loadSetup(true).catch(error => setupError(error.message));
+loadSetup(true).catch(error => {
+  if (error.message === 'Invalid model administration token') {
+    $('setup-mode').textContent = 'ADMIN TOKEN REQUIRED';
+    $('setup-access').textContent = 'Cluster data is available. Enter the administration token to view or change controller setup.';
+    return;
+  }
+  setupError(error.message);
+});
 setInterval(async () => {
   if (setupPolling || setupBusy || !setupJob || ['ready','failed','blocked'].includes(setupJob.status)) return;
   setupPolling = true;

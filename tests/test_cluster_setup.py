@@ -215,7 +215,7 @@ async def test_full_bootstrap_uses_valid_scripts_and_keeps_tokens_out_of_state(t
     assert job.status == "ready", job.error
     assert all(step.status == "done" for step in job.steps)
     assert remote.uploaded
-    assert job.dashboard_url == "http://192.168.50.10:30080"
+    assert job.dashboard_url == "#models"
     assert "private-join-token" not in job.model_dump_json()
     assert "admin-test-secret" not in job.model_dump_json()
     join_script = next(script for script in remote.scripts if "K3S_TOKEN=" in script)
@@ -343,7 +343,7 @@ def test_demo_wizard_end_to_end_without_network_or_ssh(tmp_path, monkeypatch):
     monkeypatch.setattr(app.state.setup_service.transport, "run", forbidden)
     monkeypatch.setattr(app.state.setup_service.transport, "trust", forbidden)
     with TestClient(app) as client:
-        assert "Build your Spark cluster" in client.get("/").text
+        assert "Connect or build your Spark cluster" in client.get("/").text
         assert client.get("/assets/setup.js").status_code == 200
         discovery = client.post("/api/v1/setup/discover", json={}).json()
         assert len(discovery["nodes"]) == 4

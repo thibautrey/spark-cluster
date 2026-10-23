@@ -4,14 +4,13 @@ import asyncio
 import contextlib
 import hashlib
 import hmac
-import ipaddress
 import json
 import time
 from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
+from starlette.types import ASGIApp, Receive, Scope, Send
 from websockets.asyncio.client import connect as websocket_connect
 from websockets.exceptions import WebSocketException
 
@@ -173,8 +172,10 @@ class RemoteClusterProxyMiddleware:
         path = scope.get("path", "")
         return bool(
             self.settings.remote_cluster_url
-            and ((path.startswith("/api/v1/") and not path.startswith("/api/v1/setup"))
-                 or path == "/metrics")
+            and (
+                (path.startswith("/api/v1/") and not path.startswith("/api/v1/setup"))
+                or path == "/metrics"
+            )
         )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -238,14 +239,24 @@ class RemoteClusterProxyMiddleware:
         for name in ("content-type", "cache-control", "etag"):
             if value := response.headers.get(name):
                 response_headers.append((name.encode(), value.encode()))
-        await send({"type": "http.response.start", "status": response.status_code,
-                    "headers": response_headers})
+        await send(
+            {
+                "type": "http.response.start",
+                "status": response.status_code,
+                "headers": response_headers,
+            }
+        )
         await send({"type": "http.response.body", "body": response.content})
 
     async def error_response(self, send: Send, status: int, detail: str) -> None:
         body = json.dumps({"detail": detail}).encode()
-        await send({"type": "http.response.start", "status": status,
-                    "headers": [(b"content-type", b"application/json")]})
+        await send(
+            {
+                "type": "http.response.start",
+                "status": status,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
         await send({"type": "http.response.body", "body": body})
 
     async def forward_websocket(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -257,8 +268,12 @@ class RemoteClusterProxyMiddleware:
             url += f"?{query}"
         try:
             async with websocket_connect(
-                url, additional_headers=self.headers(scope), open_timeout=10,
-                ping_interval=20, ping_timeout=20, max_size=4 * 1024 * 1024,
+                url,
+                additional_headers=self.headers(scope),
+                open_timeout=10,
+                ping_interval=20,
+                ping_timeout=20,
+                max_size=4 * 1024 * 1024,
             ) as remote:
                 await send({"type": "websocket.accept"})
 
@@ -287,5 +302,6 @@ class RemoteClusterProxyMiddleware:
                     with contextlib.suppress(Exception):
                         task.result()
         except (OSError, TimeoutError, WebSocketException):
-            await send({"type": "websocket.close", "code": 1013,
-                        "reason": "Cluster bridge is unreachable"})
+            await send(
+                {"type": "websocket.close", "code": 1013, "reason": "Cluster bridge is unreachable"}
+            )
