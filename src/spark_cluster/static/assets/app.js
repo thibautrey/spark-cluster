@@ -115,7 +115,12 @@ function renderTopology(nodes) {
 }
 
 function renderCache(tiers) {
-  $('cache-tiers').innerHTML = tiers.map(tier => {
+  const cacheTiers = tiers.filter(tier => !tier.name.toLowerCase().includes('model storage'));
+  if (!cacheTiers.length) {
+    $('cache-tiers').innerHTML = '<div class="cache-empty"><div><b>KV cache metrics unavailable</b><span>Metrics appear after a runtime starts.</span></div><a href="#launch">Launch a model</a></div>';
+    return;
+  }
+  $('cache-tiers').innerHTML = cacheTiers.map(tier => {
     const total = tier.hits + tier.misses;
     const hitRate = total ? tier.hits / total * 100 : 0;
     return `<div class="cache-row">
