@@ -8,15 +8,15 @@
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/assets/app.css" />
   </head>
-  <body>
+  <body data-route="overview">
     <div class="noise"></div>
     <div class="shell">
       <aside class="sidebar">
-        <a class="brand" href="#">
+        <a class="brand" href="#overview">
           <span class="brand-mark"><i></i><i></i><i></i></span>
           <span><b>Spark</b><small>Cluster</small></span>
         </a>
-        <nav>
+        <nav aria-label="Dashboard sections">
           <a href="#setup"><span>⚙</span>Cluster setup</a>
           <a class="active" href="#overview"><span>⌁</span>Overview</a>
           <a href="#api"><span>↗</span>API endpoint</a>
@@ -38,11 +38,11 @@
 
       <main>
         <header>
-          <div><p class="eyebrow">CONTROL PLANE / <span id="cluster-name">GB10 LAB</span></p><h1>Cluster overview</h1></div>
-          <div class="header-actions"><span class="live"><i></i>LIVE</span><span class="timestamp" id="timestamp">—</span></div>
+          <div><p class="eyebrow">CONTROL PLANE / <span id="cluster-name">GB10 LAB</span></p><h1 id="page-title">Cluster overview</h1></div>
+          <div class="header-actions"><label class="route-select"><span>Section</span><select id="route-select" aria-label="Dashboard section"><option value="setup">Cluster setup</option><option value="overview" selected>Overview</option><option value="api">API endpoint</option><option value="models">Models</option><option value="launch">Launch</option><option value="logs">Runtime logs</option><option value="topology">Topology</option><option value="cache">KV cache</option><option value="memory">Memory</option></select></label><span class="live"><i></i>LIVE</span><span class="timestamp" id="timestamp">—</span></div>
         </header>
 
-        <section class="panel setup-panel" id="setup">
+        <section class="panel setup-panel" id="setup" data-route-view="setup">
           <div class="panel-head"><div><p class="eyebrow">GET STARTED</p><h2>Connect or build your Spark cluster</h2></div><span class="pill" id="setup-mode">Connecting</span></div>
           <div class="setup-intro"><div><h3>Run this controller on any LAN machine.</h3><p>The interface stays on this system while a lightweight bridge near the GPUs handles models, logs and Kubernetes operations. Connect an existing bridge or configure new Sparks step by step.</p></div><a class="secondary setup-link" href="https://docs.nvidia.com/sync/latest/cluster-assistant.html" target="_blank" rel="noopener">NVIDIA Sync guide ↗</a></div>
           <ol class="setup-rail" id="setup-rail" aria-label="Setup progress"><li class="active">1 <span>Discover</span></li><li>2 <span>Configure</span></li><li>3 <span>Check</span></li><li>4 <span>Install</span></li><li>5 <span>Ready</span></li></ol>
@@ -88,14 +88,14 @@
           <div class="setup-footer"><span id="setup-summary">Select the machines to configure.</span><div><button class="secondary" id="setup-back" type="button" hidden>Back</button><button class="primary" id="setup-next" type="button">Choose machines →</button></div></div>
         </section>
 
-        <section class="metrics" id="overview">
+        <section class="metrics" id="overview" data-route-view="overview">
           <article class="metric"><span>Cluster output</span><strong><b id="output-tps">—</b><small> tok/s</small></strong><canvas id="throughput-spark" width="180" height="42"></canvas><footer><em>↗</em> live generation rate</footer></article>
           <article class="metric accent"><span>KV cache hit rate</span><strong><b id="hit-rate">—</b><small>%</small></strong><div class="ring" id="hit-ring"><span></span></div><footer><em>↗</em> across all tiers</footer></article>
           <article class="metric"><span>Unified memory</span><strong><b id="memory-used">—</b><small> GiB</small></strong><div class="bar"><i id="memory-bar"></i></div><footer><span id="memory-total">— GiB total</span></footer></article>
           <article class="metric"><span>Prefix reuse</span><strong><b id="prefix-reuse">—</b><small> tokens</small></strong><div class="stack"><i></i><i></i><i></i><i></i></div><footer>avoided recomputation</footer></article>
         </section>
 
-        <section class="panel api-panel" id="api">
+        <section class="panel api-panel" id="api" data-route-view="api">
           <div class="api-identity">
             <div class="api-icon">API</div>
             <div><p class="eyebrow">OPENAI COMPATIBLE</p><h2>Inference endpoint</h2></div>
@@ -106,24 +106,24 @@
         </section>
 
         <section class="grid-main">
-          <article class="panel topology-panel" id="topology">
+          <article class="panel topology-panel" id="topology" data-route-view="topology">
             <div class="panel-head"><div><p class="eyebrow">FABRIC</p><h2>Cluster topology</h2></div><span class="pill" id="node-count">0 nodes</span></div>
             <div class="topology" id="topology-map"><div class="fabric-line"></div></div>
             <div class="legend"><span><i class="green"></i>Healthy</span><span><i class="amber"></i>Degraded</span><span><i class="muted"></i>Offline</span><span class="fabric-label">200G fabric</span></div>
           </article>
 
-          <article class="panel cache-panel" id="cache">
+          <article class="panel cache-panel" id="cache" data-route-view="cache">
             <div class="panel-head"><div><p class="eyebrow">MULTI-TIER</p><h2>KV cache</h2></div><span class="pill persistent">● persistent</span></div>
             <div id="cache-tiers" class="cache-tiers"></div>
           </article>
         </section>
 
-        <section class="panel memory-panel" id="memory">
+        <section class="panel memory-panel" id="memory" data-route-view="memory">
           <div class="panel-head"><div><p class="eyebrow">UNIFIED MEMORY</p><h2>Node allocation</h2></div><div class="segmented"><button class="active">Allocation</button><button>Utilization</button></div></div>
           <div class="memory-grid" id="memory-grid"></div>
         </section>
 
-        <section class="panel models-panel" id="models">
+        <section class="panel models-panel" id="models" data-route-view="models">
           <div class="panel-head">
             <div><p class="eyebrow">MODEL LIBRARY</p><h2>Model library</h2></div>
             <span class="pill" id="model-count">0 models</span>
@@ -174,7 +174,7 @@
           <div class="download-list" id="download-list"><div class="empty-downloads">No downloads yet.</div></div>
         </section>
 
-        <section class="panel launch-panel" id="launch">
+        <section class="panel launch-panel" id="launch" data-route-view="launch">
           <div class="panel-head">
             <div><p class="eyebrow">RUNTIME ORCHESTRATION</p><h2>Launch a model</h2></div>
             <span class="pill" id="launch-mode">detecting mode</span>
@@ -208,7 +208,7 @@
           <div class="launch-history" id="launch-history"></div>
         </section>
 
-        <section class="panel logs-panel" id="logs">
+        <section class="panel logs-panel" id="logs" data-route-view="logs">
           <div class="panel-head logs-head">
             <div><p class="eyebrow">RUNTIME INSTANCES</p><h2>Cluster logs</h2></div>
             <div class="log-controls">
@@ -223,6 +223,7 @@
         </section>
       </main>
     </div>
+    <script src="/assets/navigation.js"></script>
     <script src="/assets/app.js"></script>
     <script src="/assets/catalog.js"></script>
     <script src="/assets/setup.js"></script>
