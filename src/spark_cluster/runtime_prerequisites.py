@@ -212,9 +212,9 @@ class RuntimePrerequisiteService:
                     "set -eu\n"
                     f"image={shlex.quote(spec.image or '')}\n"
                     "if command -v k3s >/dev/null 2>&1; then "
-                    "sudo -n k3s ctr images pull \"$image\"; "
-                    "elif command -v crictl >/dev/null 2>&1; then sudo -n crictl pull \"$image\"; "
-                    "elif command -v docker >/dev/null 2>&1; then docker pull \"$image\"; "
+                    'sudo -n k3s ctr images pull "$image"; '
+                    'elif command -v crictl >/dev/null 2>&1; then sudo -n crictl pull "$image"; '
+                    'elif command -v docker >/dev/null 2>&1; then docker pull "$image"; '
                     "else echo 'No supported container runtime found' >&2; exit 1; fi\n"
                 )
                 try:

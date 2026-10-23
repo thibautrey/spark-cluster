@@ -298,9 +298,7 @@ class ModelLaunchJob(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
-RuntimeNodeStatus = Literal[
-    "ready", "missing", "outdated", "unreachable", "installing", "failed"
-]
+RuntimeNodeStatus = Literal["ready", "missing", "outdated", "unreachable", "installing", "failed"]
 
 
 class RuntimeNodeState(BaseModel):

@@ -1277,9 +1277,7 @@ class ModelManager:
                     await asyncio.to_thread(self._staging_progress, staging),
                 )
                 job.progress = (
-                    round(job.downloaded_bytes / job.total_bytes * 100, 2)
-                    if job.total_bytes
-                    else 0
+                    round(job.downloaded_bytes / job.total_bytes * 100, 2) if job.total_bytes else 0
                 )
                 job.updated_at = datetime.now(UTC)
                 await asyncio.to_thread(self.store.save_download, job)

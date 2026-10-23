@@ -59,9 +59,7 @@ async def test_runtime_readiness_and_install_updates_every_node(tmp_path):
     )
     store = SnapshotStore(settings.database_path)
     transport = RuntimeTransport(image)
-    service = RuntimePrerequisiteService(
-        settings, store, ready_setup(store, settings, transport)
-    )
+    service = RuntimePrerequisiteService(settings, store, ready_setup(store, settings, transport))
 
     report = await service.inspect("acme/model")
     assert report.ready is False
@@ -82,9 +80,7 @@ def test_terminal_tickets_are_short_lived_and_single_use(tmp_path):
     settings = Settings(database_path=tmp_path / "state.db", setup_state_path=tmp_path / "setup")
     store = SnapshotStore(settings.database_path)
     transport = RuntimeTransport(settings.runtime_vllm_image)
-    service = RuntimePrerequisiteService(
-        settings, store, ready_setup(store, settings, transport)
-    )
+    service = RuntimePrerequisiteService(settings, store, ready_setup(store, settings, transport))
 
     ticket = service.issue_terminal_ticket("192.168.50.10")
     assert service.consume_terminal_ticket(ticket.ticket).role == "head"
