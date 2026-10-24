@@ -186,12 +186,12 @@ def test_private_recipes_and_unique_ports(tmp_path):
 @pytest.mark.asyncio
 async def test_retention_survives_restart_and_blocks_eviction(tmp_path):
     p = profile()
-    other = p.model_copy(update={'id': 'other', 'model': 'other-model'})
-    path = tmp_path / 'state.json'
+    other = p.model_copy(update={"id": "other", "model": "other-model"})
+    path = tmp_path / "state.json"
     manager = OnDemandInference(Docker(), [p, other], state_path=path)
     manager.active = p
     manager.retain(p, True)
-    with pytest.raises(RuntimeError, match='retained'):
+    with pytest.raises(RuntimeError, match="retained"):
         await manager.ensure(other)
     assert manager.active is p
     restored = OnDemandInference(Docker(), [p, other], state_path=path)
@@ -202,15 +202,17 @@ async def test_retention_survives_restart_and_blocks_eviction(tmp_path):
 @pytest.mark.asyncio
 async def test_retained_runtime_not_reaped_and_unpin_releases_waiter():
     p = profile(idle_seconds=1)
-    other = p.model_copy(update={'id': 'other', 'model': 'other-model'})
+    other = p.model_copy(update={"id": "other", "model": "other-model"})
     manager = OnDemandInference(Docker(), [p, other])
     manager.active = p
     manager.last_used = time.monotonic() - 10
     manager.retain(p, True)
     entered = asyncio.Event()
+
     async def waiting_request():
         async with manager.lease(other):
             entered.set()
+
     waiter = asyncio.create_task(waiting_request())
     reaper = asyncio.create_task(manager.reap())
     try:

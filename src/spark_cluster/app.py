@@ -61,8 +61,15 @@ from .model_manager import (
     ModelDoesNotFit,
     ModelManager,
 )
+from .model_pool import (
+    ModelPool,
+    ModelPreferences,
+    NodeLoadRequest,
+    PoolLoadRequest,
+    PoolNode,
+    PoolResponse,
+)
 from .model_relay import ModelRelay
-from .model_pool import ModelPool, ModelPreferences, PoolNode, PoolLoadRequest, NodeLoadRequest, PoolResponse
 from .models import (
     BenchmarkRequest,
     BenchmarkResult,
@@ -973,7 +980,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def pool_inventory():
         return await model_pool.inventory()
 
-    @app.put("/api/v1/pool/models/{model_id:path}/settings", dependencies=[Depends(require_model_token)])
+    @app.put(
+        "/api/v1/pool/models/{model_id:path}/settings", dependencies=[Depends(require_model_token)]
+    )
     async def pool_preferences(model_id: str, preferences: ModelPreferences):
         try:
             return await model_pool.update_preferences(model_id, preferences)
@@ -1015,15 +1024,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except (ValueError, RuntimeError) as error:
             raise HTTPException(status_code=409, detail=model_manager.safe_error(error)) from error
 
-    @app.api_route("/api/v1/pool/node/inference/{path:path}",
-                   methods=["GET", "POST", "DELETE"], dependencies=[Depends(require_model_token)])
+    @app.api_route(
+        "/api/v1/pool/node/inference/{path:path}",
+        methods=["GET", "POST", "DELETE"],
+        dependencies=[Depends(require_model_token)],
+    )
     async def pool_node_inference(request: Request, path: str, model_id: str):
         from urllib.parse import parse_qsl, urlencode
+
         scope = dict(request.scope)
-        scope["query_string"] = urlencode([(k, v) for k, v in parse_qsl(request.url.query)
-                                            if k != "model_id"]).encode()
+        scope["query_string"] = urlencode(
+            [(k, v) for k, v in parse_qsl(request.url.query) if k != "model_id"]
+        ).encode()
+
         async def handler(_, receive, send):
             await pool_node.infer(model_id, path, scope, receive, send)
+
         return PoolResponse(handler)
 
     @app.api_route("/api/v1/pool/serve/{key}/{path:path}", methods=["GET", "POST", "DELETE"])
@@ -1032,8 +1048,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         model = next((m for m in inventory["models"] if m["key"] == key), None)
         if not model:
             raise HTTPException(status_code=404, detail="Unknown pool model")
+
         async def handler(scope, receive, send):
             await model_pool.infer(model["id"], path, scope, receive, send)
+
         return PoolResponse(handler)
 
     @app.get("/api/v1/inference/status")

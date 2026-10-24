@@ -310,11 +310,19 @@ class DockerEngineClient:
                 f"Runtime image {image} is not present on the Docker host; install it first"
             )
         payload = self.runtime_payload(
-            cluster=cluster, image=image, model_path=model_path, served_model_name=served_model_name,
-            context_length=context_length, tensor_parallel=tensor_parallel, pipeline_parallel=pipeline_parallel,
-            gpu_memory_utilization=gpu_memory_utilization, kv_cache_dtype=kv_cache_dtype,
-            max_num_seqs=max_num_seqs, max_num_batched_tokens=max_num_batched_tokens,
-            expert_parallel=expert_parallel, chunked_prefill=chunked_prefill,
+            cluster=cluster,
+            image=image,
+            model_path=model_path,
+            served_model_name=served_model_name,
+            context_length=context_length,
+            tensor_parallel=tensor_parallel,
+            pipeline_parallel=pipeline_parallel,
+            gpu_memory_utilization=gpu_memory_utilization,
+            kv_cache_dtype=kv_cache_dtype,
+            max_num_seqs=max_num_seqs,
+            max_num_batched_tokens=max_num_batched_tokens,
+            expert_parallel=expert_parallel,
+            chunked_prefill=chunked_prefill,
         )
         name = self.container_name(cluster.id)
         await self._remove_existing(name)

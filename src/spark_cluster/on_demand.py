@@ -86,7 +86,12 @@ class ListenerServer(uvicorn.Server):
 
 
 class OnDemandInference:
-    def __init__(self, docker: DockerEngineClient, profiles: list[InferenceProfile], state_path: Path | None = None):
+    def __init__(
+        self,
+        docker: DockerEngineClient,
+        profiles: list[InferenceProfile],
+        state_path: Path | None = None,
+    ):
         self.docker = docker
         self.profiles = profiles
         self.lock = asyncio.Lock()
@@ -118,10 +123,14 @@ class OnDemandInference:
         temporary = self.state_path.with_suffix(".tmp")
         temporary.touch(mode=0o600, exist_ok=True)
         temporary.chmod(0o600)
-        temporary.write_text(json.dumps({
-            "retained": sorted(self.retained),
-            "profiles": [p.model_dump() for p in self.profiles if p.id in self.dynamic],
-        }))
+        temporary.write_text(
+            json.dumps(
+                {
+                    "retained": sorted(self.retained),
+                    "profiles": [p.model_dump() for p in self.profiles if p.id in self.dynamic],
+                }
+            )
+        )
         temporary.replace(self.state_path)
 
     def profile_for(self, model_id: str) -> InferenceProfile | None:
@@ -136,7 +145,9 @@ class OnDemandInference:
         self.changed.set()
 
     def blocked(self, profile: InferenceProfile) -> bool:
-        return bool(self.active and self.active.id != profile.id and self.active.id in self.retained)
+        return bool(
+            self.active and self.active.id != profile.id and self.active.id in self.retained
+        )
 
     @contextlib.asynccontextmanager
     async def lease(self, profile: InferenceProfile):
@@ -218,10 +229,19 @@ class OnDemandInference:
                 sock.listen(128)
                 sock.setblocking(False)
             for profile in self.profiles:
-                state = await self.docker.request("GET", f"/containers/{profile.name}/json", allow={404})
-                if (profile.id in self.retained and state.status_code == 200
+                state = await self.docker.request(
+                    "GET", f"/containers/{profile.name}/json", allow={404}
+                )
+                if (
+                    profile.id in self.retained
+                    and state.status_code == 200
                     and state.json().get("State", {}).get("Running")
-                    and state.json().get("Config", {}).get("Labels", {}).get("spark-cluster.on-demand") == profile.id):
+                    and state.json()
+                    .get("Config", {})
+                    .get("Labels", {})
+                    .get("spark-cluster.on-demand")
+                    == profile.id
+                ):
                     if self.active:
                         raise RuntimeError("Multiple retained runtimes cannot share one GPU slot")
                     self.active = profile
@@ -265,8 +285,11 @@ class OnDemandInference:
             if self.lock.locked() or not self.active:
                 continue
             async with self.lock:
-                if (self.active and self.active.id not in self.retained
-                    and time.monotonic() - self.last_used >= self.active.idle_seconds):
+                if (
+                    self.active
+                    and self.active.id not in self.retained
+                    and time.monotonic() - self.last_used >= self.active.idle_seconds
+                ):
                     try:
                         await self.remove(self.active)
                     except Exception:
@@ -320,7 +343,9 @@ class OnDemandInference:
 
 
 class DemandProxy:
-    def __init__(self, manager: OnDemandInference, profile: InferenceProfile, internal: bool = False):
+    def __init__(
+        self, manager: OnDemandInference, profile: InferenceProfile, internal: bool = False
+    ):
         self.manager = manager
         self.profile = profile
         self.internal = internal
@@ -346,7 +371,7 @@ class DemandProxy:
             return
         if self.manager.pool and not self.internal:
             model_id = self.profile.model_id or self.profile.model
-            await self.manager.pool.infer(model_id, path.lstrip('/'), scope, receive, send)
+            await self.manager.pool.infer(model_id, path.lstrip("/"), scope, receive, send)
             return
         if self.manager.pending >= 64:
             await JSONResponse({"error": "Inference queue is full"}, status_code=503)(
