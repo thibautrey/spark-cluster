@@ -307,3 +307,55 @@ def test_execution_runtime_reports_automatic_engine_evidence():
     assert runtime["selection"] == "automatic"
     assert runtime["executable"] is True
     assert "model format" in runtime["reason"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_model_metadata_is_persisted_verbatim(tmp_path, monkeypatch):
+    import httpx
+    from spark_cluster.model_pool import PoolNode
+
+    payload = {
+        "object": "list",
+        "data": [
+            {
+                "id": "runtime-name",
+                "object": "model",
+                "created": 42,
+                "owned_by": "runtime-owner",
+                "context_length": 65536,
+                "pricing": {"prompt": "0.1", "completion": "0.2"},
+                "architecture": {"input_modalities": ["text", "image"]},
+                "top_provider": {"max_completion_tokens": 4096},
+                "supported_parameters": ["tools", "reasoning"],
+                "capabilities": {"vision": True},
+                "max_model_len": 65536,
+                "model_info": {"supports_vision": True},
+            }
+        ],
+    }
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=payload))
+    monkeypatch.setattr(PoolNode, "transport", transport)
+    node = PoolNode.__new__(PoolNode)
+    node.metadata_path = tmp_path / "runtime-model-metadata.json"
+    node.runtime_metadata = {}
+    await node.capture_runtime_metadata("org/model", "http://127.0.0.1:31000")
+    assert node.metadata_for("org/model") == payload
+    assert json.loads(node.metadata_path.read_text())["org/model"] == payload
+    assert node.metadata_path.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.asyncio
+async def test_invalid_runtime_model_metadata_is_not_cached(tmp_path, monkeypatch):
+    import httpx
+    from spark_cluster.model_pool import PoolNode
+
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, json={"object": "list", "data": ["invalid"]})
+    )
+    monkeypatch.setattr(PoolNode, "transport", transport)
+    node = PoolNode.__new__(PoolNode)
+    node.metadata_path = tmp_path / "runtime-model-metadata.json"
+    node.runtime_metadata = {}
+    await node.capture_runtime_metadata("org/model", "http://127.0.0.1:31000")
+    assert node.runtime_metadata == {}
+    assert not node.metadata_path.exists()

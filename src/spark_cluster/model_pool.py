@@ -105,6 +105,8 @@ def write_private(path: Path, value: dict) -> None:
 class PoolNode:
     """An authenticated physical cluster adapter, independent of selected dashboard cluster."""
 
+    transport = None
+
     def __init__(self, settings, registry, models, deployments, demand):
         self.settings = settings
         self.registry = registry
@@ -112,9 +114,35 @@ class PoolNode:
         self.deployments = deployments
         self.demand = demand
         self.path = settings.setup_state_path / "pool-node.json"
+        self.metadata_path = settings.setup_state_path / "runtime-model-metadata.json"
         self.native = json.loads(self.path.read_text()) if self.path.exists() else {}
+        self.runtime_metadata = (
+            json.loads(self.metadata_path.read_text()) if self.metadata_path.exists() else {}
+        )
         self.native_lock = asyncio.Lock()
         self.reaper = None
+
+    async def capture_runtime_metadata(self, model_id: str, base_url: str) -> None:
+        try:
+            async with httpx.AsyncClient(
+                timeout=5, trust_env=False, transport=self.transport
+            ) as client:
+                response = await client.get(base_url.rstrip("/") + "/v1/models")
+                response.raise_for_status()
+                payload = response.json()
+            if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+                return
+            if not all(isinstance(item, dict) for item in payload["data"]):
+                return
+            # Preserve the runtime response verbatim. Spark does not infer optional metadata.
+            self.runtime_metadata[model_id] = payload
+            write_private(self.metadata_path, self.runtime_metadata)
+        except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError):
+            return
+
+    def metadata_for(self, model_id: str) -> dict | None:
+        payload = self.runtime_metadata.get(model_id)
+        return payload if isinstance(payload, dict) else None
 
     async def start(self):
         self.reaper = asyncio.create_task(self.reap_native())
@@ -139,7 +167,10 @@ class PoolNode:
         profile = self.demand.profile_for(model_id)
         scope = dict(scope, path="/" + path, raw_path=("/" + path).encode())
         if profile:
-            await DemandProxy(self.demand, profile, internal=True)(scope, receive, send)
+            try:
+                await DemandProxy(self.demand, profile, internal=True)(scope, receive, send)
+            finally:
+                await self.capture_runtime_metadata(model_id, profile.upstream)
             return
         async with self.native_lock:
             if self.native.get("model_id") != model_id:
@@ -151,6 +182,7 @@ class PoolNode:
                 base = self.settings.direct_runtime_base_url.removesuffix("/v1")
                 await forward_http(base + "/" + path, scope, receive, send)
             finally:
+                await self.capture_runtime_metadata(model_id, base)
                 self.native["last_used"] = time.time()
                 write_private(self.path, self.native)
 
@@ -219,6 +251,7 @@ class PoolNode:
             plan = build_execution_plan(launch, model["model_path"], self.settings)
             model["runtime"] = execution_runtime(plan, launch.engine_id)
         for model in models.values():
+            model["runtime_models"] = self.metadata_for(model["id"])
             model.pop("model_path", None)
         return {
             "models": list(models.values()),
@@ -373,6 +406,7 @@ class PoolNode:
                 else:
                     self.demand.register(profile)
                 await self.demand.ensure(profile)
+                await self.capture_runtime_metadata(request.model_id, profile.upstream)
                 self.demand.last_used = time.monotonic()
                 self.demand.retain(profile, request.keep_loaded)
                 return {
@@ -398,6 +432,9 @@ class PoolNode:
                     await asyncio.sleep(2)
                 else:
                     raise TimeoutError("Runtime launch deadline exceeded")
+                await self.capture_runtime_metadata(
+                    request.model_id, self.settings.direct_runtime_base_url.removesuffix("/v1")
+                )
                 self.native = {
                     "model_id": request.model_id,
                     "keep_loaded": request.keep_loaded,
@@ -565,6 +602,7 @@ class ModelPool:
                         "aliases": list(m.get("aliases", [m["id"]])),
                         "served_model_name": m.get("served_model_name"),
                         "runtime": m.get("runtime"),
+                        "runtime_models": m.get("runtime_models"),
                     },
                 )
                 entry["aliases"] = sorted(set(entry["aliases"] + m.get("aliases", [])))
@@ -573,6 +611,8 @@ class ModelPool:
                 )
                 if not entry.get("runtime") or m.get("runtime", {}).get("executable"):
                     entry["runtime"] = m.get("runtime") or entry.get("runtime")
+                if m.get("runtime_models"):
+                    entry["runtime_models"] = m["runtime_models"]
                 if m["loadable"]:
                     entry["loadable"] = True
                     entry["available_clusters"].append(node["id"])

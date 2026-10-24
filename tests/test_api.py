@@ -326,6 +326,22 @@ def test_global_openai_models_and_json_inference_route_through_pool(tmp_path, mo
         "placements": [],
         "aliases": ["org/model", "friendly"],
         "served_model_name": "runtime-alias",
+        "runtime_models": {
+            "object": "list",
+            "data": [
+                {
+                    "id": "runtime-alias",
+                    "object": "model",
+                    "created": 123,
+                    "owned_by": "runtime-vendor",
+                    "context_length": 32768,
+                    "pricing": {"prompt": "0", "completion": "0"},
+                    "architecture": {"input_modalities": ["text"]},
+                    "supported_parameters": ["tools", "structured_outputs"],
+                    "model_info": {"supports_function_calling": True},
+                }
+            ],
+        },
     }
 
     async def inventory(force=False):
@@ -358,7 +374,11 @@ def test_global_openai_models_and_json_inference_route_through_pool(tmp_path, mo
     with TestClient(app) as client:
         models = client.get("/v1/models")
         assert models.status_code == 200
-        assert models.json()["data"][0]["id"] == "org/model"
+        runtime_model = models.json()["data"][0]
+        assert runtime_model == model["runtime_models"]["data"][0]
+        assert runtime_model["context_length"] == 32768
+        assert runtime_model["pricing"] == {"prompt": "0", "completion": "0"}
+        assert runtime_model["model_info"]["supports_function_calling"] is True
         assert captured == {}
         response = client.post(
             "/v1/chat/completions",

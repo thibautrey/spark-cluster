@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=runtime-visibility-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=runtime-metadata-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -101,7 +101,7 @@
           <article class="api-card">
             <div class="api-card-head"><div><h2>OpenAI pool endpoint</h2><small id="api-routing-mode">Controller routed · automatic model placement</small></div><span class="pill" id="api-status">checking</span></div>
             <div class="endpoint-box"><code id="api-endpoint">Loading pool endpoint…</code><button id="copy-endpoint" type="button">Copy</button></div>
-            <details class="api-details"><summary>Routes</summary><div class="api-routes"><span><b>Models</b><code id="api-models-route">—</code></span><span><b>Chat completions</b><code id="api-chat-route">—</code></span><span><b>Embeddings</b><code id="api-embeddings-route">—</code></span><span><b>Other endpoints</b><code>Any /v1 route · select with model</code></span></div></details>
+            <details class="api-details"><summary>Routes</summary><div class="api-routes"><span><b>Models</b><code id="api-models-route">—</code><small>Runtime metadata is passed through after first load</small></span><span><b>Chat completions</b><code id="api-chat-route">—</code></span><span><b>Embeddings</b><code id="api-embeddings-route">—</code></span><span><b>Other endpoints</b><code>Any /v1 route · select with model</code></span></div></details>
           </article>
           <article class="api-card">
             <div class="api-card-head"><div><h2>MCP endpoint</h2><small>AI clients · admin token for changes</small></div></div>

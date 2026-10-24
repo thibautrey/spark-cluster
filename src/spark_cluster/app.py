@@ -1049,19 +1049,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/v1/models")
     async def global_openai_models():
         inventory = await model_pool.inventory()
-        return {
-            "object": "list",
-            "data": [
-                {
-                    "id": model["id"],
-                    "object": "model",
-                    "owned_by": "spark-cluster",
-                    "ready": bool(model["placements"]),
-                }
-                for model in inventory["models"]
-                if model["loadable"]
-            ],
-        }
+        data = []
+        for model in inventory["models"]:
+            if not model["loadable"]:
+                continue
+            runtime_response = model.get("runtime_models")
+            runtime_data = (
+                runtime_response.get("data", []) if isinstance(runtime_response, dict) else []
+            )
+            if runtime_data:
+                # Forward every field reported by the runtime without maintaining a shadow schema.
+                data.extend(runtime_data)
+            else:
+                # The routing id is the only fact available before this runtime has run once.
+                data.append({"id": model["id"], "object": "model"})
+        return {"object": "list", "data": data}
 
     @app.api_route(
         "/v1/{path:path}",
