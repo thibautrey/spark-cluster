@@ -130,8 +130,9 @@ def test_external_controller_attaches_and_forwards_http_without_bearer_token(tmp
         assert forwarded.status_code == 202
         assert forwarded.json()["id"] == "remote-job"
         inference = client.post("/v1/chat/completions", json={"model": "acme/model"})
-        assert inference.status_code == 421
-        assert "never routed" in inference.json()["detail"]
+        assert inference.status_code == 404
+        assert "not available in the pool" in inference.json()["detail"]
+        assert not any(path.startswith("/v1/") for path, _, _ in calls)
         assert "http://192.168.50.10:30000/v1" in inference.json()["detail"]
     assert [call[0] for call in calls] == [
         "/api/v1/controller/verify",
