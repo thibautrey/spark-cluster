@@ -366,8 +366,8 @@ body[data-route="models"] main>header>div:first-child{display:none}
 /* Overview cards show the metric once and keep only data-driven visuals. */
 .metric{min-height:126px}.metric strong{margin-top:14px}#throughput-spark{bottom:6px;height:40px}.ring{top:45px;width:56px;height:56px}.ring:after{width:42px;height:42px}.bar{top:94px}
 
-/* Memory nodes share one legend and fill the available row. */
-.memory-panel{min-height:0}.memory-grid{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:18px}.memory-legend{justify-content:flex-end;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+/* Memory nodes use truthful proportional bars and one compact legend. */
+.memory-panel{min-height:0}.memory-grid{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:18px}.memory-block{height:30px;align-items:stretch;gap:2px;padding:4px}.memory-block i{flex:var(--share) 1 0;height:100%;min-width:0}.memory-legend{justify-content:flex-end;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
 
 /* Keep model storage out of the KV cache view when runtime metrics are absent. */
 .cache-empty{display:flex;align-items:center;gap:16px;min-height:48px}.cache-empty>div{min-width:0;flex:1}.cache-empty b,.cache-empty span{display:block}.cache-empty b{font-size:11px;color:#aebbc9}.cache-empty span{margin-top:4px;color:#69798b;font-size:9px}.cache-empty a{flex:none;padding:7px 10px;border:1px solid #2b4539;border-radius:6px;color:#9fcab3;background:#102018;text-decoration:none;font-size:9px}@media(max-width:600px){.cache-empty{align-items:flex-start;flex-direction:column}.cache-empty a{width:100%;text-align:center}}

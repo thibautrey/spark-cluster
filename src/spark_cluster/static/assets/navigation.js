@@ -7,7 +7,7 @@ const dashboardRoutes = {
   logs: {title: 'Runtime logs'},
   topology: {title: 'Cluster topology'},
   cache: {title: 'KV cache'},
-  memory: {title: 'Unified memory'},
+  memory: {title: 'Memory'},
 };
 
 function selectedDashboardRoute() {

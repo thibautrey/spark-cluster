@@ -62,10 +62,19 @@ function renderClusters(state) {
     return `<article class="cluster-card ${cluster.active ? 'active' : ''}" data-cluster-id="${escapeHtml(cluster.id)}"><div class="cluster-card-head"><span class="cluster-card-icon">${cluster.kind === 'local-docker' ? 'GPU' : 'LAN'}</span><div><b>${escapeHtml(cluster.name)}</b><small>${capacity}${issue}</small></div></div>${cluster.active ? activeActions : `<button class="secondary" type="button" data-select-cluster="${escapeHtml(cluster.id)}">Use this cluster</button>`}</article>`;
   }).join('') : '<div class="empty-state"><b>No cluster configured</b><span>Add a cluster to begin.</span></div>';
   const active = state.clusters.find(cluster => cluster.id === state.active_cluster_id);
+  updateMemoryLanguage(active);
   if (active) {
     $('cluster-fleet-status').textContent = `${active.name} is the active target for capacity, downloads, launches, logs and telemetry.`;
     if (latestSnapshot) renderTopology(latestSnapshot.nodes);
   }
+}
+
+function updateMemoryLanguage(active) {
+  const label = active?.hardware === 'dgx-spark' ? 'Unified memory' : active?.hardware === 'nvidia-gpu' ? 'GPU memory' : 'Memory';
+  dashboardRoutes.memory.title = label;
+  $('memory-metric-label').textContent = label;
+  $('memory-bar').parentElement.setAttribute('aria-label', `${label} allocated`);
+  if (selectedDashboardRoute() === 'memory') showDashboardRoute({resetScroll: false});
 }
 
 async function loadClusters() {
@@ -158,19 +167,28 @@ function renderCache(tiers) {
 }
 
 function renderMemory(nodes) {
-  $('memory-grid').innerHTML = nodes.map(node => {
-    const model = Math.round(node.memory.model_gib / 8);
+  const active = clusterState.clusters.find(cluster => cluster.id === clusterState.active_cluster_id);
+  const unified = active?.hardware === 'dgx-spark';
+  const segment = (className, label, value) => value > 0
+    ? `<i class="${className}" style="--share:${value}" title="${escapeHtml(label)} ${value.toFixed(1)} GiB"></i>`
+    : '';
+  $('memory-grid').innerHTML = nodes.map((node, index) => {
     const kvKnown = node.memory.kv_cache_source !== 'unavailable';
-    const kv = kvKnown ? Math.round(node.memory.kv_cache_gib / 3) : 0;
-    const runtime = Math.max(1, Math.round((node.memory.used_gib - node.memory.model_gib - node.memory.kv_cache_gib) / 3));
-    const free = Math.max(1, 16 - model - kv - runtime);
-    const blocks = (className, count) => Array(Math.max(0, count)).fill(`<i class="${className}"></i>`).join('');
-    return `<div><div class="memory-node-head"><b>${escapeHtml(node.hostname)}</b><span>${node.memory.used_gib.toFixed(0)} / ${node.memory.total_gib.toFixed(0)} GiB</span></div><div class="memory-block">${blocks('model', model)}${blocks('kv', kv)}${blocks('runtime', runtime)}${blocks('free', free)}</div></div>`;
+    const total = Math.max(0, node.memory.total_gib);
+    const model = Math.min(total, Math.max(0, node.memory.model_gib));
+    const kv = kvKnown ? Math.min(Math.max(0, total - model), Math.max(0, node.memory.kv_cache_gib)) : 0;
+    const other = Math.min(Math.max(0, total - model - kv), Math.max(0, node.memory.used_gib - model - kv));
+    const free = Math.max(0, total - model - kv - other);
+    const nodeLabel = active?.kind === 'local-docker' ? `GPU ${active.gpus?.[index]?.index ?? index}` : node.hostname;
+    return `<div><div class="memory-node-head"><b>${escapeHtml(nodeLabel)}</b><span>${node.memory.used_gib.toFixed(1)} / ${total.toFixed(1)} GiB</span></div><div class="memory-block" role="img" aria-label="${escapeHtml(nodeLabel)}: ${node.memory.used_gib.toFixed(1)} of ${total.toFixed(1)} GiB used">${segment('model', 'Model', model)}${segment('kv', 'KV cache', kv)}${segment('runtime', unified ? 'Runtime' : 'Other', other)}${segment('free', 'Free', free)}</div></div>`;
   }).join('');
-  const knownKvNodes = nodes.filter(node => node.memory.kv_cache_source !== 'unavailable').length;
+  const hasModels = nodes.some(node => node.memory.model_gib > 0);
+  const hasKv = nodes.some(node => node.memory.kv_cache_source !== 'unavailable' && node.memory.kv_cache_gib > 0);
+  const hasOther = nodes.some(node => node.memory.used_gib - node.memory.model_gib - node.memory.kv_cache_gib > 0);
+  const hasFree = nodes.some(node => node.memory.total_gib - node.memory.used_gib > 0);
   const legend = $('memory-legend');
   legend.hidden = nodes.length === 0;
-  legend.innerHTML = `<span><i class="m"></i>model</span><span title="${knownKvNodes ? `KV allocation reported by ${knownKvNodes} of ${nodes.length} nodes` : 'Runtime does not expose KV allocation'}"><i class="k"></i>${knownKvNodes ? 'KV' : 'KV unavailable'}</span><span><i class="r"></i>runtime</span><span><i class="f"></i>free</span>`;
+  legend.innerHTML = `${hasModels ? '<span><i class="m"></i>model</span>' : ''}${hasKv ? '<span><i class="k"></i>KV</span>' : ''}${hasOther ? `<span><i class="r"></i>${unified ? 'runtime' : 'other'}</span>` : ''}${hasFree ? '<span><i class="f"></i>free</span>' : ''}`;
 }
 
 function drawSparkline(values) {
