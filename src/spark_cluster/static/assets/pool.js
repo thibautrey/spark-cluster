@@ -2,6 +2,7 @@
   let state = {models: [], clusters: [], jobs: []};
   let editing = null;
   let polling = false;
+  let lastMarkup = null;
   const root = document.getElementById('model-pool');
   const dialog = document.getElementById('pool-model-settings');
   const modelField = document.getElementById('pool-settings-model');
@@ -14,7 +15,7 @@
   const pending = id => state.jobs.findLast(job => job.model_id === id && ['queued', 'waiting', 'loading'].includes(job.status));
   function render() {
     field('pool-summary').textContent = `${state.clusters.filter(c => c.available).length} cluster${state.clusters.filter(c => c.available).length === 1 ? '' : 's'} available · ${state.models.filter(m => m.placements.length).length} models loaded`;
-    field('pool-model-list').innerHTML = state.models.filter(model => (field('pool-show-unavailable').checked || model.loadable || model.placements.length) && model.id.toLowerCase().includes(field('pool-search').value.toLowerCase())).sort((a, b) => Number(b.placements.length > 0) - Number(a.placements.length > 0) || a.id.localeCompare(b.id)).map(model => {
+    const markup = state.models.filter(model => (field('pool-show-unavailable').checked || model.loadable || model.placements.length) && model.id.toLowerCase().includes(field('pool-search').value.toLowerCase())).sort((a, b) => Number(b.placements.length > 0) - Number(a.placements.length > 0) || a.id.localeCompare(b.id)).map(model => {
       const job = pending(model.id);
       const loaded = model.placements.length > 0;
       const retained = model.preferences.keep_loaded || model.placements.some(p => p.keep_loaded);
@@ -27,6 +28,7 @@
         ${!model.loadable ? '<small>Runtime support is required before loading this model.</small>' : ''}
       </article>`;
     }).join('') || '<div class="empty-state">Download a model or connect a cluster to add it to the pool.</div>';
+    if (markup !== lastMarkup) { field('pool-model-list').innerHTML = markup; lastMarkup = markup; }
   }
   async function refresh() {
     if (polling) return;
@@ -45,6 +47,7 @@
       field('pool-cluster').add(new Option('Unavailable saved cluster', model.preferences.cluster_id));
     }
     field('pool-cluster').value = model.preferences.cluster_id || '';
+    field('pool-api-url').value = location.origin + model.endpoint_path;
     const settings = model.last_settings;
     field('pool-saved-settings').textContent = settings ? JSON.stringify(settings, null, 2) : model.editable_settings ? 'The last successful launch settings will be reused. A first launch uses conservative defaults and checks every candidate cluster.' : 'The saved service configuration will be reused exactly.';
     field('pool-advanced-settings').hidden = !model.editable_settings;
