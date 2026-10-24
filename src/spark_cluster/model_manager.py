@@ -732,6 +732,7 @@ class ModelManager:
         self._active_tasks: dict[str, asyncio.Task] = {}
         self._active_processes: dict[str, asyncio.subprocess.Process] = {}
         self._inventory_cache: list[LocalModel] | None = None
+        self._local_fit_cache: dict[str, tuple[datetime, ModelFitPlan, int]] = {}
         self._inventory_cached_at = 0.0
         self._inventory_guard = threading.Lock()
         self._inventory_generation = 0
@@ -764,26 +765,27 @@ class ModelManager:
     async def fit_for_local(self, request: ModelFitRequest) -> ModelFitPlan:
         parts = safe_repo_parts(request.repo_id)
         model_path = self.settings.model_cache_path.joinpath(*parts)
-        completed = [
-            job
-            for job in await asyncio.to_thread(self.store.list_downloads)
-            if job.repo_id == request.repo_id
-            and job.status == "completed"
-        ]
-        if completed:
-            job = max(completed, key=lambda item: item.updated_at)
-            previous = job.fit
-            cached_bytes = job.total_bytes or job.downloaded_bytes or previous.repository_bytes
+        with self._inventory_guard:
+            cached = self._local_fit_cache.get(request.repo_id)
+        if cached:
+            _, previous, cached_bytes = cached
         else:
-            manifest_path = model_path / ".spark-cluster.json"
-            try:
-                manifest = await asyncio.to_thread(
-                    lambda: json.loads(manifest_path.read_text())
-                )
-                previous = ModelFitPlan.model_validate(manifest["fit"])
-            except (OSError, ValueError, KeyError, json.JSONDecodeError):
-                return await self.fit(request)
-            cached_bytes = previous.repository_bytes
+            downloads = await asyncio.to_thread(self.store.list_downloads)
+            self._remember_download_fits(downloads)
+            with self._inventory_guard:
+                cached = self._local_fit_cache.get(request.repo_id)
+            if cached:
+                _, previous, cached_bytes = cached
+            else:
+                manifest_path = model_path / ".spark-cluster.json"
+                try:
+                    manifest = await asyncio.to_thread(
+                        lambda: json.loads(manifest_path.read_text())
+                    )
+                    previous = ModelFitPlan.model_validate(manifest["fit"])
+                except (OSError, ValueError, KeyError, json.JSONDecodeError):
+                    return await self.fit(request)
+                cached_bytes = previous.repository_bytes
 
         previous_sequences = max(1, previous.concurrent_sequences)
         previous_context = max(1, previous.context_length)
@@ -1087,6 +1089,8 @@ class ModelManager:
                 await asyncio.to_thread(self.store.save_download, job)
                 if self.relay:
                     await asyncio.to_thread(self.relay.remove_manifest, job.id)
+        with self._inventory_guard:
+            self._local_fit_cache.pop(repo_id, None)
         self._invalidate_inventory()
         return ModelMutationResult(
             repo_id=repo_id,
@@ -1176,6 +1180,7 @@ class ModelManager:
             needs_seed = self._inventory_cache is None
         if needs_seed:
             downloads = await asyncio.to_thread(self.store.list_downloads)
+            self._remember_download_fits(downloads)
             seed = self._seed_inventory(downloads)
             with self._inventory_guard:
                 if self._inventory_cache is None:
@@ -1212,6 +1217,21 @@ class ModelManager:
                 launch_supported=job.fit.launch_supported,
             )
         return list(models.values())
+
+    def _remember_download_fits(self, downloads: list[DownloadJob]) -> None:
+        latest: dict[str, DownloadJob] = {}
+        for job in downloads:
+            if job.status != "completed":
+                continue
+            current = latest.get(job.repo_id)
+            if current is None or job.updated_at > current.updated_at:
+                latest[job.repo_id] = job
+        with self._inventory_guard:
+            for repo_id, job in latest.items():
+                cached = self._local_fit_cache.get(repo_id)
+                if cached is None or job.updated_at >= cached[0]:
+                    cached_bytes = job.total_bytes or job.downloaded_bytes or job.fit.repository_bytes
+                    self._local_fit_cache[repo_id] = (job.updated_at, job.fit, cached_bytes)
 
     def _invalidate_inventory(self) -> None:
         with self._inventory_guard:
@@ -1555,6 +1575,7 @@ class ModelManager:
         job.status = "completed"
         job.updated_at = datetime.now(UTC)
         await asyncio.to_thread(self.store.save_download, job)
+        self._remember_download_fits([job])
         self._invalidate_inventory()
 
     @staticmethod

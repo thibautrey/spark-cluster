@@ -632,6 +632,23 @@ async def test_local_fit_uses_recorded_metadata_without_scanning_storage(
         "inspect",
         lambda *_args, **_kwargs: pytest.fail("Recorded local metadata must avoid Hub lookup"),
     )
+
+    async def runtime_endpoint():
+        return RuntimeEndpoint(
+            base_url="http://runtime/v1",
+            models_url="http://runtime/v1/models",
+            chat_completions_url="http://runtime/v1/chat/completions",
+            status="unreachable",
+        )
+
+    monkeypatch.setattr(manager, "runtime_endpoint", runtime_endpoint)
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf-home"))
+    await manager.local_models()
+    monkeypatch.setattr(
+        store,
+        "list_downloads",
+        lambda *_args, **_kwargs: pytest.fail("Warm local fit must not wait for SQLite"),
+    )
     result = await manager.fit_for_local(
         ModelFitRequest(repo_id="acme/model", context_length=262_144)
     )
