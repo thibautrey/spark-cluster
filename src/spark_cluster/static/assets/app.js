@@ -183,7 +183,7 @@ function renderMemory(nodes) {
     const other = Math.min(Math.max(0, total - model - kv), Math.max(0, node.memory.used_gib - model - kv));
     const free = Math.max(0, total - model - kv - other);
     const nodeLabel = active?.kind === 'local-docker' ? `GPU ${active.gpus?.[index]?.index ?? index}` : node.hostname;
-    return `<div><div class="memory-node-head"><b>${escapeHtml(nodeLabel)}</b><span>${node.memory.used_gib.toFixed(1)} / ${total.toFixed(1)} GiB</span></div><div class="memory-block" role="img" aria-label="${escapeHtml(nodeLabel)}: ${node.memory.used_gib.toFixed(1)} of ${total.toFixed(1)} GiB used">${segment('model', 'Model', model)}${segment('kv', 'KV cache', kv)}${segment('runtime', unified ? 'Runtime' : 'Other', other)}${segment('free', 'Free', free)}</div></div>`;
+    return `<div><div class="memory-node-head"><b>${escapeHtml(nodeLabel)}</b><span>${node.memory.used_gib.toFixed(1)} / ${total.toFixed(1)} GiB</span></div><div class="memory-block" role="img" aria-label="${escapeHtml(nodeLabel)}: ${node.memory.used_gib.toFixed(1)} of ${total.toFixed(1)} GiB used">${segment('model', 'Model', model)}${segment('kv', 'KV cache', kv)}${segment('runtime', unified ? 'Runtime' : 'Used', other)}${segment('free', 'Free', free)}</div></div>`;
   }).join('');
   const hasModels = nodes.some(node => node.memory.model_gib > 0);
   const hasKv = nodes.some(node => node.memory.kv_cache_source !== 'unavailable' && node.memory.kv_cache_gib > 0);
@@ -191,7 +191,7 @@ function renderMemory(nodes) {
   const hasFree = nodes.some(node => node.memory.total_gib - node.memory.used_gib > 0);
   const legend = $('memory-legend');
   legend.hidden = nodes.length === 0;
-  legend.innerHTML = `${hasModels ? '<span><i class="m"></i>model</span>' : ''}${hasKv ? '<span><i class="k"></i>KV</span>' : ''}${hasOther ? `<span><i class="r"></i>${unified ? 'runtime' : 'other'}</span>` : ''}${hasFree ? '<span><i class="f"></i>free</span>' : ''}`;
+  legend.innerHTML = `${hasModels ? '<span><i class="m"></i>model</span>' : ''}${hasKv ? '<span><i class="k"></i>KV</span>' : ''}${hasOther ? `<span><i class="r"></i>${unified ? 'runtime' : 'used'}</span>` : ''}${hasFree ? '<span><i class="f"></i>free</span>' : ''}`;
 }
 
 function drawSparkline(values) {
