@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=setup-focus-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=launch-focus-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -237,8 +237,8 @@
           </div>
         </section>
 
-        <section class="panel launch-panel" id="launch" data-route-view="launch">
-          <div class="launch-layout">
+        <section class="panel launch-panel idle" id="launch" data-route-view="launch">
+          <div class="launch-layout idle" id="launch-layout">
             <form class="launch-form" id="launch-form">
               <label>Local model<select id="launch-model" required><option value="">Loading models…</option></select></label>
               <label>Optimization goal<select id="launch-workload"><option value="balanced">Balanced</option><option value="latency">Lowest latency</option><option value="throughput">Maximum throughput</option><option value="long-context">Long context</option></select></label>
@@ -274,11 +274,9 @@
               <div class="fit-result neutral" id="launch-fit" hidden></div>
               <button class="primary launch-button" id="launch-model-button" type="submit" disabled>Launch on cluster</button>
             </form>
-            <div class="launch-status" id="launch-status">
-              <div class="launch-empty"><span>▷</span><b>No launch in progress</b><small>Select a local model to configure the runtime.</small></div>
-            </div>
+            <div class="launch-status" id="launch-status" hidden></div>
           </div>
-          <div class="launch-history" id="launch-history"></div>
+          <div class="launch-history" id="launch-history" hidden></div>
           <details class="optimization-lab" id="optimization-lab" hidden>
             <summary><span>Performance testing</span><span class="pill" id="telemetry-state">awaiting metrics</span></summary>
             <div class="optimization-lab-content"><div class="telemetry-grid" id="telemetry-grid"></div>
@@ -329,7 +327,7 @@
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=fit-details-v1"></script>
+    <script src="/assets/app.js?v=launch-focus-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>

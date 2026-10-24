@@ -392,10 +392,18 @@ const launchStages = [
 
 function renderLaunches(launches) {
   if (!launches.length) {
-    $('launch-status').innerHTML = '<div class="launch-empty"><span>▷</span><b>No launch in progress</b><small>Select a local model to configure the runtime.</small></div>';
+    $('launch').classList.add('idle');
+    $('launch-layout').classList.add('idle');
+    $('launch-status').hidden = true;
+    $('launch-status').innerHTML = '';
+    $('launch-history').hidden = true;
     $('launch-history').innerHTML = '';
     return;
   }
+  $('launch').classList.remove('idle');
+  $('launch-layout').classList.remove('idle');
+  $('launch-status').hidden = false;
+  $('launch-history').hidden = false;
   const current = launches.find(job => !['ready', 'failed'].includes(job.status)) || launches[0];
   const activeIndex = launchStages.findIndex(([status]) => status === current.status);
   $('launch-status').innerHTML = `
