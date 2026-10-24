@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=global-v1-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=runtime-visibility-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -267,6 +267,12 @@
                   <label class="pool-field">Run on cluster<select id="pool-cluster"><option value="">Automatic — pool</option></select></label>
                   <div class="pool-placement-note"><i>✓</i><span id="pool-placement-note">Automatic placement checks residency, availability, memory and runtime compatibility.</span></div>
                 </section>
+                <section class="pool-settings-section pool-runtime-section">
+                  <div class="pool-section-heading"><div><span class="pool-section-icon">⚡</span><div><h4>Runtime selection</h4><p>Spark evaluates model format, task, cluster hardware and executable adapters.</p></div></div><span class="pool-runtime-auto">AUTO</span></div>
+                  <div class="pool-runtime-detail"><div><b id="pool-runtime-name">Detecting…</b><small id="pool-runtime-id"></small></div><span id="pool-runtime-ready">Checking</span></div>
+                  <p class="pool-runtime-reason" id="pool-runtime-reason"></p>
+                  <div class="pool-runtime-notes" id="pool-runtime-notes" hidden></div>
+                </section>
                 <section class="pool-settings-section pool-endpoint-section">
                   <div class="pool-section-heading"><div><span class="pool-section-icon">↗</span><div><h4>Pool endpoint</h4><p>This stable route loads and places the model when needed.</p></div></div></div>
                   <div class="pool-copy-field"><code id="pool-api-url"></code><button class="secondary" id="pool-copy-api" type="button">Copy</button></div>
@@ -386,6 +392,6 @@
     <script src="/assets/model-readme.js?v=2"></script>
     <script src="/assets/catalog.js?v=sheet-titles-v1"></script>
     <script src="/assets/setup.js?v=setup-focus-v1"></script>
-    <script src="/assets/pool.js?v=global-v1-v1" defer></script>
+    <script src="/assets/pool.js?v=runtime-visibility-v1" defer></script>
 </body>
 </html>

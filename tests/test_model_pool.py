@@ -239,3 +239,71 @@ def test_pool_routes_stay_local_when_another_cluster_is_selected():
     assert not middleware.should_forward({"type": "http", "path": "/api/v1/pool"})
     assert not middleware.should_forward({"type": "http", "path": "/api/v1/pool/load"})
     assert not middleware.should_forward({"type": "http", "path": "/api/v1/pool/node/status"})
+
+
+def test_runtime_detection_classifies_specialized_model_profiles():
+    from spark_cluster.model_pool import profile_runtime
+    from spark_cluster.on_demand import InferenceProfile
+
+    cases = [
+        (
+            {
+                "Image": "vllm/vllm-openai:latest",
+                "Cmd": ["BAAI/bge-small-en-v1.5", "--runner", "pooling"],
+            },
+            "BAAI/bge-small-en-v1.5",
+            "vllm",
+            "pooling",
+        ),
+        (
+            {"Image": "ghcr.io/speaches-ai/speaches:latest-cuda"},
+            "deepdml/faster-whisper-large-v3-turbo-ct2",
+            "speaches",
+            "faster-whisper",
+        ),
+        (
+            {"Image": "bonsai-llama:prism", "Entrypoint": ["/opt/bonsai/run-server.sh"]},
+            "prism-ml/Ternary-Bonsai-2-27B-gguf",
+            "llama-cpp",
+            "llama.cpp",
+        ),
+        (
+            {"Image": "vllm/vllm-openai:latest", "Cmd": ["Qwen/Qwen2.5-Coder-3B-Instruct-AWQ"]},
+            "Qwen/Qwen2.5-Coder-3B-Instruct-AWQ",
+            "vllm",
+            "AWQ",
+        ),
+    ]
+    for index, (container, model_id, engine_id, evidence) in enumerate(cases):
+        runtime = profile_runtime(
+            InferenceProfile(
+                id=f"profile-{index}",
+                model=model_id,
+                model_id=model_id,
+                listen_port=18000 + index,
+                upstream_port=28000 + index,
+                container=container,
+            )
+        )
+        assert runtime["engine_id"] == engine_id
+        assert runtime["selection"] == "automatic"
+        assert runtime["executable"] is True
+        assert evidence.casefold() in (runtime["name"] + runtime["reason"]).casefold()
+
+
+def test_execution_runtime_reports_automatic_engine_evidence():
+    from spark_cluster.model_pool import execution_runtime
+    from spark_cluster.runtime_engines import build_execution_plan
+
+    request = ModelLaunchRequest(
+        model_id="org/transformer",
+        served_model_name="transformer",
+        engine_id="auto",
+        context_length=8192,
+    )
+    plan = build_execution_plan(request, "/models/org/transformer", Settings())
+    runtime = execution_runtime(plan, request.engine_id)
+    assert runtime["engine_id"] == "vllm"
+    assert runtime["selection"] == "automatic"
+    assert runtime["executable"] is True
+    assert "model format" in runtime["reason"]

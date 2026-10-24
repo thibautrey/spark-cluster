@@ -22,6 +22,62 @@ from .remote_cluster import signed_controller_headers
 from .runtime_engines import build_execution_plan
 
 
+def profile_runtime(profile: InferenceProfile) -> dict:
+    payload = profile.container
+    image = str(payload.get("Image", "")).casefold()
+    command = " ".join(
+        str(item) for item in [payload.get("Entrypoint"), payload.get("Cmd")] if item
+    ).casefold()
+    evidence = f"{image} {command} {profile.model_id or profile.model}".casefold()
+    if "speaches" in evidence or "whisper" in evidence:
+        engine_id, name = "speaches", "Speaches · faster-whisper"
+        reason = "Speech-to-text model detected; using the CUDA faster-whisper service."
+    elif "llama" in evidence or "gguf" in evidence or "bonsai" in evidence:
+        engine_id, name = "llama-cpp", "llama.cpp · Prism"
+        reason = "GGUF model detected; using its validated llama.cpp runtime."
+    elif "vllm" in evidence:
+        engine_id, name = "vllm", "vLLM"
+        if "embedding" in evidence or "bge" in evidence or "pooling" in evidence:
+            reason = "Embedding model detected; using vLLM pooling mode."
+        elif "awq" in evidence:
+            reason = "AWQ transformer detected; using the validated vLLM quantized runtime."
+        else:
+            reason = "Transformer model detected; using the validated vLLM runtime."
+    else:
+        engine_id, name = "container", "Specialized container"
+        reason = "Using the model's validated imported runtime recipe."
+    return {
+        "engine_id": engine_id,
+        "name": name,
+        "selection": "automatic",
+        "source": "detected-profile",
+        "reason": reason,
+        "image": payload.get("Image"),
+        "executable": True,
+        "warnings": [],
+        "blockers": [],
+    }
+
+
+def execution_runtime(plan, requested_engine: str) -> dict:
+    return {
+        "engine_id": plan.engine_id,
+        "name": plan.engine_name,
+        "selection": "automatic" if requested_engine == "auto" else "configured",
+        "source": "execution-plan",
+        "reason": (
+            "Selected automatically from model format, workload settings, cluster hardware, "
+            "and installed executable adapters."
+            if requested_engine == "auto"
+            else "Selected by the saved model configuration and validated on this cluster."
+        ),
+        "image": plan.image,
+        "executable": plan.executable,
+        "warnings": plan.warnings,
+        "blockers": plan.blockers,
+    }
+
+
 class ModelPreferences(BaseModel):
     keep_loaded: bool = False
     cluster_id: str | None = None
@@ -112,6 +168,8 @@ class PoolNode:
                 "editable_settings": True,
                 "aliases": [m.id],
                 "served_model_name": None,
+                "model_path": m.path,
+                "runtime": None,
             }
             for m in await self.models.local_models()
             if m.source == "managed"
@@ -135,6 +193,7 @@ class PoolNode:
                 else None,
                 "aliases": sorted({p.id, p.model, key}),
                 "served_model_name": p.model,
+                "runtime": profile_runtime(p),
             }
         active = self.demand.active
         active_id = active.model_id or active.model if active else self.native.get("model_id")
@@ -144,6 +203,23 @@ class PoolNode:
         if active_id in models:
             models[active_id]["loaded"] = True
             models[active_id]["keep_loaded"] = bool(retained)
+        for model in models.values():
+            if model.get("runtime") or not model.get("model_path"):
+                continue
+            saved = model.get("last_settings")
+            launch = (
+                ModelLaunchRequest.model_validate(saved)
+                if saved
+                else ModelLaunchRequest(
+                    model_id=model["id"],
+                    served_model_name=model["id"].rsplit("/", 1)[-1],
+                    context_length=8192,
+                )
+            )
+            plan = build_execution_plan(launch, model["model_path"], self.settings)
+            model["runtime"] = execution_runtime(plan, launch.engine_id)
+        for model in models.values():
+            model.pop("model_path", None)
         return {
             "models": list(models.values()),
             "active_model": active_id,
@@ -267,8 +343,13 @@ class PoolNode:
 
     async def plan(self, request: PoolLoadRequest) -> dict:
         try:
-            await self.prepare(request)
-            return {"compatible": True}
+            profile, launch, _, plan = await self.prepare(request)
+            runtime = (
+                profile_runtime(profile)
+                if plan is None
+                else execution_runtime(plan, launch.engine_id)
+            )
+            return {"compatible": True, "runtime": runtime}
         except (ValueError, RuntimeError) as error:
             return {"compatible": False, "reason": self.models.safe_error(error)}
 
@@ -483,12 +564,15 @@ class ModelPool:
                         "editable_settings": m.get("editable_settings", True),
                         "aliases": list(m.get("aliases", [m["id"]])),
                         "served_model_name": m.get("served_model_name"),
+                        "runtime": m.get("runtime"),
                     },
                 )
                 entry["aliases"] = sorted(set(entry["aliases"] + m.get("aliases", [])))
                 entry["served_model_name"] = m.get("served_model_name") or entry.get(
                     "served_model_name"
                 )
+                if not entry.get("runtime") or m.get("runtime", {}).get("executable"):
+                    entry["runtime"] = m.get("runtime") or entry.get("runtime")
                 if m["loadable"]:
                     entry["loadable"] = True
                     entry["available_clusters"].append(node["id"])
@@ -661,6 +745,7 @@ class ModelPool:
                             continue
                         compatible = True
                         selected = cluster
+                        job["runtime"] = plan.get("runtime")
                         self.reserved.add(cluster.id)
                         job.update(
                             status="loading",

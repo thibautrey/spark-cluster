@@ -22,9 +22,13 @@
       const loaded = model.placements.length > 0;
       const retained = model.preferences.keep_loaded || model.placements.some(p => p.keep_loaded);
       const last = state.jobs.findLast(j => j.model_id === model.id);
+      const runtime = job?.runtime || model.runtime;
+      const runtimeName = runtime?.name || 'Runtime detection unavailable';
+      const runtimeState = runtime?.selection === 'configured' ? 'Configured' : 'Auto-detected';
       return `<article class="pool-model-card" data-pool-model="${escapeHtml(model.id)}">
         <div class="pool-model-heading"><h3>${escapeHtml(model.id)}</h3><span class="pill ${loaded ? 'ready' : ''}">${retained && loaded ? 'Kept loaded' : retained ? 'Retention enabled' : loaded ? 'Loaded' : 'On demand'}</span></div>
         <p>${loaded ? model.placements.map(p => escapeHtml(p.cluster_name)).join(', ') : model.preferences.cluster_id ? `Required cluster: ${escapeHtml(state.clusters.find(c => c.id === model.preferences.cluster_id)?.name || 'unavailable')}` : 'Automatic placement in the pool'}</p>
+        <div class="pool-model-runtime"><span>⚡</span><div><b>${escapeHtml(runtimeName)}</b><small>${escapeHtml(runtimeState)}</small></div></div>
         ${job ? `<p class="pool-job" role="status">${escapeHtml(job.message)}</p>` : last?.status === 'failed' ? `<p class="pool-error">${escapeHtml(last.message)}</p>` : ''}
         <div class="pool-model-actions"><button class="primary" data-pool-action="load" ${job || !model.loadable ? 'disabled' : ''}>${job ? 'Waiting…' : loaded ? 'Loaded' : 'Load model'}</button><button class="secondary" data-pool-action="settings">Settings</button>${loaded ? '<button class="secondary" data-pool-action="unload">Unload</button>' : ''}</div>
         ${!model.loadable ? '<small>Runtime support is required before loading this model.</small>' : ''}
@@ -54,6 +58,15 @@
     field('pool-cluster').value = model.preferences.cluster_id || '';
     field('pool-api-url').textContent = `${location.origin}/v1`;
     field('pool-settings-state').textContent = model.placements.length ? (model.preferences.keep_loaded ? 'Kept loaded' : 'Loaded') : 'On demand';
+    const runtime = pending(model.id)?.runtime || model.runtime;
+    field('pool-runtime-name').textContent = runtime?.name || 'No compatible runtime detected';
+    field('pool-runtime-id').textContent = runtime?.engine_id ? `Engine: ${runtime.engine_id}` : '';
+    field('pool-runtime-ready').textContent = runtime?.executable ? 'Ready' : 'Unavailable';
+    field('pool-runtime-ready').className = runtime?.executable ? 'ready' : 'unavailable';
+    field('pool-runtime-reason').textContent = runtime?.reason || 'Runtime detection will run during cluster preflight.';
+    const notes = [...(runtime?.warnings || []), ...(runtime?.blockers || [])];
+    field('pool-runtime-notes').hidden = !notes.length;
+    field('pool-runtime-notes').innerHTML = notes.map(note => `<span>${escapeHtml(note)}</span>`).join('');
     field('pool-placement-note').textContent = model.preferences.cluster_id ? 'This cluster is required on the next load. Changing placement does not move a running model.' : 'Automatic placement checks residency, availability, memory and runtime compatibility.';
     const settings = model.last_settings;
     field('pool-saved-settings').textContent = settings ? JSON.stringify(settings, null, 2) : model.editable_settings ? 'The last successful launch settings will be reused. A first launch uses conservative defaults and checks every candidate cluster.' : 'The saved service configuration will be reused exactly.';
