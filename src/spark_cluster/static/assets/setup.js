@@ -148,8 +148,8 @@ function renderSetupJob(job) {
   }
   setupNavigate(job.status === 'ready' ? 4 : 3);
 }
-async function loadSetup(restore = false) {
-  setupState = await api('/api/v1/setup', {headers: setupAuth()});
+async function loadSetup(restore = false, promptForAdmin = true) {
+  setupState = await api('/api/v1/setup', {headers: setupAuth(), promptForAdmin});
   const connected = setupState.connected_cluster;
   $('setup-mode').textContent = connected ? `CONTROLLER · ${connected.cluster_name}` : setupState.mode === 'demo' ? 'DEMO · simulated machines' : setupState.enabled ? 'LIVE · SSH bootstrap' : 'Setup disabled';
   $('setup-access').textContent = connected ? `${connected.cluster_name} connected.` : setupState.enabled ? (setupState.mode === 'demo' ? 'Simulated discovery and installation. No machine is modified.' : 'Ready to configure machines.') : 'Token required to make changes.';
@@ -273,7 +273,7 @@ function reviseSetup() {
 }
 $('setup-revise').addEventListener('click', reviseSetup);
 $('setup-new').addEventListener('click', () => { setupJob = null; setupSelection.clear(); setupCandidates = []; setupDiscoveryState = 'idle'; invalidateSetup(); renderSetupCandidates(); setupNavigate(0); });
-loadSetup(true).catch(error => {
+loadSetup(true, false).catch(error => {
   if (error.message === 'Invalid model administration token') {
     $('setup-mode').textContent = 'ADMIN TOKEN REQUIRED';
     $('setup-access').textContent = 'Enter the controller token to make changes.';

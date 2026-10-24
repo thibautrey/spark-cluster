@@ -115,15 +115,21 @@ function acceptAdminCandidate(token) {
 }
 
 async function api(path, options = {}) {
-  let candidate = options.headers?.Authorization?.replace(/^Bearer\s+/i, '').trim()
+  const {promptForAdmin = true, ...fetchOptions} = options;
+  let candidate = fetchOptions.headers?.Authorization?.replace(/^Bearer\s+/i, '').trim()
     || storedAdminToken();
   while (true) {
-    const headers = {'Content-Type': 'application/json', ...(options.headers || {})};
+    const headers = {'Content-Type': 'application/json', ...(fetchOptions.headers || {})};
     if (candidate) headers.Authorization = `Bearer ${candidate}`;
-    const response = await fetch(path, {...options, headers});
+    const response = await fetch(path, {...fetchOptions, headers});
     const body = await response.json().catch(() => ({}));
     if (response.status === 401) {
       if (candidate && candidate === storedAdminToken()) clearAdminToken();
+      if (!promptForAdmin) {
+        const error = new Error('Administrator authentication is required.');
+        error.payload = body;
+        throw error;
+      }
       if (adminTokenVerifying) rejectAdminCandidate();
       candidate = await requestAdminToken(
         candidate
