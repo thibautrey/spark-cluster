@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=launch-focus-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=logs-focus-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -312,7 +312,7 @@
           </div>
         </section>
 
-        <section class="panel logs-panel" id="logs" data-route-view="logs">
+        <section class="panel logs-panel idle" id="logs" data-route-view="logs">
           <div class="view-toolbar logs-head" id="logs-toolbar" hidden>
             <div class="log-controls">
               <select id="log-instance"><option value="">All instances</option></select>
@@ -321,13 +321,13 @@
               <button id="clear-logs" type="button">Clear view</button>
             </div>
           </div>
-          <div class="log-terminal empty" id="log-terminal"><div class="log-empty">No logs yet</div></div>
+          <div class="log-terminal empty" id="log-terminal"><div class="log-empty">Logs will appear when a runtime starts.</div></div>
           <footer class="log-footer" id="log-footer" hidden><span><i></i>Live stream</span><span id="log-count">0 lines</span></footer>
         </section>
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=launch-focus-v1"></script>
+    <script src="/assets/app.js?v=logs-focus-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>

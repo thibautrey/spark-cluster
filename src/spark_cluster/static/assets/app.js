@@ -684,6 +684,7 @@ function renderLogLines() {
   const visible = logEntries.filter(entry => (!instance || entry.pod === instance) && (!level || entry.level === level));
   const terminal = $('log-terminal');
   const hasLogs = logEntries.length > 0;
+  $('logs').classList.toggle('idle', !hasLogs);
   $('logs-toolbar').hidden = !hasLogs;
   $('log-footer').hidden = !hasLogs;
   $('log-count').textContent = `${visible.length} line${visible.length === 1 ? '' : 's'}`;
@@ -691,7 +692,7 @@ function renderLogLines() {
   $('clear-logs').disabled = !hasLogs;
   terminal.classList.toggle('empty', visible.length === 0);
   if (!visible.length) {
-    terminal.innerHTML = `<div class="log-empty">${logEntries.length ? 'No matching logs' : 'No logs yet'}</div>`;
+    terminal.innerHTML = `<div class="log-empty">${logEntries.length ? 'No matching logs' : 'Logs will appear when a runtime starts.'}</div>`;
     return;
   }
   terminal.innerHTML = visible.slice(-1000).map(entry => `
