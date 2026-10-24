@@ -826,7 +826,22 @@ class ModelManager:
         for model in await self.local_models():
             if model.id == model_id and model.source == "managed":
                 return model
-        return None
+        model_path = self.settings.model_cache_path.joinpath(*safe_repo_parts(model_id))
+        manifest_path = model_path / ".spark-cluster.json"
+        try:
+            manifest = await asyncio.to_thread(lambda: json.loads(manifest_path.read_text()))
+            fit = ModelFitPlan.model_validate(manifest["fit"])
+            return LocalModel(
+                id=model_id,
+                revision=manifest.get("revision"),
+                source="managed",
+                path=str(model_path),
+                size_bytes=fit.repository_bytes,
+                downloaded_at=datetime.fromisoformat(manifest["downloaded_at"]),
+                launch_supported=fit.launch_supported,
+            )
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            return None
 
     async def enqueue(
         self,
