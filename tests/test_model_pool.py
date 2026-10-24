@@ -1,9 +1,8 @@
 import asyncio
 import json
-
-import httpx
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from spark_cluster.config import Settings
