@@ -111,6 +111,8 @@ from .remote_cluster import (
     valid_controller_signature,
     validated_cluster_url,
 )
+from .runtime_library import RuntimeLibrary
+from .runtime_library_api import register_runtime_library
 from .runtime_prerequisites import RuntimePrerequisiteService
 from .setup_models import ClusterConnectRequest, DiscoveryRequest, SetupRequest
 from .simulator import ClusterSimulator
@@ -190,6 +192,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         setup_service,
         registry=cluster_registry,
         docker=docker_engine,
+    )
+    runtime_library = RuntimeLibrary(
+        settings, runtime.store, runtime_prerequisites, cluster_registry, docker_engine
     )
     telemetry_service = InferenceTelemetryService(settings, runtime.store)
     optimization_lab = OptimizationLab(settings, runtime.store, telemetry_service)
@@ -291,6 +296,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await telemetry_service.start()
         await deployment_service.start()
         await setup_service.start()
+        await runtime_library.start()
         await on_demand.start()
         await pool_node.start()
         try:
@@ -305,6 +311,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await local_monitor
         await setup_service.stop()
         await runtime_prerequisites.stop()
+        await runtime_library.stop()
         await deployment_service.stop()
         await telemetry_service.stop()
         await log_service.stop()
@@ -321,6 +328,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.deployment_service = deployment_service
     app.state.setup_service = setup_service
     app.state.runtime_prerequisites = runtime_prerequisites
+    app.state.runtime_library = runtime_library
     app.state.telemetry_service = telemetry_service
     app.state.optimization_lab = optimization_lab
     app.state.settings = settings
@@ -378,6 +386,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ):
             return
         raise HTTPException(status_code=401, detail="Invalid model administration token")
+
+    register_runtime_library(app, runtime_library, require_model_token, settings)
 
     @app.exception_handler(SetupFailure)
     async def setup_failure(_, error: SetupFailure):

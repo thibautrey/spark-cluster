@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=adaptive-pools-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=runtime-library-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -21,6 +21,7 @@
           <a class="active" href="#overview"><span>⌁</span>Overview</a>
           <a href="#api"><span>↗</span>API endpoint</a>
           <a href="#models"><span>⬡</span>Models</a>
+          <a href="#runtimes"><span>⚡</span>Runtimes</a>
           <a href="#launch"><span>▷</span>Launch</a>
           <a href="#logs"><span>_</span>Runtime logs</a>
           <a href="#topology"><span>◇</span>Topology</a>
@@ -34,6 +35,25 @@
           <div><h1 id="page-title">Pool overview</h1></div>
           <div class="header-actions"><label class="cluster-switch"><span class="sr-only">Compute pool</span><select id="cluster-select" aria-label="Active compute pool"><option value="">No compute pool</option></select></label><label class="route-select"><span class="sr-only">Section</span><select id="route-select" aria-label="Dashboard section"><option value="setup">Compute pools</option><option value="overview" selected>Overview</option><option value="api">API endpoint</option><option value="models">Models</option><option value="launch">Launch</option><option value="logs">Runtime logs</option><option value="topology">Topology</option><option value="cache">KV cache</option><option value="memory">Memory</option></select></label><span class="live connecting" id="stream-status" role="status" aria-live="polite"><i></i><span>Connecting</span></span></div>
         </header>
+
+        <section class="panel runtime-library" id="runtimes" data-route-view="runtimes">
+          <div class="panel-heading"><div><h2>Runtime library</h2><p>Discover versions, cache them on the controller, and prepare your machines.</p></div><button class="secondary" id="runtime-library-refresh" type="button">Refresh</button></div>
+          <p id="runtime-library-message" role="status" aria-live="polite"></p>
+          <div class="runtime-library-layout"><div id="runtime-library-list" class="runtime-library-list" aria-label="Inference runtimes"></div>
+            <div class="runtime-library-detail" id="runtime-library-detail" hidden>
+              <div><h3 id="runtime-library-name"></h3><p id="runtime-library-description"></p><a id="runtime-library-project" target="_blank" rel="noopener">Project ↗</a></div>
+              <p id="runtime-library-hardware"></p><p class="runtime-library-note" id="runtime-library-note"></p>
+              <form id="runtime-library-download">
+                <label>Version / image tag<input id="runtime-library-version" list="runtime-library-versions" placeholder="Choose a tag or enter an exact version" required pattern="[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" maxlength="128" /><datalist id="runtime-library-versions"></datalist></label>
+                <div class="runtime-version-toolbar"><small id="runtime-library-page"></small><button class="secondary" id="runtime-library-more" type="button" hidden>Next versions</button></div>
+                <label>Target architecture<select id="runtime-library-platform"><option value="linux/arm64">Linux ARM64 · DGX Spark</option><option value="linux/amd64">Linux x86-64 · NVIDIA servers</option></select></label>
+                <button class="primary" id="runtime-library-download-button" type="submit">Download to controller</button>
+              </form>
+            </div>
+          </div>
+          <div class="runtime-library-cache"><h3>Controller cache</h3><p>Choose a compute pool to import a cached image on its managed machines.</p><label>Install destination<select id="runtime-library-target"><option value="">Choose a compute pool</option></select></label><div id="runtime-library-artifacts"></div></div>
+          <div class="runtime-library-activity"><h3>Activity</h3><div id="runtime-library-jobs"></div></div>
+        </section>
 
         <section class="panel setup-panel" id="setup" data-route-view="setup">
           <section class="cluster-fleet"><div class="cluster-fleet-head"><div class="cluster-fleet-actions"><button class="secondary" id="cluster-add-local" type="button">Detect GPUs</button><button class="primary" id="setup-open-sheet" type="button">＋ Add compute pool</button></div></div><div id="cluster-list" class="cluster-list"><div class="empty-state">Loading compute pools…</div></div><p class="sr-only" id="cluster-fleet-status">The selected compute pool receives fit checks, downloads, launches, logs and telemetry.</p></section>
@@ -392,7 +412,7 @@
         </form>
       </section>
     </div>
-    <script src="/assets/navigation.js?v=adaptive-pools-v1"></script>
+    <script src="/assets/navigation.js?v=runtime-library-v1"></script>
     <script src="/assets/app.js?v=adaptive-pools-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
@@ -400,5 +420,6 @@
     <script src="/assets/catalog.js?v=adaptive-pools-v1"></script>
     <script src="/assets/setup.js?v=adaptive-pools-v1"></script>
     <script src="/assets/pool.js?v=adaptive-pools-v1" defer></script>
+    <script src="/assets/runtimes.js?v=runtime-library-v1" defer></script>
 </body>
 </html>

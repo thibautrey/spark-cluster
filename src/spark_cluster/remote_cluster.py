@@ -233,6 +233,7 @@ class RemoteClusterProxyMiddleware:
             or path.startswith("/api/v1/catalog/")
             or path.startswith("/api/v1/model-management/")
             or path.startswith("/api/v1/runtime-management/")
+            or path.startswith("/api/v1/runtime-library")
             or path.startswith("/api/v1/performance/")
             or path == "/api/v1/models/fit"
             or path == "/api/v1/models/download"

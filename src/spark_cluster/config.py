@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     runtime_tensorfold_image: str | None = None
     runtime_deepinfer_image: str | None = None
     runtime_llama_cpp_image: str | None = None
+    runtime_cache_path: Path | None = None
     runtime_metrics_url: str | None = None
     runtime_metrics_poll_seconds: float = 5
     setup_enabled: bool = False

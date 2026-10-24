@@ -47,6 +47,10 @@ class SnapshotStore:
             "(id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
         )
         self._connection.execute(
+            "CREATE TABLE IF NOT EXISTS runtime_library_objects "
+            "(kind TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(kind, id))"
+        )
+        self._connection.execute(
             "CREATE TABLE IF NOT EXISTS inference_telemetry "
             "(timestamp TEXT PRIMARY KEY, payload TEXT NOT NULL)"
         )
@@ -63,6 +67,22 @@ class SnapshotStore:
             "CREATE TABLE IF NOT EXISTS cluster_setups (id TEXT PRIMARY KEY, payload TEXT NOT NULL)"
         )
         self._connection.commit()
+
+    def save_runtime_object(self, kind: str, value: dict) -> None:
+        with self._lock:
+            self._connection.execute(
+                "INSERT OR REPLACE INTO runtime_library_objects(kind,id,payload) VALUES (?,?,?)",
+                (kind, value["id"], json.dumps(value)),
+            )
+            self._connection.commit()
+
+    def runtime_objects(self, kind: str) -> list[dict]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT payload FROM runtime_library_objects WHERE kind=? ORDER BY rowid DESC",
+                (kind,),
+            ).fetchall()
+        return [json.loads(row[0]) for row in rows]
 
     def save_setup_job(self, job: SetupJob) -> None:
         with self._lock:

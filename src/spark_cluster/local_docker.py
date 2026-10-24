@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import json
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -147,6 +148,44 @@ class DockerEngineClient:
             return response
         response.raise_for_status()
         return response
+
+    async def load_runtime_archive(
+        self, archive: Path, platform: str, image: str, config_digest: str
+    ) -> None:
+        if not self.available:
+            raise ValueError("Docker runtime access is not configured")
+        info = (await self.request("GET", "/info")).json()
+        architecture = {"x86_64": "amd64", "aarch64": "arm64"}.get(
+            info.get("Architecture"), info.get("Architecture")
+        )
+        if f"{info.get('OSType')}/{architecture}" != platform:
+            raise ValueError("Docker host architecture does not match the controller archive")
+
+        async def content():
+            with archive.open("rb") as source:
+                while chunk := await asyncio.to_thread(source.read, 1024 * 1024):
+                    yield chunk
+
+        async with httpx.AsyncClient(
+            base_url="http://docker", transport=self._transport(), timeout=7200
+        ) as client:
+            async with client.stream(
+                "POST",
+                "/images/load",
+                params={"quiet": "true"},
+                content=content(),
+                headers={"Content-Type": "application/x-tar"},
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    event = json.loads(line)
+                    if event.get("error") or event.get("errorDetail"):
+                        raise ValueError("Docker rejected the runtime archive")
+        installed = await self.request("GET", f"/images/{quote(image, safe='')}/json")
+        if installed.json().get("Id") != config_digest:
+            raise ValueError("Docker image identity does not match the downloaded runtime")
 
     async def ping(self) -> bool:
         try:

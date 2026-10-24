@@ -3,6 +3,7 @@ const dashboardRoutes = {
   overview: {title: 'Pool overview'},
   api: {title: 'Inference API'},
   models: {title: 'Model library'},
+  runtimes: {title: 'Runtime library'},
   launch: {title: 'Launch a model'},
   logs: {title: 'Runtime logs'},
   topology: {title: 'Pool topology'},

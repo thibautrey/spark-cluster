@@ -1,5 +1,9 @@
 # Spark Cluster
 
+The [runtime library](docs/runtime-library.md) lists ten inference runtimes with live
+version discovery, controller-side image caching and verified imports onto managed
+Linux machines. Open **Runtimes** in the dashboard to prepare a selected version.
+
 <p align="center">
   <strong>A visual control plane for NVIDIA DGX Spark clusters.</strong><br>
   Discover machines, verify cabling, configure the cluster, launch models, and understand runtime health from one dashboard.
