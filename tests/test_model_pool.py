@@ -37,6 +37,16 @@ class FakePool(ModelPool):
                 "active_model": None,
                 "keep_loaded": False,
                 "busy": False,
+                "machines": [
+                    {
+                        "id": f"{key}-node-1",
+                        "name": f"{key} node 1",
+                        "address": f"10.0.0.{1 if key == 'first' else 2}",
+                        "accelerators": 1,
+                        "memory_used_gib": 1.0,
+                        "memory_total_gib": 16.0,
+                    }
+                ],
             }
             for key in ["first", "second"]
         }
@@ -439,3 +449,37 @@ async def test_inventory_keeps_per_cluster_capacity_and_fit_alternatives(tmp_pat
             **pool.nodes["second"]["models"][0]["capacity"],
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_load_progress_tracks_global_and_each_machine_then_memory_stats(tmp_path):
+    pool = FakePool(tmp_path)
+    pool.nodes["first"]["machines"].append(
+        {
+            "id": "first-node-2",
+            "name": "first node 2",
+            "address": "10.0.0.3",
+            "accelerators": 1,
+            "memory_used_gib": 2.0,
+            "memory_total_gib": 16.0,
+        }
+    )
+    pool.nodes["second"]["busy"] = True
+    pool.gate = asyncio.Event()
+    job = await pool.enqueue(PoolLoadRequest(model_id="org/model"))
+    await eventually(lambda: job["status"] == "loading")
+    assert job["stage"] == "starting-runtime"
+    assert job["progress"] == 20.0
+    assert [machine["name"] for machine in job["machines"]] == ["first node 1", "first node 2"]
+    await asyncio.sleep(1.1)
+    assert job["progress"] > 20
+    assert all(machine["status"] == "loading-runtime" for machine in job["machines"])
+    pool.gate.set()
+    await finished(pool)
+    assert job["status"] == "ready"
+    assert job["stage"] == "ready"
+    assert job["progress"] == 100.0
+    assert job["completed_at"] is not None
+    assert all(machine["progress"] == 100 for machine in job["machines"])
+    assert [machine["memory_after_gib"] for machine in job["machines"]] == [1.0, 2.0]
+    assert [machine["memory_total_gib"] for machine in job["machines"]] == [16.0, 16.0]

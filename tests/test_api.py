@@ -488,3 +488,14 @@ def test_cluster_dropdown_exposes_global_capacity_context(tmp_path):
     assert "Fits on ${escapeHtml(alternative.cluster_name)}" in pool_script
     assert "cluster_id: window.selectedClusterContext" in pool_script
     assert "pool-model-capacity" in page or "pool-model-capacity" in pool_script
+
+
+def test_pool_ui_renders_global_and_per_machine_load_progress(tmp_path):
+    with make_client(tmp_path) as client:
+        page = client.get("/").text
+        pool_script = client.get("/assets/pool.js").text
+    assert "pool-load-progress" in pool_script
+    assert "pool-machine-progress" in pool_script
+    assert "memory_after_gib" in pool_script
+    assert "now - job.completed_at < 12" in pool_script
+    assert "load-progress-v1" in page

@@ -47,13 +47,43 @@
     const alternative = context.alternatives[0];
     return `<div class="pool-model-capacity missing"><span>Needs ${capacity.missing_gib.toFixed(1)} GiB more on ${escapeHtml(capacity.cluster_name)}</span>${alternative ? `<small>Fits on ${escapeHtml(alternative.cluster_name)} · switch cluster or choose All</small>` : '<small>No compatible cluster currently has enough memory</small>'}</div>`;
   }
+  function recentReady(id) {
+    const now = Date.now() / 1000;
+    return state.jobs.findLast(job =>
+      job.model_id === id && job.status === 'ready'
+      && job.completed_at && now - job.completed_at < 12
+    );
+  }
+  function loadProgressMarkup(job) {
+    if (!job || !['queued', 'waiting', 'loading', 'ready'].includes(job.status)) return '';
+    const ready = job.status === 'ready';
+    const progress = Math.max(0, Math.min(100, Number(job.progress || 0)));
+    const machineRows = (job.machines || []).map(machine => {
+      const machineProgress = Math.max(0, Math.min(100, Number(machine.progress || 0)));
+      const memory = ready && machine.memory_after_gib !== null
+        ? `${Number(machine.memory_after_gib || 0).toFixed(1)} / ${Number(machine.memory_total_gib || 0).toFixed(1)} GiB GPU memory`
+        : machine.status === 'starting' ? 'Preparing runtime' : machine.status === 'failed' ? 'Load failed' : 'Loading runtime';
+      return `<div class="pool-machine-progress ${ready ? 'ready' : ''}">
+        <div><span><b>${escapeHtml(machine.name || machine.id)}</b><small>${escapeHtml(memory)}</small></span><em>${Math.round(machineProgress)}%</em></div>
+        <div class="pool-progress-track"><i style="width:${machineProgress}%"></i></div>
+      </div>`;
+    }).join('');
+    return `<section class="pool-load-progress ${ready ? 'ready' : 'active'}" aria-live="polite">
+      <header><span><i>${ready ? '✓' : '↻'}</i><b>${ready ? 'Model ready' : escapeHtml(job.message || 'Loading model')}</b></span><strong>${Math.round(progress)}%</strong></header>
+      <div class="pool-progress-track global"><i style="width:${progress}%"></i></div>
+      ${machineRows ? `<div class="pool-machine-list">${machineRows}</div>` : ''}
+    </section>`;
+  }
+
   function render() {
     const markup = state.models.filter(model => (field('pool-show-unavailable').checked || model.loadable || model.placements.length) && model.id.toLowerCase().includes(field('pool-search').value.toLowerCase())).sort((a, b) => Number(b.placements.length > 0) - Number(a.placements.length > 0) || a.id.localeCompare(b.id)).map(model => {
       const job = pending(model.id);
+      const completedJob = recentReady(model.id);
+      const visibleJob = job || completedJob;
       const loaded = model.placements.length > 0;
       const retained = model.preferences.keep_loaded || model.placements.some(p => p.keep_loaded);
       const last = state.jobs.findLast(j => j.model_id === model.id);
-      const runtime = job?.runtime || model.runtime;
+      const runtime = visibleJob?.runtime || model.runtime;
       const runtimeName = runtime?.name || 'Runtime detection unavailable';
       const runtimeState = runtime?.selection === 'configured' ? 'Configured' : 'Auto-detected';
       const capacity = capacityContext(model);
@@ -63,7 +93,8 @@
         <p>${loaded ? model.placements.map(p => escapeHtml(p.cluster_name)).join(', ') : model.preferences.cluster_id ? `Required cluster: ${escapeHtml(state.clusters.find(c => c.id === model.preferences.cluster_id)?.name || 'unavailable')}` : 'Automatic placement in the pool'}</p>
         <div class="pool-model-runtime"><span>⚡</span><div><b>${escapeHtml(runtimeName)}</b><small>${escapeHtml(runtimeState)}</small></div></div>
         ${capacityMarkup(capacity)}
-        ${job ? `<p class="pool-job" role="status">${escapeHtml(job.message)}</p>` : last?.status === 'failed' ? `<p class="pool-error">${escapeHtml(last.message)}</p>` : ''}
+        ${loadProgressMarkup(visibleJob)}
+        ${!visibleJob && last?.status === 'failed' ? `<p class="pool-error">${escapeHtml(last.message)}</p>` : ''}
         <div class="pool-model-actions"><button class="primary" data-pool-action="load" ${job || !canLoad ? 'disabled' : ''} title="${!canLoad && capacity.capacity ? `${capacity.capacity.missing_gib.toFixed(1)} GiB additional memory required` : ''}">${job ? 'Waiting…' : loaded ? 'Loaded' : 'Load model'}</button><button class="secondary" data-pool-action="settings">Settings</button>${loaded ? '<button class="secondary" data-pool-action="unload">Unload</button>' : ''}</div>
         ${!model.loadable ? '<small>Runtime support is required before loading this model.</small>' : ''}
       </article>`;

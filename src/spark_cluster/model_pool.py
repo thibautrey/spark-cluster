@@ -267,6 +267,35 @@ class PoolNode:
             "confidence": fit.confidence,
         }
 
+    def machine_inventory(self) -> list[dict]:
+        cluster = self.local_cluster()
+        snapshot = (
+            local_gpu_snapshot(cluster, self.settings) if cluster else self.models.runtime.latest
+        )
+        if not snapshot:
+            return []
+        grouped: dict[str, dict] = {}
+        for node in snapshot.nodes:
+            key = (node.address or snapshot.cluster_name) if cluster else node.id
+            machine = grouped.setdefault(
+                key,
+                {
+                    "id": key,
+                    "name": snapshot.cluster_name if cluster else node.hostname,
+                    "address": node.address,
+                    "accelerators": 0,
+                    "memory_used_gib": 0.0,
+                    "memory_total_gib": 0.0,
+                },
+            )
+            machine["accelerators"] += 1
+            machine["memory_used_gib"] += node.memory.accelerator_used_gib or node.memory.used_gib
+            machine["memory_total_gib"] += node.memory.total_gib
+        for machine in grouped.values():
+            machine["memory_used_gib"] = round(machine["memory_used_gib"], 2)
+            machine["memory_total_gib"] = round(machine["memory_total_gib"], 2)
+        return list(grouped.values())
+
     async def inventory(self) -> dict:
         active_profile = self.demand.active
         if active_profile:
@@ -371,6 +400,7 @@ class PoolNode:
             "active_model": active_id,
             "keep_loaded": bool(retained),
             "busy": self.demand.lock.locked() or self.native_lock.locked(),
+            "machines": self.machine_inventory(),
         }
 
     def model_context(self):
@@ -696,6 +726,7 @@ class ModelPool:
                     "active_model": None,
                     "keep_loaded": False,
                     "busy": False,
+                    "machines": [],
                 }
 
         nodes = await asyncio.gather(*(inspect(c) for c in clusters))
@@ -843,6 +874,10 @@ class ModelPool:
             "status": "queued",
             "message": "Waiting for a compatible cluster",
             "cluster_id": None,
+            "stage": "queued",
+            "progress": 2.0,
+            "machines": [],
+            "completed_at": None,
         }
         self.jobs.append(job)
         self.save()
@@ -850,6 +885,23 @@ class ModelPool:
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
         return job
+
+    async def animate_load(self, job: dict) -> None:
+        while job.get("status") == "loading":
+            await asyncio.sleep(1)
+            if job.get("status") != "loading":
+                return
+            job["progress"] = min(90.0, float(job.get("progress", 20)) + 2.0)
+            machines = job.get("machines", [])
+            count = max(1, len(machines))
+            for index, machine in enumerate(machines):
+                offset = index * (12.0 / count)
+                machine["progress"] = min(
+                    88.0,
+                    max(10.0, job["progress"] - offset),
+                )
+                machine["status"] = "loading-runtime"
+            self.save()
 
     async def run(self, job, request):
         selected = None
@@ -914,10 +966,36 @@ class ModelPool:
                         selected = cluster
                         job["runtime"] = plan.get("runtime")
                         self.reserved.add(cluster.id)
+                        machines = [
+                            {
+                                **machine,
+                                "status": "starting",
+                                "progress": 15.0,
+                                "memory_before_gib": machine.get("memory_used_gib", 0.0),
+                                "memory_after_gib": None,
+                            }
+                            for machine in node.get("machines", [])
+                        ] or [
+                            {
+                                "id": cluster.id,
+                                "name": node["name"],
+                                "address": None,
+                                "accelerators": None,
+                                "memory_used_gib": 0.0,
+                                "memory_total_gib": 0.0,
+                                "memory_before_gib": 0.0,
+                                "memory_after_gib": None,
+                                "status": "starting",
+                                "progress": 15.0,
+                            }
+                        ]
                         job.update(
                             status="loading",
+                            stage="starting-runtime",
+                            progress=20.0,
                             cluster_id=cluster.id,
-                            message="Loading on " + node["name"],
+                            machines=machines,
+                            message="Starting runtime on " + node["name"],
                         )
                         break
                     if selected:
@@ -925,12 +1003,42 @@ class ModelPool:
                         break
                     if not compatible:
                         raise ValueError("; ".join(reasons))
-                    job.update(status="waiting", message="; ".join(reasons))
+                    job.update(
+                        status="waiting",
+                        stage="waiting-capacity",
+                        progress=8.0,
+                        message="; ".join(reasons),
+                    )
                     self.save()
                 await asyncio.sleep(2)
             if not selected:
                 raise TimeoutError("Pool queue deadline exceeded (30 minutes)")
-            result = await self.call(selected, "load", payload)
+            progress_task = asyncio.create_task(self.animate_load(job))
+            try:
+                result = await self.call(selected, "load", payload)
+            finally:
+                progress_task.cancel()
+                await asyncio.gather(progress_task, return_exceptions=True)
+            refreshed = await self.inventory(force=True)
+            refreshed_node = next(
+                (node for node in refreshed["clusters"] if node["id"] == selected.id),
+                None,
+            )
+            after_by_id = {
+                machine["id"]: machine for machine in (refreshed_node or {}).get("machines", [])
+            }
+            for machine in job.get("machines", []):
+                after = after_by_id.get(machine["id"], {})
+                machine.update(
+                    status="ready",
+                    progress=100.0,
+                    memory_after_gib=after.get(
+                        "memory_used_gib", machine.get("memory_used_gib", 0.0)
+                    ),
+                    memory_total_gib=after.get(
+                        "memory_total_gib", machine.get("memory_total_gib", 0.0)
+                    ),
+                )
             prefs = self.preferences.get(request.model_id, ModelPreferences())
             if prefs.keep_loaded != payload["keep_loaded"]:
                 await self.call(
@@ -941,12 +1049,25 @@ class ModelPool:
             if result.get("settings"):
                 prefs.last_settings = ModelLaunchRequest.model_validate(result["settings"])
                 self.preferences[request.model_id] = prefs
-            job.update(status="ready", message="Model ready")
+            job.update(
+                status="ready",
+                stage="ready",
+                progress=100.0,
+                completed_at=time.time(),
+                message="Model ready",
+            )
         except asyncio.CancelledError:
             job.update(status="cancelled", message="Load cancelled")
             raise
         except Exception as error:
-            job.update(status="failed", message=self.node.models.safe_error(error))
+            for machine in job.get("machines", []):
+                machine["status"] = "failed"
+            job.update(
+                status="failed",
+                stage="failed",
+                message=self.node.models.safe_error(error),
+                completed_at=time.time(),
+            )
         finally:
             if selected:
                 self.reserved.discard(selected.id)
