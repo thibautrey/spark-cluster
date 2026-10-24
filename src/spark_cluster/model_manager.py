@@ -1230,7 +1230,9 @@ class ModelManager:
             for repo_id, job in latest.items():
                 cached = self._local_fit_cache.get(repo_id)
                 if cached is None or job.updated_at >= cached[0]:
-                    cached_bytes = job.total_bytes or job.downloaded_bytes or job.fit.repository_bytes
+                    cached_bytes = (
+                        job.total_bytes or job.downloaded_bytes or job.fit.repository_bytes
+                    )
                     self._local_fit_cache[repo_id] = (job.updated_at, job.fit, cached_bytes)
 
     def _invalidate_inventory(self) -> None:
