@@ -5,6 +5,7 @@ let fitRequestVersion = 0;
 let localModels = [];
 let launchFit = null;
 let launchPerformance = null;
+let launchFitRequest = 0;
 let logEntries = [];
 const downloadSamples = new Map();
 let logsPaused = false;
@@ -490,16 +491,24 @@ function launchAuthHeaders() {
 }
 
 async function checkLaunchFit() {
+  const request = ++launchFitRequest;
+  const button = $('launch-model-button');
   if (!$('launch-model').value) {
     launchFit = null;
-    $('launch-model-button').disabled = true;
+    button.disabled = true;
+    button.textContent = 'Launch on cluster';
     $('launch-fit').hidden = true;
     return;
   }
-  $('launch-fit').hidden = false;
+  launchFit = null;
+  button.disabled = true;
+  button.textContent = 'Checking compatibility…';
+  $('launch-fit').hidden = true;
   const payload = launchPayload();
   try {
-    launchFit = await api('/api/v1/models/fit-local', {method: 'POST', body: JSON.stringify({repo_id: payload.model_id, bits_per_weight: payload.bits_per_weight, context_length: payload.context_length, concurrent_sequences: payload.concurrent_sequences, kv_cache_dtype: payload.kv_cache_dtype})});
+    const fit = await api('/api/v1/models/fit-local', {method: 'POST', body: JSON.stringify({repo_id: payload.model_id, bits_per_weight: payload.bits_per_weight, context_length: payload.context_length, concurrent_sequences: payload.concurrent_sequences, kv_cache_dtype: payload.kv_cache_dtype})});
+    if (request !== launchFitRequest) return;
+    launchFit = fit;
     const requestedNodes = payload.tensor_parallel * payload.pipeline_parallel;
     const parallelFits = requestedNodes >= launchFit.minimum_nodes && requestedNodes <= launchFit.cluster_nodes;
     const canLaunch = launchFit.fits && parallelFits;
@@ -507,12 +516,17 @@ async function checkLaunchFit() {
     const blocker = !launchFit.runtime_storage_fits ? 'Missing runtime artifacts or storage' : !launchFit.runtime_fits ? 'No validated runtime placement' : !launchFit.launch_supported ? 'Specialized engine required' : 'Adjust runtime parallelism';
     $('launch-fit').innerHTML = `<span class="fit-symbol">${canLaunch ? '✓' : '!'}</span><div><b>${canLaunch ? `Ready with ${escapeHtml(launchFit.placement_strategy.replaceAll('-', ' '))}` : blocker}</b><small>${launchFit.total_required_gib.toFixed(1)} GiB resident runtime · ${launchFit.minimum_nodes} nodes minimum · ${requestedNodes} selected of ${launchFit.cluster_nodes} available · ${launchFit.headroom_gib.toFixed(1)} GiB headroom</small></div>`;
     launchFit.parallel_fits = parallelFits;
-    $('launch-model-button').disabled = !canLaunch || !payload.served_model_name;
+    $('launch-fit').hidden = false;
+    button.textContent = 'Launch on cluster';
+    button.disabled = !canLaunch || !payload.served_model_name;
   } catch (error) {
+    if (request !== launchFitRequest) return;
     launchFit = null;
-    $('launch-model-button').disabled = true;
+    button.disabled = true;
+    button.textContent = 'Launch on cluster';
     $('launch-fit').className = 'fit-result no-fit';
     $('launch-fit').innerHTML = `<span class="fit-symbol">!</span><div><b>Launch validation failed</b><small>${escapeHtml(error.message)}</small></div>`;
+    $('launch-fit').hidden = false;
   }
 }
 
