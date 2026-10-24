@@ -51,13 +51,15 @@ function clusterAuthHeaders() {
 function renderClusters(state) {
   clusterState = state;
   const select = $('cluster-select');
+  $('cluster-add-local').hidden = state.clusters.some(cluster => cluster.kind === 'local-docker');
   select.innerHTML = state.clusters.length ? state.clusters.map(cluster => `<option value="${escapeHtml(cluster.id)}" ${cluster.id === state.active_cluster_id ? 'selected' : ''}>${escapeHtml(cluster.name)} · ${cluster.kind === 'local-docker' ? `${cluster.gpu_count} GPU${cluster.gpu_count === 1 ? '' : 's'}` : 'remote'}</option>`).join('') : '<option value="">No cluster configured</option>';
   $('cluster-list').innerHTML = state.clusters.length ? state.clusters.map(cluster => {
     const capacity = cluster.gpu_count
       ? `${cluster.gpu_count} × ${escapeHtml(cluster.gpu_model || 'NVIDIA GPU')}${cluster.gpu_memory_gib ? ` · ${cluster.gpu_memory_gib} GiB each` : ''}`
       : escapeHtml(cluster.endpoint || 'Remote cluster');
     const issue = cluster.status === 'ready' ? '' : ` · ${escapeHtml(cluster.status)}`;
-    return `<article class="cluster-card ${cluster.active ? 'active' : ''}" data-cluster-id="${escapeHtml(cluster.id)}"><div class="cluster-card-head"><span class="cluster-card-icon">${cluster.kind === 'local-docker' ? 'GPU' : 'LAN'}</span><div><b>${escapeHtml(cluster.name)}</b><small>${capacity}${issue}</small></div></div>${cluster.active ? '<span class="pill ready">Active</span>' : `<button class="secondary" type="button" data-select-cluster="${escapeHtml(cluster.id)}">Use this cluster</button>`}</article>`;
+    const activeActions = `<div class="cluster-card-actions"><span class="pill ready">Active</span>${cluster.kind === 'local-docker' ? '<button class="secondary cluster-refresh" type="button" data-refresh-local aria-label="Refresh local GPUs" title="Refresh local GPUs">↻</button>' : ''}</div>`;
+    return `<article class="cluster-card ${cluster.active ? 'active' : ''}" data-cluster-id="${escapeHtml(cluster.id)}"><div class="cluster-card-head"><span class="cluster-card-icon">${cluster.kind === 'local-docker' ? 'GPU' : 'LAN'}</span><div><b>${escapeHtml(cluster.name)}</b><small>${capacity}${issue}</small></div></div>${cluster.active ? activeActions : `<button class="secondary" type="button" data-select-cluster="${escapeHtml(cluster.id)}">Use this cluster</button>`}</article>`;
   }).join('') : '<div class="empty-state"><b>No cluster configured</b><span>Add a cluster to begin.</span></div>';
   const active = state.clusters.find(cluster => cluster.id === state.active_cluster_id);
   if (active) {
@@ -1295,6 +1297,11 @@ $('cache-prewarm').addEventListener('click', prewarmPrefix);
 
 $('cluster-select').addEventListener('change', event => selectCluster(event.target.value));
 $('cluster-list').addEventListener('click', event => {
+  const refresh = event.target.closest('[data-refresh-local]');
+  if (refresh) {
+    void detectLocalCluster(refresh);
+    return;
+  }
   const button = event.target.closest('[data-select-cluster]');
   if (button) selectCluster(button.dataset.selectCluster);
 });
@@ -1305,8 +1312,8 @@ window.addEventListener('hashchange', () => {
   if (document.body.dataset.route === 'launch') void refreshModelInventory(true);
 });
 
-$('cluster-add-local').addEventListener('click', async () => {
-  $('cluster-add-local').disabled = true;
+async function detectLocalCluster(button) {
+  button.disabled = true;
   $('cluster-fleet-status').textContent = 'Inspecting Docker and NVIDIA GPUs…';
   try {
     await api('/api/v1/clusters/local-docker', {method:'POST', headers:clusterAuthHeaders(), body:JSON.stringify({name:'Unraid GPUs'})});
@@ -1314,9 +1321,10 @@ $('cluster-add-local').addEventListener('click', async () => {
     location.reload();
   } catch (error) {
     $('cluster-fleet-status').textContent = error.message;
-    $('cluster-add-local').disabled = false;
+    button.disabled = false;
   }
-});
+}
+$('cluster-add-local').addEventListener('click', event => detectLocalCluster(event.currentTarget));
 loadClusters().catch(error => { $('cluster-fleet-status').textContent = error.message; });
 
 connect();
