@@ -600,6 +600,47 @@ async def test_inventory_serves_completed_jobs_while_storage_scan_runs(
         store.close()
 
 
+@pytest.mark.asyncio
+async def test_local_fit_uses_recorded_metadata_without_scanning_storage(
+    tmp_path, monkeypatch
+):
+    settings = Settings(model_cache_path=tmp_path / "models")
+    store = SnapshotStore(tmp_path / "fit-fast.db")
+    runtime = SimpleNamespace(latest=ClusterSimulator("test").snapshot())
+    manager = ModelManager(settings, store, runtime)
+    previous = build_fit_plan(
+        ModelFitRequest(repo_id="acme/model", context_length=131_072),
+        metadata(),
+        runtime.latest,
+        settings,
+    )
+    store.save_download(
+        DownloadJob(
+            id="completed-fit",
+            repo_id="acme/model",
+            revision="main",
+            status="completed",
+            total_bytes=previous.repository_bytes,
+            target_path=str(settings.model_cache_path / "acme" / "model"),
+            staging_path=str(settings.model_cache_path / ".partial" / "completed-fit"),
+            fit=previous,
+        )
+    )
+
+    monkeypatch.setattr(
+        manager.catalog,
+        "inspect",
+        lambda *_args, **_kwargs: pytest.fail("Recorded local metadata must avoid Hub lookup"),
+    )
+    result = await manager.fit_for_local(
+        ModelFitRequest(repo_id="acme/model", context_length=262_144)
+    )
+
+    assert result.kv_cache_gib == pytest.approx(previous.kv_cache_gib * 2, abs=0.02)
+    assert result.repository_bytes == previous.repository_bytes
+    store.close()
+
+
 def test_nvfp4_download_is_allowed_but_launch_is_blocked_on_ampere(tmp_path):
     settings = Settings(
         model_cache_path=tmp_path,

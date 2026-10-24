@@ -55,6 +55,7 @@ class RepositoryMetadata:
     engram_bytes: int = 0
     external_artifacts_bytes: int = 0
     external_artifacts: tuple[str, ...] = ()
+    kv_bytes_per_token_bf16: float | None = None
 
 
 def safe_repo_parts(repo_id: str) -> tuple[str, ...]:
@@ -419,7 +420,13 @@ def build_fit_plan(
     if kv_dtype == "auto":
         kv_dtype = "fp8_e4m3" if is_glm53 else "bf16"
     kv_dtype_bytes = 1 if kv_dtype == "fp8_e4m3" else 2
-    bytes_per_token, architecture_known = _kv_bytes_per_token(metadata.config, kv_dtype_bytes)
+    if metadata.kv_bytes_per_token_bf16 is not None:
+        bytes_per_token = metadata.kv_bytes_per_token_bf16 * kv_dtype_bytes / 2
+        architecture_known = True
+    else:
+        bytes_per_token, architecture_known = _kv_bytes_per_token(
+            metadata.config, kv_dtype_bytes
+        )
     if architecture_known:
         kv_cache_gib = bytes_per_token * request.context_length * request.concurrent_sequences / GIB
         confidence = "architecture"
@@ -757,44 +764,55 @@ class ModelManager:
     async def fit_for_local(self, request: ModelFitRequest) -> ModelFitPlan:
         parts = safe_repo_parts(request.repo_id)
         model_path = self.settings.model_cache_path.joinpath(*parts)
-        manifest_path = model_path / ".spark-cluster.json"
-        if not manifest_path.exists():
-            return await self.fit(request)
+        completed = [
+            job
+            for job in await asyncio.to_thread(self.store.list_downloads)
+            if job.repo_id == request.repo_id
+            and job.status == "completed"
+        ]
+        if completed:
+            job = max(completed, key=lambda item: item.updated_at)
+            previous = job.fit
+            cached_bytes = job.total_bytes or job.downloaded_bytes or previous.repository_bytes
+        else:
+            manifest_path = model_path / ".spark-cluster.json"
+            try:
+                manifest = await asyncio.to_thread(
+                    lambda: json.loads(manifest_path.read_text())
+                )
+                previous = ModelFitPlan.model_validate(manifest["fit"])
+            except (OSError, ValueError, KeyError, json.JSONDecodeError):
+                return await self.fit(request)
+            cached_bytes = previous.repository_bytes
 
-        def local_metadata() -> RepositoryMetadata:
-            manifest = json.loads(manifest_path.read_text())
-            previous = ModelFitPlan.model_validate(manifest["fit"])
-            config_path = model_path / "config.json"
-            config = json.loads(config_path.read_text()) if config_path.exists() else {}
-            files = tuple(
-                (str(path.relative_to(model_path)), path.stat().st_size)
-                for path in model_path.rglob("*")
-                if path.is_file() and path.name != ".spark-cluster.json"
-            )
-            return RepositoryMetadata(
-                repo_id=request.repo_id,
-                revision=request.revision,
-                repository_bytes=previous.repository_bytes,
-                weight_bytes=previous.weight_bytes,
-                parameter_count=previous.parameter_count,
-                architecture=previous.architecture,
-                config=config,
-                files=files,
-                library_name=previous.library_name,
-                pipeline_tag=previous.pipeline_tag,
-                engram_bytes=(
-                    int(previous.offloaded_weights_gib * GIB)
-                    if not previous.additional_artifacts_bytes
-                    else 0
-                ),
-                external_artifacts_bytes=previous.additional_artifacts_bytes,
-                external_artifacts=("base Engram shards (see original repository metadata)",)
-                if previous.additional_artifacts_bytes
-                else (),
-            )
-
-        metadata = await asyncio.to_thread(local_metadata)
-        cached_bytes = await asyncio.to_thread(directory_size, model_path)
+        previous_sequences = max(1, previous.concurrent_sequences)
+        previous_context = max(1, previous.context_length)
+        kv_bytes_per_token = previous.kv_cache_gib * GIB / (
+            previous_context * previous_sequences
+        )
+        if previous.kv_cache_dtype == "fp8_e4m3":
+            kv_bytes_per_token *= 2
+        metadata = RepositoryMetadata(
+            repo_id=request.repo_id,
+            revision=request.revision,
+            repository_bytes=previous.repository_bytes,
+            weight_bytes=previous.weight_bytes,
+            parameter_count=previous.parameter_count,
+            architecture=previous.architecture,
+            config={},
+            library_name=previous.library_name,
+            pipeline_tag=previous.pipeline_tag,
+            engram_bytes=(
+                int(previous.offloaded_weights_gib * GIB)
+                if not previous.additional_artifacts_bytes
+                else 0
+            ),
+            external_artifacts_bytes=previous.additional_artifacts_bytes,
+            external_artifacts=("base Engram shards (see original repository metadata)",)
+            if previous.additional_artifacts_bytes
+            else (),
+            kv_bytes_per_token_bf16=kv_bytes_per_token,
+        )
         return await asyncio.to_thread(
             build_fit_plan,
             request,
@@ -805,8 +823,8 @@ class ModelManager:
         )
 
     async def managed_model(self, model_id: str) -> LocalModel | None:
-        for model in await asyncio.to_thread(self._scan_managed_models, set()):
-            if model.id == model_id:
+        for model in await self.local_models():
+            if model.id == model_id and model.source == "managed":
                 return model
         return None
 
