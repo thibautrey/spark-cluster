@@ -1,3 +1,4 @@
+from spark_cluster.config import Settings
 from spark_cluster.performance import PerformancePlanRequest, build_performance_plan
 
 
@@ -70,3 +71,16 @@ def test_portable_profiles_bound_scheduler_for_workload():
     )
     assert context.kv_cache_dtype == "fp8_e4m3"
     assert context.max_num_seqs == 1
+
+
+def test_generic_nvidia_host_does_not_receive_spark_fabric_guidance():
+    plan = build_performance_plan(
+        PerformancePlanRequest(model_id="Qwen/Qwen2.5-Coder-3B-Instruct-AWQ", node_count=2),
+        available_nodes=2,
+        settings=Settings(active_hardware="nvidia-gpu", active_compute_capability=8.6),
+    )
+
+    assert plan.collective_backend == "NCCL over local PCIe"
+    assert "peer access" in plan.topology_guidance
+    assert "GB10" not in plan.engine_guidance
+    assert plan.evidence == []

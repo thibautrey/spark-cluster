@@ -377,3 +377,6 @@ body[data-route="models"] main>header>div:first-child{display:none}
 
 /* Empty log state is a quiet status line; the terminal chrome appears with data. */
 .log-terminal{transition:height .18s ease}.log-terminal.empty{height:120px}.logs-panel.idle{padding:0;border:0;background:transparent}.logs-panel.idle .log-terminal{height:auto;min-height:0;padding:0;border:0;background:transparent}.logs-panel.idle .log-empty{display:block;height:auto;color:#66778a;font-size:10px}.log-controls button:disabled{opacity:.45;cursor:default}.log-footer span:last-child{margin-left:0}
+
+/* Keep performance recommendations concise until their rationale is requested. */
+.performance-plan-details{margin-top:8px;border-top:1px solid #294238;padding-top:7px}.performance-plan-details summary{cursor:pointer;list-style:none;color:#799084;font:8px DM Mono}.performance-plan-details summary::-webkit-details-marker{display:none}.performance-plan-details summary::before{content:'＋';margin-right:6px;color:#547467}.performance-plan-details[open] summary::before{content:'−'}

@@ -58,7 +58,14 @@ DEEPSEEK_RECIPE = "https://github.com/tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Sp
 GLM_RECIPE = "https://github.com/chishiki37/glm-5.3-flash-nvfp4-dgx-spark"
 
 
-def _topology(nodes: int, requested: str) -> tuple[str, str]:
+def _topology(nodes: int, requested: str, hardware: str) -> tuple[str, str]:
+    if hardware != "dgx-spark":
+        if nodes == 1:
+            return "Local GPU", "No distributed collective tuning is needed."
+        return (
+            "NCCL over local PCIe",
+            "Keep tensor-parallel ranks on the GPUs of this host and verify CUDA peer access.",
+        )
     topology = requested
     if topology == "auto":
         topology = (
@@ -95,17 +102,22 @@ def build_performance_plan(
     settings = settings or Settings()
     model = request.model_id.lower()
     nodes = max(1, request.node_count or available_nodes or 1)
-    collective, topology_guidance = _topology(nodes, request.topology)
-    evidence = [
-        PerformanceEvidence(
-            title="Official DGX Spark scaling",
-            finding=(
-                "On four Sparks, NVIDIA measured 32.82 tok/s on a physical ring and 36.34 "
-                "tok/s on a switch with RoCEnante for Qwen3.8-27B NVFP4 at concurrency 1."
-            ),
-            source_url=NVIDIA_SCALE,
-        )
-    ]
+    is_spark = settings.active_hardware == "dgx-spark"
+    collective, topology_guidance = _topology(nodes, request.topology, settings.active_hardware)
+    evidence = (
+        [
+            PerformanceEvidence(
+                title="Official DGX Spark scaling",
+                finding=(
+                    "On four Sparks, NVIDIA measured 32.82 tok/s on a physical ring and 36.34 "
+                    "tok/s on a switch with RoCEnante for Qwen3.8-27B NVFP4 at concurrency 1."
+                ),
+                source_url=NVIDIA_SCALE,
+            )
+        ]
+        if is_spark
+        else []
+    )
     warnings: list[str] = []
     engine_id, engine_notes = recommended_engine(request.model_id, settings)
     warnings.extend(engine_notes)
@@ -116,13 +128,17 @@ def build_performance_plan(
     all2all_backend = "auto"
     expert_load_balancing = False
     automatic_settings = [
-        "Force NCCL onto the RoCE/IB transport without hard-coding a reboot-volatile GID index.",
+        (
+            "Force NCCL onto the RoCE/IB transport without hard-coding a reboot-volatile GID index."
+            if is_spark
+            else "Use local NCCL and keep tensor-parallel ranks on this GPU host."
+        ),
         "Bound scheduler concurrency and batched tokens instead of using broad runtime defaults.",
         "Keep CUDA graphs enabled; select a compatibility profile only when the model image "
         "requires eager mode.",
     ]
 
-    if "glm-5.3" in model or "glm5.3" in model:
+    if is_spark and ("glm-5.3" in model or "glm5.3" in model):
         profile = "GLM 5.3 Flash · NVFP4/FP8 KV"
         engine = "vLLM SM121 optimized image"
         engine_id = "vllm"
@@ -165,7 +181,7 @@ def build_performance_plan(
                 source_url=GLM_RECIPE,
             )
         )
-    elif "deepseek-v4.1" in model or "deepseek_v4.1" in model:
+    elif is_spark and ("deepseek-v4.1" in model or "deepseek_v4.1" in model):
         profile = "DeepSeek V4.1 Flash · long-context"
         engine = "vLLM executable baseline; TensorFold available after adapter validation"
         recommended_nodes = 4 if nodes >= 4 else 2 if nodes >= 2 else 1
@@ -224,6 +240,8 @@ def build_performance_plan(
         engine_guidance = (
             "Use the model vendor's GB10-compatible vLLM image and validate one warm request "
             "before load testing."
+            if is_spark
+            else "Use the pinned vLLM image and validate one warm request before load testing."
         )
         if any(marker in model for marker in ("moe", "a3b", "a2b", "mixtral")):
             expert_parallel = request.workload == "throughput" and nodes > 1

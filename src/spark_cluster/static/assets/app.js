@@ -478,7 +478,9 @@ async function loadPerformancePlan(apply = true) {
     }
     const evidence = plan.evidence.map(item => `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)} ↗</a>`).join(' · ');
     const warnings = plan.warnings.length ? `<p>${plan.warnings.map(item => escapeHtml(item)).join(' ')}</p>` : '';
-    $('performance-plan').innerHTML = `<span>${plan.engine_executable ? '↗' : '!'}</span><div><b>${escapeHtml(plan.profile)}</b><small>${escapeHtml(plan.engine)} · ${escapeHtml(plan.collective_backend)} · TP ${plan.tensor_parallel} · ${plan.kv_cache_dtype === 'fp8_e4m3' ? 'FP8 KV' : 'automatic KV'} · ${plan.max_num_seqs} sequences · ${escapeHtml(plan.speculative_method.toUpperCase())}</small><p>${escapeHtml(plan.engine_guidance)} ${escapeHtml(plan.topology_guidance)}</p>${warnings}<small>${evidence}</small></div>`;
+    const detail = `${escapeHtml(plan.engine_guidance)} ${escapeHtml(plan.topology_guidance)}`;
+    const details = detail || warnings || evidence ? `<details class="performance-plan-details"><summary>Plan details</summary><p>${detail}</p>${warnings}${evidence ? `<small>${evidence}</small>` : ''}</details>` : '';
+    $('performance-plan').innerHTML = `<span>${plan.engine_executable ? '↗' : '!'}</span><div><b>${escapeHtml(plan.profile)}</b><small>${escapeHtml(plan.engine)} · ${escapeHtml(plan.collective_backend)} · TP ${plan.tensor_parallel} · ${plan.max_num_seqs} sequences · ${plan.kv_cache_dtype === 'fp8_e4m3' ? 'FP8 KV' : 'automatic KV'}</small>${details}</div>`;
   } catch (error) {
     launchPerformance = null;
     $('performance-plan').innerHTML = `<span>!</span><div><b>Performance plan unavailable</b><small>${escapeHtml(error.message)}</small></div>`;
