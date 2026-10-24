@@ -243,7 +243,7 @@ function renderModels(models) {
   $('local-models').innerHTML = models.map(model => `
     <article class="model-card">
       <div><h3>${escapeHtml(model.id)}</h3><p>${formatBytes(model.size_bytes)}</p></div>
-      <div class="model-card-actions">${model.loaded ? '<span class="model-state loaded">● In use</span>' : ''}${model.source === 'managed' ? `<button class="model-delete danger" type="button" data-model-action="delete" data-repo-id="${escapeHtml(model.id)}" aria-label="Delete ${escapeHtml(model.id)}" title="${model.loaded ? 'Stop the runtime before deleting this model' : 'Delete model'}" ${model.loaded ? 'disabled' : ''}><span aria-hidden="true">⌫</span></button>` : ''}</div>
+      <div class="model-card-actions">${model.loaded ? '<span class="model-state loaded">● In use</span>' : ''}${model.source === 'managed' ? `<button class="model-delete danger" type="button" data-model-action="delete" data-repo-id="${escapeHtml(model.id)}" aria-label="Delete ${escapeHtml(model.id)}" title="${model.loaded ? 'Stop the runtime before deleting this model' : 'Delete model'}" ${model.loaded ? 'disabled' : ''}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v5M14 11v5" /></svg></button>` : ''}</div>
     </article>`).join('');
 }
 
