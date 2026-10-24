@@ -65,7 +65,10 @@ function renderClusters(state) {
   updateMemoryLanguage(active);
   if (active) {
     $('cluster-fleet-status').textContent = `${active.name} is the active target for capacity, downloads, launches, logs and telemetry.`;
-    if (latestSnapshot) renderTopology(latestSnapshot.nodes);
+    if (latestSnapshot) {
+      renderTopology(latestSnapshot.nodes);
+      renderMemory(latestSnapshot.nodes);
+    }
   }
 }
 
