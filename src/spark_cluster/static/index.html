@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=runtime-metadata-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=compact-pool-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -239,9 +239,7 @@
 
         <section class="panel launch-panel idle" id="launch" data-route-view="launch">
           <section id="model-pool" class="model-pool">
-            <div class="pool-header"><div><p class="eyebrow">MODEL POOL</p><h2>Models</h2><p id="pool-summary">Discovering available clusters…</p></div><label class="pool-auth">Admin token <span class="optional">optional</span><input id="pool-admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label></div>
-            <p class="pool-help">Load a model with its saved settings. The pool chooses a compatible cluster. Keep a model loaded to protect its resources, or choose a required cluster in Settings.</p>
-            <div class="pool-filters"><label>Find a model<input id="pool-search" type="search" placeholder="Model name…" /></label><label class="pool-checkbox"><input id="pool-show-unavailable" type="checkbox" /> Include models needing runtime support</label></div>
+            <div class="pool-filters"><label>Find a model<input id="pool-search" type="search" placeholder="Model name…" /></label><label class="pool-checkbox"><input id="pool-show-unavailable" type="checkbox" /> Include models needing runtime support</label><label class="pool-auth">Admin token <span class="optional">optional</span><input id="pool-admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label></div>
             <p id="pool-message" role="status"></p>
             <div id="pool-model-list" class="pool-model-grid"></div>
           </section>
@@ -392,6 +390,6 @@
     <script src="/assets/model-readme.js?v=2"></script>
     <script src="/assets/catalog.js?v=sheet-titles-v1"></script>
     <script src="/assets/setup.js?v=setup-focus-v1"></script>
-    <script src="/assets/pool.js?v=runtime-visibility-v1" defer></script>
+    <script src="/assets/pool.js?v=compact-pool-v1" defer></script>
 </body>
 </html>

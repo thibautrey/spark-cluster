@@ -16,7 +16,6 @@
   };
   const pending = id => state.jobs.findLast(job => job.model_id === id && ['queued', 'waiting', 'loading'].includes(job.status));
   function render() {
-    field('pool-summary').textContent = `${state.clusters.filter(c => c.available).length} cluster${state.clusters.filter(c => c.available).length === 1 ? '' : 's'} available · ${state.models.filter(m => m.placements.length).length} models loaded`;
     const markup = state.models.filter(model => (field('pool-show-unavailable').checked || model.loadable || model.placements.length) && model.id.toLowerCase().includes(field('pool-search').value.toLowerCase())).sort((a, b) => Number(b.placements.length > 0) - Number(a.placements.length > 0) || a.id.localeCompare(b.id)).map(model => {
       const job = pending(model.id);
       const loaded = model.placements.length > 0;
