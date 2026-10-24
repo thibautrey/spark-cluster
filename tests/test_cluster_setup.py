@@ -17,7 +17,7 @@ from spark_cluster.cluster_setup import (
     fingerprint,
 )
 from spark_cluster.config import Settings
-from spark_cluster.setup_models import DiscoveryRequest, SetupRequest
+from spark_cluster.setup_models import BootstrapConfirmRequest, DiscoveryRequest, SetupRequest
 from spark_cluster.setup_scripts import chart_archive, registry_configuration
 from spark_cluster.store import SnapshotStore
 
@@ -157,6 +157,29 @@ class FakeTransport:
         self.uploaded = True
 
 
+class FakeBootstrapTransport:
+    def __init__(self, host_key):
+        self.host_key_value = host_key
+        self.activated = None
+        self.trusted = []
+
+    async def host_key(self, address):
+        return self.host_key_value, fingerprint(self.host_key_value)
+
+    def activate_identity(self, node, private_key):
+        self.activated = (deepcopy(node), private_key)
+
+    def deactivate_identity(self, node):
+        self.activated = None
+
+    async def trust(self, nodes):
+        self.trusted = deepcopy(nodes)
+
+    async def run(self, node, script, timeout=60):
+        assert script == "printf spark-cluster-bootstrap-ready"
+        return "spark-cluster-bootstrap-ready"
+
+
 async def terminal(service, job):
     await service.tasks[job.id]
     return service.store.get_setup_job(job.id)
@@ -203,6 +226,58 @@ def test_topology_and_shell_inputs_are_validated():
     payload["topology"] = "ring"
     with pytest.raises(ValidationError):
         SetupRequest(**payload)
+
+
+def test_bootstrap_confirmation_requires_a_valid_account_and_ed25519_host_key():
+    key = base64.b64encode(b"host-key").decode()
+    confirmation = BootstrapConfirmRequest(username="spark", host_key=f"ssh-ed25519 {key} host")
+    assert confirmation.host_key == f"ssh-ed25519 {key}"
+    with pytest.raises(ValidationError):
+        BootstrapConfirmRequest(username="root;id", host_key=f"ssh-ed25519 {key}")
+    with pytest.raises(ValidationError):
+        BootstrapConfirmRequest(username="spark", host_key="ssh-rsa invalid")
+
+
+@pytest.mark.asyncio
+async def test_dedicated_bootstrap_command_confirms_host_key_and_ssh(tmp_path, monkeypatch):
+    host_key = base64.b64encode(b"machine-host-key").decode()
+    transport = FakeBootstrapTransport(host_key)
+    service = ClusterSetupService(settings(tmp_path), SnapshotStore(tmp_path / "state.db"), transport)
+    generated_public_key = f"ssh-ed25519 {base64.b64encode(b'dedicated-key').decode()} test"
+
+    async def generate(enrollment_id):
+        private_key = service.bootstrap_keys_path / enrollment_id
+        private_key.parent.mkdir(mode=0o700, parents=True)
+        private_key.write_text("private-key-material")
+        private_key.chmod(0o600)
+        return private_key, generated_public_key
+
+    monkeypatch.setattr(service, "_generate_bootstrap_key", generate)
+    enrollment = await service.create_bootstrap(
+        "192.168.50.10", "http://192.168.50.5:8080"
+    )
+    assert enrollment["status"] == "waiting"
+    assert generated_public_key in enrollment["command"]
+    assert "authorized_keys" in enrollment["command"]
+    assert "ssh_host_ed25519_key.pub" in enrollment["command"]
+    assert subprocess.run(
+        ["bash", "-n", "-c", enrollment["command"]], capture_output=True
+    ).returncode == 0
+    token = enrollment["command"].split("X-Spark-Bootstrap: ", 1)[1].split("'", 1)[0]
+    confirmed = await service.confirm_bootstrap(
+        token, "spark", f"ssh-ed25519 {host_key} machine"
+    )
+    assert confirmed["status"] == "ready"
+    assert confirmed["username"] == "spark"
+    assert confirmed["fingerprint"] == fingerprint(host_key)
+    assert transport.activated[0].address == "192.168.50.10"
+    assert transport.trusted[0].username == "spark"
+    status = await service.bootstrap_status(enrollment["id"])
+    assert status["status"] == "ready"
+    assert "private_key" not in status and "token_hash" not in status and "command" not in status
+    with pytest.raises(KeyError):
+        await service.confirm_bootstrap(token, "spark", f"ssh-ed25519 {host_key}")
+    service.store.close()
 
 
 @pytest.mark.asyncio
@@ -359,6 +434,7 @@ def test_live_setup_requires_opt_in_and_admin_authentication(tmp_path):
     with TestClient(app) as client:
         for path in [
             "/api/v1/setup/discover",
+            "/api/v1/setup/bootstrap",
             "/api/v1/setup/hardware",
             "/api/v1/setup/check",
             "/api/v1/setup/jobs",
@@ -401,6 +477,8 @@ def test_demo_wizard_end_to_end_without_network_or_ssh(tmp_path, monkeypatch):
         assert "Compute pools" in page
         assert "Discover machines" in page
         assert "Connect an existing compute pool" in page
+        assert "Copy the command to the selected machine" in page
+        assert 'id="setup-trust"' not in page
         assert 'id="setup-open-sheet"' in page
         assert 'id="setup-sheet" hidden' in page
         tree = SectionTree()

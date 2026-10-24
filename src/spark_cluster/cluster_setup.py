@@ -7,12 +7,16 @@ import hashlib
 import ipaddress
 import json
 import os
+import re
+import secrets
 import shlex
 import signal
 import time
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlparse
+from uuid import uuid4
 
 from .config import Settings
 from .hardware import MIN_LINK_GBPS, build_hardware_topology
@@ -38,6 +42,8 @@ STEPS = [
     ("verify", "Verify cluster readiness"),
 ]
 SYNC_GUIDE = "https://docs.nvidia.com/sync/latest/cluster-assistant.html"
+BOOTSTRAP_TTL = timedelta(minutes=15)
+BOOTSTRAP_COMMENT = re.compile(r"^[a-z0-9-]{1,80}$")
 
 
 class SetupFailure(Exception):
@@ -97,6 +103,46 @@ class SSHTransport:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.known_hosts = settings.setup_state_path / "known_hosts"
+        self.identities_path = settings.setup_state_path / "ssh-identities.json"
+
+    def _identities(self) -> dict[str, str]:
+        if not self.identities_path.exists():
+            return {}
+        try:
+            payload = json.loads(self.identities_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
+    def _identity_key(address: str, username: str) -> str:
+        return f"{username}@{address}"
+
+    def activate_identity(self, node: SetupNode, private_key: Path) -> None:
+        if not private_key.is_file():
+            raise SetupFailure("The generated SSH identity is unavailable")
+        identities = self._identities()
+        identities[self._identity_key(node.address, node.username)] = str(private_key)
+        self.identities_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        temporary = self.identities_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(identities, sort_keys=True))
+        temporary.chmod(0o600)
+        temporary.replace(self.identities_path)
+
+    def deactivate_identity(self, node: SetupNode) -> None:
+        identities = self._identities()
+        if not identities.pop(self._identity_key(node.address, node.username), None):
+            return
+        temporary = self.identities_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(identities, sort_keys=True))
+        temporary.chmod(0o600)
+        temporary.replace(self.identities_path)
+
+    def identity_for(self, node: SetupNode) -> Path | None:
+        generated = self._identities().get(self._identity_key(node.address, node.username))
+        if generated and Path(generated).is_file():
+            return Path(generated)
+        return self.settings.setup_ssh_identity
 
     async def host_key(self, address: str) -> tuple[str, str]:
         private_address(address)
@@ -153,8 +199,9 @@ class SSHTransport:
             "-o",
             "HostKeyAlgorithms=ssh-ed25519",
         ]
-        if self.settings.setup_ssh_identity:
-            args += ["-i", str(self.settings.setup_ssh_identity), "-o", "IdentitiesOnly=yes"]
+        identity = self.identity_for(node)
+        if identity:
+            args += ["-i", str(identity), "-o", "IdentitiesOnly=yes"]
         if tty:
             args.append("-tt")
         args.append(f"{node.username}@{node.address}")
@@ -200,9 +247,13 @@ class ClusterSetupService:
         self.tasks: dict[str, asyncio.Task] = {}
         self.lock = asyncio.Lock()
         self.discovery_lock = asyncio.Lock()
+        self.bootstrap_lock = asyncio.Lock()
         self.on_cluster_ready: Callable[[SetupJob], Awaitable[None]] | None = None
         self.last_hardware_topology = None
         self.last_machine_facts: dict[str, dict] = {}
+        self.bootstrap_path = settings.setup_state_path / "bootstrap-sessions.json"
+        self.bootstrap_keys_path = settings.setup_state_path / "bootstrap-keys"
+        self.controller_id_path = settings.setup_state_path / "controller-id"
 
     @property
     def enabled(self) -> bool:
@@ -236,6 +287,227 @@ class ClusterSetupService:
                 "Enable SETUP_ENABLED and configure MODEL_ADMIN_TOKEN on the bootstrap dashboard"
             )
 
+    def _controller_id(self) -> str:
+        if self.controller_id_path.exists():
+            value = self.controller_id_path.read_text().strip()
+            if BOOTSTRAP_COMMENT.fullmatch(value):
+                return value
+        self.controller_id_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        value = f"controller-{secrets.token_hex(8)}"
+        temporary = self.controller_id_path.with_suffix(".tmp")
+        temporary.write_text(value + "\n")
+        temporary.chmod(0o600)
+        temporary.replace(self.controller_id_path)
+        return value
+
+    def _bootstrap_sessions(self) -> dict[str, dict]:
+        if not self.bootstrap_path.exists():
+            return {}
+        try:
+            payload = json.loads(self.bootstrap_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _save_bootstrap_sessions(self, sessions: dict[str, dict]) -> None:
+        self.bootstrap_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        temporary = self.bootstrap_path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(sessions, sort_keys=True))
+        temporary.chmod(0o600)
+        temporary.replace(self.bootstrap_path)
+
+    @staticmethod
+    def _public_bootstrap(session: dict, command: str | None = None) -> dict:
+        public = {
+            key: session.get(key)
+            for key in (
+                "id",
+                "address",
+                "status",
+                "username",
+                "fingerprint",
+                "error",
+                "created_at",
+                "expires_at",
+                "confirmed_at",
+            )
+        }
+        if command is not None:
+            public["command"] = command
+        return public
+
+    async def _generate_bootstrap_key(self, enrollment_id: str) -> tuple[Path, str]:
+        self.bootstrap_keys_path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        private_key = self.bootstrap_keys_path / enrollment_id
+        await process(
+            [
+                "ssh-keygen",
+                "-q",
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-C",
+                f"spark-cluster:{self._controller_id()}",
+                "-f",
+                str(private_key),
+            ],
+            timeout=10,
+        )
+        private_key.chmod(0o600)
+        public_key = private_key.with_suffix(".pub").read_text().strip()
+        private_key.with_suffix(".pub").unlink()
+        return private_key, public_key
+
+    @staticmethod
+    def _callback_base_url(value: str) -> str:
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise SetupFailure("Configure a reachable HTTP(S) controller public URL")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise SetupFailure("The controller public URL must not contain credentials or parameters")
+        return value.rstrip("/")
+
+    def _bootstrap_command(self, public_key: str, token: str, callback_base_url: str) -> str:
+        marker = f"spark-cluster:{self._controller_id()}"
+        callback = f"{callback_base_url}/api/v1/setup/bootstrap/confirm"
+        return (
+            "set -eu; umask 077; d=\"$HOME/.ssh\"; a=\"$d/authorized_keys\"; "
+            "mkdir -p \"$d\"; chmod 700 \"$d\"; touch \"$a\"; chmod 600 \"$a\"; "
+            "t=$(mktemp \"$a.XXXXXX\"); "
+            f"awk {shlex.quote(f'$NF != \"{marker}\"')} \"$a\" >\"$t\"; "
+            f"printf '%s\\n' {shlex.quote(public_key)} >>\"$t\"; "
+            "chmod 600 \"$t\"; mv \"$t\" \"$a\"; "
+            "h=$(cat /etc/ssh/ssh_host_ed25519_key.pub); "
+            f"curl -fsS -X POST -H \"X-Spark-Username: $(id -un)\" "
+            f"-H \"X-Spark-Host-Key: $h\" "
+            f"-H {shlex.quote(f'X-Spark-Bootstrap: {token}')} {shlex.quote(callback)}"
+        )
+
+    async def create_bootstrap(self, address: str, callback_base_url: str) -> dict:
+        self.require_enabled()
+        private_address(address)
+        callback_base_url = self._callback_base_url(callback_base_url)
+        if self.mode == "demo":
+            now = datetime.now(UTC)
+            return {
+                "id": str(uuid4()),
+                "address": address,
+                "status": "ready",
+                "username": "nvidia",
+                "fingerprint": "SHA256:" + "A" * 43,
+                "error": None,
+                "created_at": now.isoformat(),
+                "expires_at": (now + BOOTSTRAP_TTL).isoformat(),
+                "confirmed_at": now.isoformat(),
+                "command": "printf 'Demo mode: no machine is modified.\\n'",
+            }
+        async with self.bootstrap_lock:
+            enrollment_id = str(uuid4())
+            token = secrets.token_urlsafe(32)
+            private_key, public_key = await self._generate_bootstrap_key(enrollment_id)
+            now = datetime.now(UTC)
+            session = {
+                "id": enrollment_id,
+                "address": address,
+                "status": "waiting",
+                "username": None,
+                "fingerprint": None,
+                "error": None,
+                "created_at": now.isoformat(),
+                "expires_at": (now + BOOTSTRAP_TTL).isoformat(),
+                "confirmed_at": None,
+                "token_hash": hashlib.sha256(token.encode()).hexdigest(),
+                "private_key": str(private_key),
+            }
+            sessions = self._bootstrap_sessions()
+            sessions[enrollment_id] = session
+            self._save_bootstrap_sessions(sessions)
+            return self._public_bootstrap(
+                session, self._bootstrap_command(public_key, token, callback_base_url)
+            )
+
+    async def bootstrap_status(self, enrollment_id: str) -> dict:
+        self.require_enabled()
+        async with self.bootstrap_lock:
+            sessions = self._bootstrap_sessions()
+            session = sessions.get(enrollment_id)
+            if not session:
+                raise KeyError(enrollment_id)
+            if session["status"] in {"waiting", "checking", "error"} and datetime.now(
+                UTC
+            ) > datetime.fromisoformat(session["expires_at"]):
+                session["status"] = "expired"
+                session["error"] = "This command expired. Generate a new one in the dashboard."
+                session["token_hash"] = ""
+                self._save_bootstrap_sessions(sessions)
+            return self._public_bootstrap(session)
+
+    async def confirm_bootstrap(self, token: str, username: str, host_key: str) -> dict:
+        self.require_enabled()
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        async with self.bootstrap_lock:
+            sessions = self._bootstrap_sessions()
+            session = next(
+                (
+                    item
+                    for item in sessions.values()
+                    if secrets.compare_digest(item.get("token_hash", ""), token_hash)
+                ),
+                None,
+            )
+            if not session:
+                raise KeyError(token)
+            if datetime.now(UTC) > datetime.fromisoformat(session["expires_at"]):
+                session["status"] = "expired"
+                session["error"] = "This command expired. Generate a new one in the dashboard."
+                self._save_bootstrap_sessions(sessions)
+                raise SetupFailure(session["error"])
+            key_parts = host_key.strip().split()
+            if len(key_parts) < 2 or key_parts[0] != "ssh-ed25519":
+                session.update(status="error", error="The machine provided an invalid SSH host key")
+                self._save_bootstrap_sessions(sessions)
+                raise SetupFailure("The machine did not provide an Ed25519 SSH host public key")
+            expected_key = key_parts[1]
+            actual_key, actual_fingerprint = await self.transport.host_key(session["address"])
+            if not secrets.compare_digest(actual_key, expected_key):
+                session.update(
+                    status="error",
+                    error="The callback host key does not match the selected machine",
+                )
+                self._save_bootstrap_sessions(sessions)
+                raise SetupFailure("The callback host key does not match the selected machine")
+            node = SetupNode(
+                address=session["address"],
+                username=username,
+                fingerprint=actual_fingerprint,
+                role="worker",
+            )
+            session.update(status="checking", username=username, fingerprint=actual_fingerprint)
+            self._save_bootstrap_sessions(sessions)
+            try:
+                self.transport.activate_identity(node, Path(session["private_key"]))
+                await self.transport.trust([node])
+                response = await self.transport.run(node, "printf spark-cluster-bootstrap-ready")
+                if response != "spark-cluster-bootstrap-ready":
+                    raise SetupFailure("The SSH verification response was incomplete")
+            except (OSError, SetupFailure) as error:
+                self.transport.deactivate_identity(node)
+                session.update(status="error", error=str(error))
+                self._save_bootstrap_sessions(sessions)
+                raise SetupFailure(
+                    "The key was installed, but the controller could not complete the SSH check. "
+                    "Run the command again after checking port 22."
+                ) from error
+            session.update(
+                status="ready",
+                error=None,
+                confirmed_at=datetime.now(UTC).isoformat(),
+                token_hash="",
+            )
+            self._save_bootstrap_sessions(sessions)
+            return self._public_bootstrap(session)
+
     async def state(self):
         from .remote_cluster import current_connection
 
@@ -247,7 +519,7 @@ class ClusterSetupService:
             "connected_cluster": current_connection(self.settings),
             "requirements": [
                 "Run this bootstrap dashboard on the same LAN as the machines.",
-                "Verify SSH fingerprints, configure SSH key access and noninteractive sudo.",
+                "Run the generated command on each machine and configure noninteractive sudo.",
                 "Use NVIDIA Sync Cluster Assistant to configure cabled ConnectX-7 networking.",
                 "Four nodes can use a switchless ring or a 200G switch. Internet access is "
                 "needed for pinned installers.",

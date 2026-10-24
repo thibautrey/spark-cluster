@@ -78,8 +78,8 @@ Guided setup installs the controller and runtime as separate Helm releases. Cont
 The setup flow is deliberately sequential:
 
 1. **Discover** — find SSH machines on the management LAN or enter their addresses.
-2. **Configure** — select head and worker roles and choose direct, four-node ring, or switched fabric topology.
-3. **Prepare hardware** — follow connector diagrams, verify host fingerprints, and inspect ConnectX-7 links.
+2. **Connect** — run one generated command per machine; the controller installs a dedicated public key and verifies SSH and the host key automatically.
+3. **Prepare hardware** — select roles and topology, follow connector diagrams, and inspect ConnectX-7 links.
 4. **Check readiness** — validate GB10, memory, storage, sudo, toolkit, clock, OS/driver parity, RDMA, peers, and fabric reachability.
 5. **Install** — deploy pinned k3s, GPU scheduling, NFS model storage, the bridge, dashboard, and telemetry agents.
 6. **Verify** — confirm GPU registration, workloads, storage, dashboard health, and a cross-node read/write check.
@@ -158,12 +158,14 @@ spark-cluster serve --host 0.0.0.0 --port 8080
 ```bash
 export SPARK_CLUSTER_MODE=live
 export SPARK_CLUSTER_SETUP_ENABLED=true
-export SPARK_CLUSTER_SETUP_SSH_IDENTITY=/absolute/path/to/id_ed25519
 export SPARK_CLUSTER_MODEL_ADMIN_TOKEN='set-with-your-secret-manager'
 spark-cluster serve --host 0.0.0.0 --port 8080
 ```
 
-Keep the dashboard on a trusted management network. Verify every displayed SSH host fingerprint on the corresponding device before authorizing setup.
+Keep the dashboard on a trusted management network. For every selected machine, the wizard generates
+an Ed25519 key and a one-line command. Run that command as the machine's SSH account. It updates only
+that account's `authorized_keys`, calls the controller back, and lets the controller compare the
+reported host key with a fresh `ssh-keyscan` result before completing a real SSH round trip.
 
 ### Multiple clusters and local Docker GPUs
 
@@ -271,11 +273,11 @@ All settings use the `SPARK_CLUSTER_` prefix.
 | `OPENAI_API_BASE` | `http://localhost:8000/v1` | Runtime endpoint exposed to clients. |
 | `OPENAI_API_KEY` | unset | Optional server-side runtime bearer token. |
 | `SETUP_ENABLED` | `false` | Enables discovery and SSH-based provisioning. |
-| `SETUP_SSH_IDENTITY` | unset | Existing private key used for verified bootstrap access. |
+| `SETUP_SSH_IDENTITY` | unset | Optional fallback private key for machines connected before automated enrollment. |
 | `SETUP_IMAGE_REPOSITORY` | `ghcr.io/thibautrey/spark-cluster` | Image installed on cluster nodes. |
 | `SETUP_IMAGE_DIGEST` | unset | Immutable image digest used instead of a mutable tag. |
 | `REMOTE_CLUSTER_URL` | unset | Authenticated cluster bridge attached to an external controller. |
-| `CONTROLLER_PUBLIC_URL` | request LAN URL | Controller URL the cluster uses to fetch staged files. Set it when the browser-facing URL is not reachable from the cluster. |
+| `CONTROLLER_PUBLIC_URL` | request LAN URL | Reachable controller URL used by enrollment callbacks and staged file transfers. Set it when the browser-facing URL is not reachable from the cluster. |
 | `DOCKER_RUNTIME_ENABLED` | `false` | Enables runtime lifecycle through a mounted Docker Engine socket. |
 | `DOCKER_SOCKET_PATH` | `/var/run/docker.sock` | Docker Engine Unix socket inside the controller. |
 | `DOCKER_HOST_MODEL_PATH` | `/models` | Host-side model directory bind-mounted read-only into local runtime containers. |

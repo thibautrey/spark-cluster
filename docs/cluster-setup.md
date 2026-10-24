@@ -10,14 +10,13 @@ dashboard. Demo mode runs the same interface with simulated machines and sends n
 ## Start a bootstrap dashboard
 
 Run the bootstrap dashboard on a trusted machine on the same management LAN as the Sparks. It needs
-Python 3.11+, OpenSSH (`ssh` and `ssh-keyscan`), network access to the selected machines and an existing
-SSH key that those machines authorize. The Python package includes the deployment chart.
+Python 3.11+, OpenSSH (`ssh`, `ssh-keygen`, and `ssh-keyscan`), `curl`, and network access to the
+selected machines. The Python package includes the deployment chart.
 
 ```bash
 python -m pip install -e .
 export SPARK_CLUSTER_MODE=live
 export SPARK_CLUSTER_SETUP_ENABLED=true
-export SPARK_CLUSTER_SETUP_SSH_IDENTITY=/absolute/path/to/existing-key
 # Set SPARK_CLUSTER_MODEL_ADMIN_TOKEN through your secret manager or environment.
 spark-cluster serve --host 0.0.0.0 --port 8080
 ```
@@ -25,11 +24,10 @@ spark-cluster serve --host 0.0.0.0 --port 8080
 Enter the same administration token in the wizard and click **Connect**. Live discovery and setup
 require both explicit enablement and a configured administration token. Limit port 8080 to trusted
 management clients, or place it behind an authenticated TLS proxy. The token stays in the page's memory;
-it is not written to browser storage. A local SSH agent can be used instead of `SETUP_SSH_IDENTITY`.
-`SETUP_SSH_CONFIG` optionally points to a dedicated client configuration; the default ignores the
-user's global SSH configuration. Containers need the existing key or agent socket mounted explicitly,
-a writable `SETUP_STATE_PATH`, and host networking for LAN multicast discovery on Linux. Native
-execution is recommended for bootstrap, especially on macOS where container multicast is isolated.
+it is not written to browser storage. `SETUP_SSH_CONFIG` optionally points to a dedicated client
+configuration; the default ignores the user's global SSH configuration. Containers need a writable
+`SETUP_STATE_PATH` and host networking for LAN multicast discovery on Linux. Native execution is
+recommended for bootstrap, especially on macOS where container multicast is isolated.
 
 To attach a bridge that is already installed, enter its head-node management IPv4 and NodePort in
 **Already configured**. No SSH access is needed for attachment. The controller authenticates
@@ -64,16 +62,17 @@ HMAC secret, file paths are restricted to the staged model, and all content is v
 signed manifest. A failed LAN copy can be retried without another internet download.
 
 The SSH user must have noninteractive `sudo -n` access on the selected devices. Prepare that account
-according to your administration policy. The wizard does not collect SSH passwords, sudo passwords or
-private keys. Confirm each displayed host fingerprint against the device itself:
+according to your administration policy. The wizard does not collect SSH or sudo passwords. For each
+selected machine it creates a dedicated Ed25519 identity and shows a 15-minute, one-line command. Run
+the command as the intended SSH user. It safely replaces the public key previously managed by this
+controller, sends the local username and `/etc/ssh/ssh_host_ed25519_key.pub` back through its one-time
+callback, and triggers a real SSH round trip from the controller. The private key never leaves
+`SETUP_STATE_PATH/bootstrap-keys`.
 
-```bash
-ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
-```
-
-Only explicitly selected, fingerprint-pinned machines are accessed. A changed key blocks setup.
-Verified public host keys are stored under `SETUP_STATE_PATH/known_hosts`, independently of your normal
-SSH trust file. Never bypass the mismatch by trusting an unverified replacement.
+Only explicitly selected machines are accessed. The callback host key must match a fresh key read from
+the selected address, so a changed or redirected key blocks setup. Verified public host keys are stored
+under `SETUP_STATE_PATH/known_hosts`, independently of the operator's normal SSH trust file. Generated
+identity selection is stored in `SETUP_STATE_PATH/ssh-identities.json`. Both files use mode `0600`.
 
 ## Discovery and fabric
 
@@ -110,7 +109,7 @@ After selecting head and worker roles, the dashboard immediately draws the expec
 - two to four Sparks through a switch: one cable from every Spark to the same switch;
 - one Spark: management Ethernet and power only.
 
-Select **Inspect cables** after verifying SSH fingerprints. The read-only probe maps each Linux network
+Select **Inspect cables** after the automated SSH check passes. The read-only probe maps each Linux network
 interface to its PCI device and `mlx5`/RDMA device, then reads carrier state, negotiated speed, MTU,
 MAC address, IP prefix, RDMA port state and neighbor table. A bounded second pass sends interface-bound
 pings to selected peers on each fabric subnet and checks their neighbor MAC against the expected

@@ -114,7 +114,13 @@ from .remote_cluster import (
 from .runtime_library import RuntimeLibrary
 from .runtime_library_api import register_runtime_library
 from .runtime_prerequisites import RuntimePrerequisiteService
-from .setup_models import ClusterConnectRequest, DiscoveryRequest, SetupRequest
+from .setup_models import (
+    BootstrapConfirmRequest,
+    BootstrapCreateRequest,
+    ClusterConnectRequest,
+    DiscoveryRequest,
+    SetupRequest,
+)
 from .simulator import ClusterSimulator
 from .store import SnapshotStore
 from .telemetry import InferenceTelemetryService
@@ -489,6 +495,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/v1/setup/discover", dependencies=[Depends(require_model_token)])
     async def discover_nodes(request: DiscoveryRequest):
         return await setup_service.discover(request)
+
+    @app.post("/api/v1/setup/bootstrap", dependencies=[Depends(require_model_token)])
+    async def create_setup_bootstrap(payload: BootstrapCreateRequest, request: Request):
+        callback_base_url = settings.controller_public_url or str(request.base_url)
+        return await setup_service.create_bootstrap(payload.address, callback_base_url)
+
+    @app.get(
+        "/api/v1/setup/bootstrap/{enrollment_id}",
+        dependencies=[Depends(require_model_token)],
+    )
+    async def setup_bootstrap_status(enrollment_id: str):
+        try:
+            return await setup_service.bootstrap_status(enrollment_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Bootstrap command not found") from error
+
+    @app.post("/api/v1/setup/bootstrap/confirm")
+    async def confirm_setup_bootstrap(
+        x_spark_username: str = Header(),
+        x_spark_host_key: str = Header(),
+        x_spark_bootstrap: str = Header(),
+    ):
+        try:
+            confirmation = BootstrapConfirmRequest(
+                username=x_spark_username,
+                host_key=x_spark_host_key,
+            )
+            return await setup_service.confirm_bootstrap(
+                x_spark_bootstrap, confirmation.username, confirmation.host_key
+            )
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Bootstrap command not found") from error
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @app.post("/api/v1/setup/check", dependencies=[Depends(require_model_token)])
     async def setup_check(request: SetupRequest):

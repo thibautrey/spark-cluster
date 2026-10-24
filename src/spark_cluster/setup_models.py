@@ -1,5 +1,6 @@
-"""Public setup contracts. No private keys, passwords, or enrollment tokens."""
+"""Public setup contracts. No private keys or passwords."""
 
+import base64
 import ipaddress
 from datetime import UTC, datetime
 from typing import Literal
@@ -39,6 +40,31 @@ class DiscoveryRequest(BaseModel):
     @classmethod
     def lan_addresses(cls, values: list[str]) -> list[str]:
         return list(dict.fromkeys(private_address(value) for value in values))
+
+
+class BootstrapCreateRequest(BaseModel):
+    address: str
+
+    _address = field_validator("address")(private_address)
+
+
+class BootstrapConfirmRequest(BaseModel):
+    username: str = Field(pattern=r"^[a-z_][a-z0-9_-]{0,31}$")
+    host_key: str = Field(min_length=32, max_length=4096)
+
+    @field_validator("host_key")
+    @classmethod
+    def ed25519_host_key(cls, value: str) -> str:
+        parts = value.strip().split()
+        if len(parts) < 2 or parts[0] != "ssh-ed25519":
+            raise ValueError("The machine must provide its Ed25519 SSH host public key")
+        try:
+            decoded = base64.b64decode(parts[1], validate=True)
+        except ValueError as error:
+            raise ValueError("The SSH host public key is not valid base64") from error
+        if not decoded:
+            raise ValueError("The SSH host public key is empty")
+        return f"ssh-ed25519 {parts[1]}"
 
 
 class SetupNode(BaseModel):

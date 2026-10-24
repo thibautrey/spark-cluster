@@ -7,6 +7,7 @@ let setupChecks = null;
 let setupJob = null;
 let setupBusy = false;
 let setupPolling = false;
+let setupBootstrapPolling = false;
 let hardwareTopology = null;
 let setupDiscoveryState = 'idle';
 const setupAuth = () => window.adminAuthHeaders();
@@ -62,9 +63,9 @@ function setupNavigate(stage) {
 }
 function setupButtons() {
   $('setup-next').disabled = setupBusy || !setupState?.enabled || !setupSelection.size ||
-    (setupStage === 1 && ([...setupSelection.values()].some(node => !node.username?.trim()) || !$('setup-trust').checked || (requiresDgxFabric() && (!hardwareTopology || hardwareTopology.verdict === 'error')))) ||
+    (setupStage === 1 && ([...setupSelection.values()].some(node => node.access_status !== 'ready' || !node.username?.trim()) || (requiresDgxFabric() && (!hardwareTopology || hardwareTopology.verdict === 'error')))) ||
     (setupStage === 2 && (!setupChecks || setupChecks.some(check => check.status === 'error') || !$('setup-approve').checked));
-  ['setup-discover', 'setup-attach', 'setup-check', 'setup-connect', 'setup-back', 'setup-resume', 'setup-hardware-scan'].forEach(id => { $(id).disabled = setupBusy || (id === 'setup-hardware-scan' && !$('setup-trust').checked); });
+  ['setup-discover', 'setup-attach', 'setup-check', 'setup-connect', 'setup-back', 'setup-resume', 'setup-hardware-scan'].forEach(id => { $(id).disabled = setupBusy || (id === 'setup-hardware-scan' && [...setupSelection.values()].some(node => node.access_status !== 'ready')); });
 }
 async function setupAction(action) {
   if (setupBusy) return;
@@ -83,7 +84,7 @@ function invalidateSetup() {
   setupButtons();
 }
 function renderSetupCandidates() {
-  $('setup-nodes').innerHTML = setupCandidates.length ? setupCandidates.map(node => `<label class="setup-node ${setupSelection.has(node.address) ? 'selected' : ''}"><input type="checkbox" data-select-node="${escapeHtml(node.address)}" ${setupSelection.has(node.address) ? 'checked' : ''} /><span class="setup-node-icon">⬡</span><span><b>${escapeHtml(node.hostname)}</b><small>${escapeHtml(node.address)} · ${escapeHtml(node.source)} · SSH reachable</small><code>${escapeHtml(node.fingerprint)}</code><small>${escapeHtml(node.gpu || 'Hardware detected during readiness check')}</small></span></label>`).join('') : '<div class="empty-state"><b>No SSH machine found</b><span>Check power, network isolation and SSH. Try an IPv4 address or /24 subnet.</span></div>';
+  $('setup-nodes').innerHTML = setupCandidates.length ? setupCandidates.map(node => `<label class="setup-node ${setupSelection.has(node.address) ? 'selected' : ''}"><input type="checkbox" data-select-node="${escapeHtml(node.address)}" ${setupSelection.has(node.address) ? 'checked' : ''} /><span class="setup-node-icon">⬡</span><span><b>${escapeHtml(node.hostname)}</b><small>${escapeHtml(node.address)} · ${escapeHtml(node.source)} · SSH reachable</small><small>${escapeHtml(node.gpu || 'Hardware detected during readiness check')} · host key verified during connection</small></span></label>`).join('') : '<div class="empty-state"><b>No SSH machine found</b><span>Check power, network isolation and SSH. Try an IPv4 address or /24 subnet.</span></div>';
   renderSetupDiscoveryState();
 }
 function renderSetupRoles() {
@@ -93,8 +94,89 @@ function renderSetupRoles() {
   else if ($('setup-topology').value === 'single') $('setup-topology').value = 'switch';
   if (nodes.length !== 4 && $('setup-topology').value === 'ring') $('setup-topology').value = 'switch';
   adaptSetupForMachines();
-  $('setup-roles').innerHTML = nodes.map(node => `<div class="setup-role"><div><b>${escapeHtml(node.hostname)}</b><small>${escapeHtml(node.address)}</small></div><label class="setup-checkbox"><input type="radio" name="setup-head" data-head="${escapeHtml(node.address)}" ${node.role === 'head' ? 'checked' : ''} /> Head</label><label>SSH user<input data-user="${escapeHtml(node.address)}" aria-label="SSH user ${escapeHtml(node.address)}" value="${escapeHtml(node.username || '')}" pattern="[a-z_][a-z0-9_-]{0,31}" /></label>${requiresDgxFabric() ? `<label>Fabric IPv4<input data-fabric="${escapeHtml(node.address)}" aria-label="Fabric IPv4 ${escapeHtml(node.address)}" value="${escapeHtml(node.fabric_address || '')}" placeholder="Auto-detect from Sync" /></label>` : ''}</div>`).join('');
+  $('setup-roles').innerHTML = nodes.map(node => `<div class="setup-role"><div><b>${escapeHtml(node.hostname)}</b><small>${escapeHtml(node.address)}</small></div><label class="setup-checkbox"><input type="radio" name="setup-head" data-head="${escapeHtml(node.address)}" ${node.role === 'head' ? 'checked' : ''} /> Head</label><span class="setup-access-state ${node.access_status === 'ready' ? 'ready' : ''}">${node.access_status === 'ready' ? `✓ ${escapeHtml(node.username)} · SSH verified` : 'Waiting for connection'}</span>${requiresDgxFabric() ? `<label>Fabric IPv4<input data-fabric="${escapeHtml(node.address)}" aria-label="Fabric IPv4 ${escapeHtml(node.address)}" value="${escapeHtml(node.fabric_address || '')}" placeholder="Auto-detect from Sync" /></label>` : ''}</div>`).join('');
+  renderBootstrapAccess();
   renderHardwareTopology(hardwareTopology || expectedHardwareTopology());
+}
+
+function renderBootstrapAccess() {
+  const container = $('setup-bootstrap-list');
+  if (!container) return;
+  container.innerHTML = [...setupSelection.values()].map(node => {
+    const status = node.access_status || 'creating';
+    const title = status === 'ready' ? 'SSH verified automatically' : status === 'checking' ? 'Verifying SSH…' : status === 'error' ? 'Connection needs attention' : status === 'expired' ? 'Command expired' : status === 'creating' ? 'Generating a dedicated key…' : 'Run this command on the machine';
+    const detail = status === 'ready' ? `${node.username}@${node.address} · ${node.fingerprint}` : node.access_error || (status === 'checking' ? 'The machine pinged the controller. Checking the host key and dedicated SSH key.' : 'The command expires after 15 minutes and can be replaced safely.');
+    const command = node.access_command ? `<div class="setup-command"><code>${escapeHtml(node.access_command)}</code><button class="secondary" type="button" data-copy-bootstrap="${escapeHtml(node.address)}">Copy command</button></div>` : '';
+    const regenerate = ['error','expired'].includes(status) ? `<button class="secondary setup-regenerate" type="button" data-regenerate-bootstrap="${escapeHtml(node.address)}">Generate a new command</button>` : '';
+    return `<article class="setup-bootstrap-machine ${escapeHtml(status)}"><div class="setup-bootstrap-head"><span>${status === 'ready' ? '✓' : status === 'error' || status === 'expired' ? '!' : '⌁'}</span><div><b>${escapeHtml(node.hostname || node.address)}</b><small>${escapeHtml(title)}</small></div></div>${command}<p>${escapeHtml(detail)}</p>${regenerate}</article>`;
+  }).join('');
+}
+
+async function createBootstrapAccess(node) {
+  node.access_status = 'creating';
+  node.access_error = '';
+  node.access_command = '';
+  renderBootstrapAccess();
+  try {
+    const enrollment = await api('/api/v1/setup/bootstrap', {method:'POST', headers:setupAuth(), body:JSON.stringify({address:node.address})});
+    node.bootstrap_id = enrollment.id;
+    node.access_status = enrollment.status;
+    node.access_command = enrollment.command || '';
+    node.access_error = enrollment.error || '';
+    if (enrollment.username) node.username = enrollment.username;
+    if (enrollment.fingerprint) node.fingerprint = enrollment.fingerprint;
+  } catch (error) {
+    node.access_status = 'error';
+    node.access_error = error.message;
+    renderBootstrapAccess();
+    throw error;
+  }
+}
+
+async function ensureBootstrapAccess() {
+  for (const node of setupSelection.values()) if (!node.bootstrap_id) await createBootstrapAccess(node);
+  renderSetupRoles();
+  setupButtons();
+}
+
+async function pollBootstrapAccess() {
+  if (setupBootstrapPolling || setupBusy || setupStage !== 1) return;
+  const pending = [...setupSelection.values()].filter(node => node.bootstrap_id && !['ready','expired'].includes(node.access_status));
+  if (!pending.length) return;
+  setupBootstrapPolling = true;
+  try {
+    for (const node of pending) {
+      const enrollment = await api(`/api/v1/setup/bootstrap/${node.bootstrap_id}`, {headers:setupAuth()});
+      node.access_status = enrollment.status;
+      node.access_error = enrollment.error || '';
+      if (enrollment.username) node.username = enrollment.username;
+      if (enrollment.fingerprint) node.fingerprint = enrollment.fingerprint;
+    }
+    renderSetupRoles();
+    setupButtons();
+  } catch (error) {
+    setupError(`Access verification disconnected: ${error.message}`);
+  } finally {
+    setupBootstrapPolling = false;
+  }
+}
+
+async function copyBootstrapCommand(node, button) {
+  if (!node?.access_command) return;
+  try {
+    await navigator.clipboard.writeText(node.access_command);
+  } catch {
+    const input = document.createElement('textarea');
+    input.value = node.access_command;
+    input.style.position = 'fixed';
+    input.style.opacity = '0';
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand('copy');
+    input.remove();
+  }
+  button.textContent = 'Copied';
+  setTimeout(() => { button.textContent = 'Copy command'; }, 1200);
 }
 
 function expectedHardwareTopology() {
@@ -224,9 +306,8 @@ $('setup-discover').addEventListener('click', () => setupAction(async () => {
 $('setup-nodes').addEventListener('change', event => {
   const address = event.target.dataset.selectNode;
   if (!address) return;
-  if (event.target.checked) setupSelection.set(address, {...setupCandidates.find(node => node.address === address), username:'', role:'worker'});
+  if (event.target.checked) setupSelection.set(address, {...setupCandidates.find(node => node.address === address), username:'', role:'worker', access_status:'pending'});
   else setupSelection.delete(address);
-  $('setup-trust').checked = false;
   invalidateSetup();
   renderSetupCandidates();
   setupNavigate(0);
@@ -234,7 +315,6 @@ $('setup-nodes').addEventListener('change', event => {
 $('setup-roles').addEventListener('input', event => {
   const target = event.target;
   if (target.dataset.head) for (const node of setupSelection.values()) node.role = node.address === target.dataset.head ? 'head' : 'worker';
-  if (target.dataset.user) setupSelection.get(target.dataset.user).username = target.value;
   if (target.dataset.fabric) setupSelection.get(target.dataset.fabric).fabric_address = target.value.trim();
   invalidateSetup();
 });
@@ -244,7 +324,21 @@ $('setup-topology').addEventListener('input', () => {
   invalidateSetup();
   renderSetupRoles();
 });
-['setup-trust','setup-approve'].forEach(id => $(id).addEventListener('change', setupButtons));
+$('setup-approve').addEventListener('change', setupButtons);
+$('setup-bootstrap-list').addEventListener('click', event => {
+  const copyAddress = event.target.dataset.copyBootstrap;
+  if (copyAddress) {
+    copyBootstrapCommand(setupSelection.get(copyAddress), event.target);
+    return;
+  }
+  const regenerateAddress = event.target.dataset.regenerateBootstrap;
+  if (regenerateAddress) setupAction(async () => {
+    const node = setupSelection.get(regenerateAddress);
+    node.bootstrap_id = null;
+    await createBootstrapAccess(node);
+    renderSetupRoles();
+  });
+});
 $('setup-hardware-scan').addEventListener('click', () => setupAction(async () => {
   $('setup-hardware-scan').textContent = 'Inspecting ports…';
   try {
@@ -260,7 +354,7 @@ $('setup-hardware-scan').addEventListener('click', () => setupAction(async () =>
 }));
 $('setup-back').addEventListener('click', () => { setupError(); setupNavigate(setupStage - 1); });
 $('setup-next').addEventListener('click', () => setupAction(async () => {
-  if (setupStage === 0) { renderSetupRoles(); setupNavigate(1); }
+  if (setupStage === 0) { renderSetupRoles(); setupNavigate(1); await ensureBootstrapAccess(); }
   else if (setupStage === 1) {
     $('setup-review').textContent = `${$('setup-name').value}: ${[...setupSelection.values()].map(node => `${node.username}@${node.address} (${node.role})`).join(', ')}.`;
     setupNavigate(2);
@@ -305,6 +399,7 @@ setInterval(async () => {
   try { await loadSetup(); } catch (error) { setupError(`Progress disconnected: ${error.message}. Reconnect to recover saved setup.`); }
   finally { setupPolling = false; }
 }, 2000);
+setInterval(pollBootstrapAccess, 1500);
 setupNavigate(0);
 
 let setupSheetOpener = null;
