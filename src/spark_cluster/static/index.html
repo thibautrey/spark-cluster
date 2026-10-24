@@ -241,6 +241,7 @@
           <section id="model-pool" class="model-pool">
             <div class="pool-header"><div><p class="eyebrow">MODEL POOL</p><h2>Models</h2><p id="pool-summary">Discovering available clusters…</p></div><label>Admin token <span class="optional">optional</span><input id="pool-admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label></div>
             <p class="pool-help">Load a model with its saved settings. The pool chooses a compatible cluster. Keep a model loaded to protect its resources, or choose a required cluster in Settings.</p>
+            <div class="pool-filters"><label>Find a model<input id="pool-search" type="search" placeholder="Model name…" /></label><label class="pool-checkbox"><input id="pool-show-unavailable" type="checkbox" /> Include models needing runtime support</label></div>
             <p id="pool-message" role="status"></p>
             <div id="pool-model-list" class="pool-model-grid"></div>
           </section>

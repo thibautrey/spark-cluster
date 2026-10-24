@@ -13,14 +13,14 @@
   };
   const pending = id => state.jobs.findLast(job => job.model_id === id && ['queued', 'waiting', 'loading'].includes(job.status));
   function render() {
-    field('pool-summary').textContent = `${state.clusters.filter(c => c.available).length} clusters available · ${state.models.filter(m => m.placements.length).length} models loaded`;
-    field('pool-model-list').innerHTML = state.models.map(model => {
+    field('pool-summary').textContent = `${state.clusters.filter(c => c.available).length} cluster${state.clusters.filter(c => c.available).length === 1 ? '' : 's'} available · ${state.models.filter(m => m.placements.length).length} models loaded`;
+    field('pool-model-list').innerHTML = state.models.filter(model => (field('pool-show-unavailable').checked || model.loadable || model.placements.length) && model.id.toLowerCase().includes(field('pool-search').value.toLowerCase())).sort((a, b) => Number(b.placements.length > 0) - Number(a.placements.length > 0) || a.id.localeCompare(b.id)).map(model => {
       const job = pending(model.id);
       const loaded = model.placements.length > 0;
       const retained = model.preferences.keep_loaded || model.placements.some(p => p.keep_loaded);
       const last = state.jobs.findLast(j => j.model_id === model.id);
       return `<article class="pool-model-card" data-pool-model="${escapeHtml(model.id)}">
-        <div class="pool-model-heading"><h3>${escapeHtml(model.id)}</h3><span class="pill ${loaded ? 'ready' : ''}">${retained ? 'Kept loaded' : loaded ? 'Loaded' : 'On demand'}</span></div>
+        <div class="pool-model-heading"><h3>${escapeHtml(model.id)}</h3><span class="pill ${loaded ? 'ready' : ''}">${retained && loaded ? 'Kept loaded' : retained ? 'Retention enabled' : loaded ? 'Loaded' : 'On demand'}</span></div>
         <p>${loaded ? model.placements.map(p => escapeHtml(p.cluster_name)).join(', ') : model.preferences.cluster_id ? `Required cluster: ${escapeHtml(state.clusters.find(c => c.id === model.preferences.cluster_id)?.name || 'unavailable')}` : 'Automatic placement in the pool'}</p>
         ${job ? `<p class="pool-job" role="status">${escapeHtml(job.message)}</p>` : last?.status === 'failed' ? `<p class="pool-error">${escapeHtml(last.message)}</p>` : ''}
         <div class="pool-model-actions"><button class="primary" data-pool-action="load" ${job || !model.loadable ? 'disabled' : ''}>${job ? 'Waiting…' : loaded ? 'Loaded' : 'Load model'}</button><button class="secondary" data-pool-action="settings">Settings</button>${loaded ? '<button class="secondary" data-pool-action="unload">Unload</button>' : ''}</div>
@@ -90,6 +90,8 @@
     await api('/api/v1/pool/load', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({model_id: settings.model_id, settings})});
     await refresh();
   };
+  field('pool-search').addEventListener('input', render);
+  field('pool-show-unavailable').addEventListener('change', render);
   void refresh();
   setInterval(refresh, 3000);
 })();
