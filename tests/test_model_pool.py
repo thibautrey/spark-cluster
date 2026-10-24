@@ -204,6 +204,7 @@ async def test_interrupted_load_is_never_replayed_after_restart(tmp_path):
 @pytest.mark.asyncio
 async def test_remote_node_calls_are_signed_and_never_select_a_cluster(tmp_path):
     import httpx
+
     from spark_cluster.remote_cluster import valid_controller_signature
 
     pool = FakePool(tmp_path)

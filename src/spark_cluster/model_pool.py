@@ -328,10 +328,14 @@ class PoolNode:
     async def retain(self, model_id: str, retained: bool):
         profile = self.demand.profile_for(model_id)
         if profile:
-            self.demand.retain(profile, retained)
-        if self.native.get("model_id") == model_id:
-            self.native["keep_loaded"] = retained
-            write_private(self.path, self.native)
+            async with self.demand.lock:
+                if retained and (not self.demand.active or self.demand.active.id != profile.id):
+                    raise ValueError("The model was unloaded; load it again before retaining it")
+                self.demand.retain(profile, retained)
+        async with self.native_lock:
+            if self.native.get("model_id") == model_id:
+                self.native["keep_loaded"] = retained
+                write_private(self.path, self.native)
 
     async def unload(self, model_id: str):
         profile = self.demand.profile_for(model_id)
@@ -377,6 +381,7 @@ class ModelPool:
         self.scheduling = asyncio.Lock()
         self.cache = None
         self.cache_time = 0.0
+        self.pending_requests = 0
 
     def save(self):
         self.jobs = self.jobs[-100:]
@@ -678,6 +683,18 @@ class ModelPool:
         return {"status": "unloaded"}
 
     async def infer(self, model_id, path, scope, receive, send):
+        if self.pending_requests >= 64:
+            await JSONResponse({"error": "Pool inference queue is full"}, status_code=503)(
+                scope, receive, send
+            )
+            return
+        self.pending_requests += 1
+        try:
+            await self._infer(model_id, path, scope, receive, send)
+        finally:
+            self.pending_requests -= 1
+
+    async def _infer(self, model_id, path, scope, receive, send):
         state = await self.inventory()
         prefs = self.preferences.get(model_id, ModelPreferences())
         resident = next(
