@@ -24,6 +24,7 @@ let hfTokenSheetCloseTimer = null;
 let latestDownloads = [];
 let clusterState = {clusters: [], active_cluster_id: null};
 let latestSnapshot = null;
+let runtimeReady = false;
 
 const formatNumber = (value) => value >= 1e9 ? `${(value / 1e9).toFixed(1)}B` : value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : value >= 1e3 ? `${(value / 1e3).toFixed(1)}k` : `${Math.round(value)}`;
 const formatBytes = (value) => value >= 2 ** 30 ? `${(value / 2 ** 30).toFixed(1)} GiB` : value >= 2 ** 20 ? `${(value / 2 ** 20).toFixed(1)} MiB` : `${Math.round(value / 1024)} KiB`;
@@ -101,10 +102,18 @@ async function selectCluster(clusterId) {
 
 function render(snapshot) {
   latestSnapshot = snapshot;
+  renderOverviewMetrics(snapshot);
+  renderTopology(snapshot.nodes);
+  renderCache(snapshot.cache_tiers);
+  renderMemory(snapshot.nodes);
+}
+
+function renderOverviewMetrics(snapshot) {
   const memoryUsed = snapshot.nodes.reduce((sum, node) => sum + node.memory.used_gib, 0);
   const memoryTotal = snapshot.nodes.reduce((sum, node) => sum + node.memory.total_gib, 0);
   $('stream-status').title = `Updated ${new Date(snapshot.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})}`;
-  $('output-tps').textContent = Math.round(snapshot.total_output_tokens_per_second);
+  $('output-tps').textContent = runtimeReady ? Math.round(snapshot.total_output_tokens_per_second) : 'Idle';
+  $('output-unit').textContent = runtimeReady ? ' tok/s' : '';
   $('hit-rate').textContent = snapshot.cache_hit_rate.toFixed(1);
   $('hit-ring').style.background = `conic-gradient(var(--green) ${snapshot.cache_hit_rate}%,#202a38 0)`;
   $('memory-used').textContent = Math.round(memoryUsed);
@@ -114,12 +123,13 @@ function render(snapshot) {
   $('memory-bar').style.width = `${memoryPercent}%`;
   $('memory-bar').parentElement.setAttribute('aria-valuenow', memoryPercent.toFixed(0));
   $('prefix-reuse').textContent = formatNumber(snapshot.prefix_reuse_tokens);
-  renderTopology(snapshot.nodes);
-  renderCache(snapshot.cache_tiers);
-  renderMemory(snapshot.nodes);
-  throughputHistory.push(snapshot.total_output_tokens_per_second);
-  if (throughputHistory.length > 40) throughputHistory.shift();
-  drawSparkline(throughputHistory);
+  if (runtimeReady) {
+    throughputHistory.push(snapshot.total_output_tokens_per_second);
+    if (throughputHistory.length > 40) throughputHistory.shift();
+    drawSparkline(throughputHistory);
+  } else {
+    drawSparkline([]);
+  }
 }
 
 function renderTopology(nodes) {
@@ -243,6 +253,12 @@ function connect() {
 }
 
 function renderEndpoint(endpoint) {
+  runtimeReady = endpoint.status === 'ready';
+  $('overview').classList.toggle('runtime-idle', !runtimeReady);
+  $('output-metric-label').textContent = runtimeReady ? 'Cluster output' : 'Inference';
+  $('cache-hit-metric').hidden = !runtimeReady;
+  $('prefix-reuse-metric').hidden = !runtimeReady;
+  if (latestSnapshot) renderOverviewMetrics(latestSnapshot);
   $('api-endpoint').textContent = endpoint.base_url;
   $('api-models-route').textContent = endpoint.models_url;
   $('api-chat-route').textContent = endpoint.chat_completions_url;
