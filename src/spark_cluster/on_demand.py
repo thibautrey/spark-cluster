@@ -23,8 +23,17 @@ from starlette.responses import JSONResponse, StreamingResponse
 from .local_docker import DockerEngineClient
 
 logger = logging.getLogger(__name__)
-HOP_HEADERS = {b"host", b"connection", b"keep-alive", b"proxy-authenticate",
-               b"proxy-authorization", b"te", b"trailer", b"transfer-encoding", b"upgrade"}
+HOP_HEADERS = {
+    b"host",
+    b"connection",
+    b"keep-alive",
+    b"proxy-authenticate",
+    b"proxy-authorization",
+    b"te",
+    b"trailer",
+    b"transfer-encoding",
+    b"upgrade",
+}
 
 
 class InferenceProfile(BaseModel):
@@ -93,8 +102,15 @@ class OnDemandInference:
             "active_profile": self.active.id if self.active else None,
             "pending_requests": self.pending,
             "last_error": self.last_error,
-            "profiles": [{"id": p.id, "model": p.model, "port": p.listen_port,
-                          "idle_seconds": p.idle_seconds} for p in self.profiles],
+            "profiles": [
+                {
+                    "id": p.id,
+                    "model": p.model,
+                    "port": p.listen_port,
+                    "idle_seconds": p.idle_seconds,
+                }
+                for p in self.profiles
+            ],
         }
 
     async def remove(self, profile: InferenceProfile) -> None:
@@ -102,12 +118,14 @@ class OnDemandInference:
         response = await self.docker.request("GET", f"/containers/{name}/json", allow={404})
         if response.status_code == 404:
             return
-        if response.json().get("Config", {}).get("Labels", {}).get(
-            "spark-cluster.on-demand"
-        ) != profile.id:
+        if (
+            response.json().get("Config", {}).get("Labels", {}).get("spark-cluster.on-demand")
+            != profile.id
+        ):
             raise RuntimeError("Refusing to remove an unmanaged container")
-        await self.docker.request("POST", f"/containers/{name}/stop", params={"t": 20},
-                                  allow={304, 404}, timeout=30)
+        await self.docker.request(
+            "POST", f"/containers/{name}/stop", params={"t": 20}, allow={304, 404}, timeout=30
+        )
         await self.docker.request("DELETE", f"/containers/{name}", allow={404}, timeout=30)
         if self.active and self.active.id == profile.id:
             self.active = None
@@ -129,10 +147,15 @@ class OnDemandInference:
             for profile in self.profiles:
                 await self.remove(profile)  # reclaim only labelled leftovers after a crash
             for profile, sock in zip(self.profiles, self.sockets, strict=True):
-                server = ListenerServer(uvicorn.Config(
-                    DemandProxy(self, profile), log_level="warning", access_log=False,
-                    lifespan="off", timeout_graceful_shutdown=30,
-                ))
+                server = ListenerServer(
+                    uvicorn.Config(
+                        DemandProxy(self, profile),
+                        log_level="warning",
+                        access_log=False,
+                        lifespan="off",
+                        timeout_graceful_shutdown=30,
+                    )
+                )
                 self.servers.append(server)
                 self.tasks.append(asyncio.create_task(server.serve(sockets=[sock])))
             self.tasks.append(asyncio.create_task(self.reap()))
@@ -168,7 +191,9 @@ class OnDemandInference:
 
     async def ensure(self, profile: InferenceProfile) -> None:
         if self.active and self.active.id == profile.id:
-            state = await self.docker.request("GET", f"/containers/{profile.name}/json", allow={404})
+            state = await self.docker.request(
+                "GET", f"/containers/{profile.name}/json", allow={404}
+            )
             if state.status_code == 200 and state.json().get("State", {}).get("Running"):
                 return
         if self.active:
@@ -180,8 +205,9 @@ class OnDemandInference:
         payload["HostConfig"]["AutoRemove"] = False
         # Docker health probes must not call the public listener and trigger recursion.
         payload["Healthcheck"] = {"Test": ["NONE"]}
-        created = await self.docker.request("POST", "/containers/create", payload=payload,
-                                             params={"name": profile.name}, timeout=30)
+        created = await self.docker.request(
+            "POST", "/containers/create", payload=payload, params={"name": profile.name}, timeout=30
+        )
         container_id = created.json()["Id"]
         try:
             await self.docker.request("POST", f"/containers/{container_id}/start", timeout=30)
@@ -219,21 +245,30 @@ class DemandProxy:
         path = scope["path"]
         # Inventory and health monitoring never warm up a model or prolong its lease.
         if request.method in {"GET", "HEAD"} and path in {"/health", "/healthz", "/v1/models"}:
-            body = ({"object": "list", "data": [{"id": self.profile.model,
-                     "object": "model", "owned_by": "spark-cluster"}]}
-                    if path == "/v1/models" else {"status": "ok", "mode": "on-demand"})
+            body = (
+                {
+                    "object": "list",
+                    "data": [
+                        {"id": self.profile.model, "object": "model", "owned_by": "spark-cluster"}
+                    ],
+                }
+                if path == "/v1/models"
+                else {"status": "ok", "mode": "on-demand"}
+            )
             await JSONResponse(body)(scope, receive, send)
             return
         if self.manager.pending >= 64:
             await JSONResponse({"error": "Inference queue is full"}, status_code=503)(
-                scope, receive, send)
+                scope, receive, send
+            )
             return
         body = bytearray()
         async for chunk in request.stream():
             body.extend(chunk)
             if len(body) > 64 * 1024 * 1024:
                 await JSONResponse({"error": "Request exceeds 64 MiB"}, status_code=413)(
-                    scope, receive, send)
+                    scope, receive, send
+                )
                 return
         self.manager.pending += 1
         response_started = False
@@ -249,19 +284,27 @@ class DemandProxy:
                             token.strip().lower().encode()
                             for token in request.headers.get("connection", "").split(",")
                         }
-                        headers = [(k, v) for k, v in scope["headers"]
-                                   if k.lower() not in HOP_HEADERS | connection_tokens]
+                        headers = [
+                            (k, v)
+                            for k, v in scope["headers"]
+                            if k.lower() not in HOP_HEADERS | connection_tokens
+                        ]
                         async with httpx.AsyncClient(timeout=900, trust_env=False) as client:
-                            async with client.stream(request.method, url, headers=headers,
-                                                     content=bytes(body)) as upstream:
-                                response = StreamingResponse(upstream.aiter_raw(),
-                                                             status_code=upstream.status_code)
+                            async with client.stream(
+                                request.method, url, headers=headers, content=bytes(body)
+                            ) as upstream:
+                                response = StreamingResponse(
+                                    upstream.aiter_raw(), status_code=upstream.status_code
+                                )
                                 excluded = HOP_HEADERS | {
-                                    token.strip().lower().encode() for token in
-                                    upstream.headers.get("connection", "").split(",")
+                                    token.strip().lower().encode()
+                                    for token in upstream.headers.get("connection", "").split(",")
                                 }
-                                response.raw_headers = [(k, v) for k, v in upstream.headers.raw
-                                                        if k.lower() not in excluded]
+                                response.raw_headers = [
+                                    (k, v)
+                                    for k, v in upstream.headers.raw
+                                    if k.lower() not in excluded
+                                ]
                                 response_started = True
                                 await response(scope, receive, send)
                     finally:
@@ -269,8 +312,11 @@ class DemandProxy:
         except (httpx.HTTPError, RuntimeError, TimeoutError):
             self.manager.last_error = "Inference request failed; inspect controller logs"
             logger.exception("On-demand inference failed for %s", self.profile.id)
+            if response_started:
+                raise
             if not response_started:
                 await JSONResponse({"error": self.manager.last_error}, status_code=503)(
-                    scope, receive, send)
+                    scope, receive, send
+                )
         finally:
             self.manager.pending -= 1

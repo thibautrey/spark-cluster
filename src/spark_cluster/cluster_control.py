@@ -335,9 +335,10 @@ class RuntimeDeploymentService:
 
     async def launch(self, request: ModelLaunchRequest) -> ModelLaunchJob:
         if self.mode == "docker" and self.settings.on_demand_profiles_path:
-            raise EngineNotExecutable("manual Docker runtime", [
-                "On-demand inference owns the GPU pool; use its configured inference endpoints"
-            ])
+            raise EngineNotExecutable(
+                "manual Docker runtime",
+                ["On-demand inference owns the GPU pool; use its configured inference endpoints"],
+            )
         local = await self.models.managed_model(request.model_id)
         if local is None or local.path is None:
             raise ModelNotManaged(request.model_id)
@@ -378,9 +379,9 @@ class RuntimeDeploymentService:
 
     async def retry(self, job_id: str) -> ModelLaunchJob:
         if self.mode == "docker" and self.settings.on_demand_profiles_path:
-            raise EngineNotExecutable("manual Docker runtime", [
-                "On-demand inference owns the GPU pool"
-            ])
+            raise EngineNotExecutable(
+                "manual Docker runtime", ["On-demand inference owns the GPU pool"]
+            )
         job = await asyncio.to_thread(self.store.get_launch, job_id)
         if job is None:
             raise KeyError(job_id)
