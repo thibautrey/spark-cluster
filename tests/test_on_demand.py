@@ -181,3 +181,45 @@ def test_private_recipes_and_unique_ports(tmp_path):
     path.write_text(json.dumps([profile().model_dump(), profile().model_dump()]))
     with pytest.raises(ValueError, match="unique"):
         load_profiles(path)
+
+
+@pytest.mark.asyncio
+async def test_retention_survives_restart_and_blocks_eviction(tmp_path):
+    p = profile()
+    other = p.model_copy(update={'id': 'other', 'model': 'other-model'})
+    path = tmp_path / 'state.json'
+    manager = OnDemandInference(Docker(), [p, other], state_path=path)
+    manager.active = p
+    manager.retain(p, True)
+    with pytest.raises(RuntimeError, match='retained'):
+        await manager.ensure(other)
+    assert manager.active is p
+    restored = OnDemandInference(Docker(), [p, other], state_path=path)
+    assert p.id in restored.retained
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.asyncio
+async def test_retained_runtime_not_reaped_and_unpin_releases_waiter():
+    p = profile(idle_seconds=1)
+    other = p.model_copy(update={'id': 'other', 'model': 'other-model'})
+    manager = OnDemandInference(Docker(), [p, other])
+    manager.active = p
+    manager.last_used = time.monotonic() - 10
+    manager.retain(p, True)
+    entered = asyncio.Event()
+    async def waiting_request():
+        async with manager.lease(other):
+            entered.set()
+    waiter = asyncio.create_task(waiting_request())
+    reaper = asyncio.create_task(manager.reap())
+    try:
+        await asyncio.sleep(1.1)
+        assert manager.active is p
+        assert not entered.is_set()
+        manager.retain(p, False)
+        await asyncio.wait_for(entered.wait(), 1)
+        await waiter
+    finally:
+        reaper.cancel()
+        await asyncio.gather(reaper, return_exceptions=True)

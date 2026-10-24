@@ -1,0 +1,592 @@
+"""Model-centric placement across registered clusters without changing UI selection."""
+
+import asyncio
+import copy
+import hashlib
+import json
+import time
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
+from urllib.parse import urlencode
+
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response, StreamingResponse
+
+import httpx
+from pydantic import BaseModel, Field
+
+from .local_docker import local_gpu_snapshot
+from .models import ModelFitRequest, ModelLaunchRequest
+from .on_demand import DemandProxy, HOP_HEADERS, InferenceProfile
+from .remote_cluster import signed_controller_headers
+from .runtime_engines import build_execution_plan
+
+
+class ModelPreferences(BaseModel):
+    keep_loaded: bool = False
+    cluster_id: str | None = None
+    last_settings: ModelLaunchRequest | None = None
+
+
+class PoolLoadRequest(BaseModel):
+    model_id: str = Field(min_length=1, max_length=200)
+    settings: ModelLaunchRequest | None = None
+
+
+class NodeLoadRequest(PoolLoadRequest):
+    keep_loaded: bool = False
+
+
+def write_private(path: Path, value: dict) -> None:
+    path.parent.mkdir(mode=0o700, exist_ok=True, parents=True)
+    temporary = path.with_suffix('.tmp')
+    temporary.touch(mode=0o600, exist_ok=True)
+    temporary.chmod(0o600)
+    temporary.write_text(json.dumps(value))
+    temporary.replace(path)
+
+
+class PoolNode:
+    """An authenticated physical cluster adapter, independent of selected dashboard cluster."""
+
+    def __init__(self, settings, registry, models, deployments, demand):
+        self.settings = settings
+        self.registry = registry
+        self.models = models
+        self.deployments = deployments
+        self.demand = demand
+        self.path = settings.setup_state_path / 'pool-node.json'
+        self.native = json.loads(self.path.read_text()) if self.path.exists() else {}
+        self.native_lock = asyncio.Lock()
+        self.reaper = None
+
+    async def start(self):
+        self.reaper = asyncio.create_task(self.reap_native())
+
+    async def close(self):
+        if self.reaper:
+            self.reaper.cancel()
+            await asyncio.gather(self.reaper, return_exceptions=True)
+
+    async def reap_native(self):
+        while True:
+            await asyncio.sleep(2)
+            if (self.native.get('model_id') and not self.native.get('keep_loaded')
+                and not self.native_lock.locked()
+                and time.time() - self.native.get('last_used', time.time()) >= 120):
+                await self.unload(self.native['model_id'])
+
+    async def infer(self, model_id, path, scope, receive, send):
+        profile = self.demand.profile_for(model_id)
+        scope = dict(scope, path='/' + path, raw_path=('/' + path).encode())
+        if profile:
+            await DemandProxy(self.demand, profile, internal=True)(scope, receive, send)
+            return
+        async with self.native_lock:
+            if self.native.get('model_id') != model_id:
+                await JSONResponse({'error': 'Model residency changed; retry the request'}, status_code=503)(scope, receive, send)
+                return
+            try:
+                base = self.settings.direct_runtime_base_url.removesuffix('/v1')
+                await forward_http(base + '/' + path, scope, receive, send)
+            finally:
+                self.native['last_used'] = time.time()
+                write_private(self.path, self.native)
+
+    def local_cluster(self):
+        return next((c for c in self.registry.list() if c.kind == 'local-docker'), None)
+
+    async def inventory(self) -> dict:
+        models = {m.id: {'id': m.id, 'size_bytes': m.size_bytes,
+                        'loadable': m.launch_supported is not False,
+                        'loaded': False, 'keep_loaded': False, 'editable_settings': True}
+                  for m in await self.models.local_models() if m.source == 'managed'}
+        for p in self.demand.profiles:
+            key = p.model_id or p.model
+            models[key] = {**models.get(key, {}), 'id': key, 'loadable': True,
+                           'loaded': bool(self.demand.active and self.demand.active.id == p.id),
+                           'keep_loaded': p.id in self.demand.retained,
+                           'last_settings': p.launch_settings or None,
+                           'editable_settings': p.id in self.demand.dynamic,
+                           'endpoint': f'http://{self.settings.docker_runtime_host}:{p.listen_port}'
+                           if p.id not in self.demand.dynamic else None}
+        active = self.demand.active
+        active_id = active.model_id or active.model if active else self.native.get('model_id')
+        retained = active.id in self.demand.retained if active else self.native.get('keep_loaded', False)
+        if active_id in models:
+            models[active_id]['loaded'] = True
+            models[active_id]['keep_loaded'] = bool(retained)
+        return {'models': list(models.values()), 'active_model': active_id,
+                'keep_loaded': bool(retained), 'busy': self.demand.lock.locked() or self.native_lock.locked()}
+
+    def model_context(self):
+        cluster = self.local_cluster()
+        if not cluster:
+            return self.models, self.settings
+        settings = self.settings.model_copy(deep=True)
+        settings.remote_cluster_url = None
+        settings.active_hardware = cluster.hardware
+        settings.active_compute_capability = min(
+            (float(g.compute_capability) for g in cluster.gpus if g.compute_capability), default=None)
+        settings.fallback_node_count = cluster.gpu_count
+        settings.fallback_node_memory_gib = cluster.gpu_memory_gib
+        models = copy.copy(self.models)
+        models.settings = settings
+        models.runtime = SimpleNamespace(latest=local_gpu_snapshot(cluster, settings))
+        return models, settings
+
+    async def prepare(self, request: PoolLoadRequest):
+        if request.settings and request.settings.model_id != request.model_id:
+            raise ValueError('Launch settings must belong to this model')
+        profile = self.demand.profile_for(request.model_id)
+        if profile and profile.id not in self.demand.dynamic:
+            if request.settings:
+                raise ValueError('This imported runtime uses its saved service configuration')
+            return profile, None, None, None
+        models, settings = self.model_context()
+        local = await models.managed_model(request.model_id)
+        if local is None or not local.path:
+            raise ValueError('Model files are not installed on this cluster')
+        saved = next((j.request for j in await self.deployments.launches()
+                      if j.request.model_id == request.model_id and j.status == 'ready'), None)
+        launch = request.settings or (
+            ModelLaunchRequest.model_validate(profile.launch_settings)
+            if profile and profile.launch_settings else saved
+        ) or ModelLaunchRequest(model_id=request.model_id,
+                                served_model_name=request.model_id.rsplit('/', 1)[-1],
+                                context_length=8192)
+        fit = await models.fit_for_local(ModelFitRequest(
+            repo_id=request.model_id, revision=local.revision or 'main',
+            bits_per_weight=launch.bits_per_weight, context_length=launch.context_length,
+            concurrent_sequences=launch.concurrent_sequences, kv_cache_dtype=launch.kv_cache_dtype))
+        if not fit.fits:
+            raise ValueError('This model and its saved settings do not fit this cluster')
+        plan = build_execution_plan(launch, local.path, settings)
+        if not plan.executable or not plan.image:
+            raise ValueError('This cluster has no executable engine for these settings')
+        cluster = self.local_cluster()
+        if cluster:
+            if plan.engine_id != 'vllm':
+                raise ValueError('The Docker adapter requires vLLM for this model')
+            if not await self.demand.docker.image_present(plan.image):
+                raise ValueError('Required runtime image is not installed on this cluster')
+            key = 'model-' + hashlib.sha256(request.model_id.encode()).hexdigest()[:12]
+            # One physical runtime at a time per cluster; reserve a separate private port.
+            port = profile.upstream_port if profile else 31000 + len(self.demand.dynamic)
+            used_ports = {p.upstream_port for p in self.demand.profiles if not profile or p.id != profile.id}
+            while port in used_ports:
+                port += 1
+            cluster = cluster.model_copy(update={'runtime_port': port})
+            payload = self.demand.docker.runtime_payload(
+                cluster=cluster, image=plan.image, model_path=local.path,
+                served_model_name=launch.served_model_name, context_length=launch.context_length,
+                tensor_parallel=launch.tensor_parallel, pipeline_parallel=launch.pipeline_parallel,
+                gpu_memory_utilization=launch.gpu_memory_utilization,
+                kv_cache_dtype=launch.kv_cache_dtype, max_num_seqs=launch.max_num_seqs,
+                max_num_batched_tokens=launch.max_num_batched_tokens,
+                expert_parallel=launch.expert_parallel, chunked_prefill=launch.chunked_prefill)
+            # Bind only loopback; inference is routed through the authenticated pool gateway.
+            payload['HostConfig']['NetworkMode'] = 'bridge'
+            payload['HostConfig']['PortBindings'] = {
+                f'{port}/tcp': [{'HostIp': '127.0.0.1', 'HostPort': str(port)}]}
+            payload['ExposedPorts'] = {f'{port}/tcp': {}}
+            profile = InferenceProfile(id=key, model=launch.served_model_name,
+                                       model_id=request.model_id, listen_port=port+1000,
+                                       upstream_port=port, readiness_path='/v1/models',
+                                       container=payload, launch_settings=launch.model_dump())
+        return profile, launch, local, plan
+
+    async def plan(self, request: PoolLoadRequest) -> dict:
+        try:
+            await self.prepare(request)
+            return {'compatible': True}
+        except (ValueError, RuntimeError) as error:
+            return {'compatible': False, 'reason': self.models.safe_error(error)}
+
+    async def load(self, request: NodeLoadRequest) -> dict:
+        profile, launch, _, _ = await self.prepare(request)
+        if profile:
+            async with self.demand.lock:
+                if self.demand.blocked(profile):
+                    raise ValueError('The cluster is reserved by a retained model')
+                previous = self.demand.profile_for(request.model_id)
+                if previous and previous.id in self.demand.dynamic:
+                    if self.demand.active and self.demand.active.id == previous.id:
+                        if request.settings and previous.launch_settings != profile.launch_settings:
+                            if previous.id in self.demand.retained:
+                                raise ValueError('Unload the retained model before changing its runtime settings')
+                            await self.demand.remove(previous)
+                    self.demand.profiles[self.demand.profiles.index(previous)] = profile
+                    self.demand.persist()
+                else:
+                    self.demand.register(profile)
+                await self.demand.ensure(profile)
+                self.demand.retain(profile, request.keep_loaded)
+                return {'model_id': request.model_id, 'status': 'ready',
+                        'settings': profile.launch_settings or None}
+        # Physical Kubernetes bridge: the existing validated launcher owns the runtime.
+        async with self.native_lock:
+            if self.native.get('keep_loaded') and self.native.get('model_id') != request.model_id:
+                raise ValueError('The cluster is reserved by a retained model')
+            if self.native.get('model_id') == request.model_id:
+                self.native.update(keep_loaded=request.keep_loaded, last_used=time.time())
+            else:
+                job = await self.deployments.launch(launch)
+                deadline = time.monotonic() + 1200
+                while time.monotonic() < deadline:
+                    current = next(j for j in await self.deployments.launches() if j.id == job.id)
+                    if current.status == 'failed':
+                        raise RuntimeError(current.error or 'Runtime launch failed')
+                    if current.status == 'ready':
+                        break
+                    await asyncio.sleep(2)
+                else:
+                    raise TimeoutError('Runtime launch deadline exceeded')
+                self.native = {'model_id': request.model_id, 'keep_loaded': request.keep_loaded,
+                               'last_used': time.time()}
+            write_private(self.path, self.native)
+            return {'model_id': request.model_id, 'status': 'ready', 'settings': launch.model_dump()}
+
+    async def retain(self, model_id: str, retained: bool):
+        profile = self.demand.profile_for(model_id)
+        if profile:
+            self.demand.retain(profile, retained)
+        if self.native.get('model_id') == model_id:
+            self.native['keep_loaded'] = retained
+            write_private(self.path, self.native)
+
+    async def unload(self, model_id: str):
+        profile = self.demand.profile_for(model_id)
+        if profile:
+            async with self.demand.lock:
+                if self.demand.active and self.demand.active.id == profile.id:
+                    await self.demand.remove(profile)
+                self.demand.retain(profile, False)
+            return
+        async with self.native_lock:
+            if self.native.get('model_id') == model_id:
+                if self.deployments.mode != 'kubernetes':
+                    raise ValueError('No managed Kubernetes runtime can be unloaded')
+                k = self.deployments.kubernetes
+                await k.patch_deployment(self.settings.runtime_head_deployment,
+                                         {'spec': {'replicas': 0}})
+                await k.patch_statefulset(self.settings.runtime_worker_statefulset,
+                                          {'spec': {'replicas': 0}})
+                self.native = {}
+                write_private(self.path, self.native)
+
+
+class ModelPool:
+    transport = None
+
+    def __init__(self, settings, registry, node):
+        self.settings = settings
+        self.registry = registry
+        self.node = node
+        self.path = settings.setup_state_path / 'model-pool.json'
+        saved = json.loads(self.path.read_text()) if self.path.exists() else {}
+        self.preferences = {k: ModelPreferences.model_validate(v)
+                            for k, v in saved.get('models', {}).items()}
+        self.jobs = saved.get('jobs', [])[-100:]
+        for job in self.jobs:
+            if job['status'] not in {'ready', 'failed', 'cancelled'}:
+                job.update(status='failed', message='Controller restarted; load again to retry')
+        self.tasks = set()
+        self.reserved = set()
+        self.scheduling = asyncio.Lock()
+        self.cache = None
+        self.cache_time = 0.
+
+    def save(self):
+        self.jobs = self.jobs[-100:]
+        write_private(self.path, {'models': {k: v.model_dump(mode='json') for k, v in self.preferences.items()},
+                                 'jobs': self.jobs})
+
+    async def close(self):
+        for task in self.tasks:
+            task.cancel()
+        await asyncio.gather(*self.tasks, return_exceptions=True)
+        self.save()
+
+    def local(self, cluster):
+        return cluster.kind == 'local-docker'
+
+    async def call(self, cluster, action, payload=None):
+        if self.local(cluster):
+            if action == 'status':
+                return await self.node.inventory()
+            if action == 'plan':
+                return await self.node.plan(PoolLoadRequest.model_validate(payload))
+            if action == 'load':
+                return await self.node.load(NodeLoadRequest.model_validate(payload))
+            if action == 'retain':
+                await self.node.retain(payload['model_id'], payload['keep_loaded'])
+            if action == 'unload':
+                await self.node.unload(payload['model_id'])
+            return {'status': 'ok'}
+        if not self.settings.model_admin_token:
+            raise ValueError('Configure the shared administration token to use remote pool members')
+        method = 'GET' if action == 'status' else 'POST'
+        path = '/api/v1/pool/node/' + action
+        body = json.dumps(payload).encode() if payload is not None else b''
+        headers = signed_controller_headers(self.settings.model_admin_token, method, path, body)
+        headers['content-type'] = 'application/json'
+        async with httpx.AsyncClient(base_url=cluster.endpoint, transport=self.transport,
+                                     timeout=1250 if action == 'load' else 30, trust_env=False) as client:
+            response = await client.request(method, path, headers=headers, content=body)
+            response.raise_for_status()
+            return response.json()
+
+    async def inventory(self, force=False):
+        if not force and self.cache is not None and time.monotonic()-self.cache_time < 3:
+            return self.cache
+        clusters = self.registry.list()
+        # A Kubernetes bridge with no local Docker registration is itself a pool member.
+        if not clusters and self.node.deployments.mode in {'kubernetes', 'demo'}:
+            clusters = [SimpleNamespace(id='self', name=self.settings.cluster_name,
+                        kind='local-docker', status='ready', model_dump=lambda **kw: {})]
+        async def inspect(cluster):
+            try:
+                data = await self.call(cluster, 'status')
+                return {'id': cluster.id, 'name': cluster.name, 'available': True, **data}
+            except (httpx.HTTPError, ValueError, RuntimeError):
+                return {'id': cluster.id, 'name': cluster.name, 'available': False,
+                        'models': [], 'active_model': None, 'keep_loaded': False, 'busy': False}
+        nodes = await asyncio.gather(*(inspect(c) for c in clusters))
+        models = {}
+        for node in nodes:
+            for m in node['models']:
+                entry = models.setdefault(m['id'], {'id': m['id'], 'size_bytes': m.get('size_bytes', 0),
+                    'placements': [], 'available_clusters': [], 'loadable': False,
+                    'last_settings': m.get('last_settings'),
+                    'editable_settings': m.get('editable_settings', True)})
+                if m['loadable']:
+                    entry['loadable'] = True
+                    entry['available_clusters'].append(node['id'])
+                if m.get('loaded'):
+                    entry['placements'].append({'cluster_id': node['id'], 'cluster_name': node['name'],
+                                                'keep_loaded': m.get('keep_loaded', False)})
+        for m in models.values():
+            prefs = self.preferences.get(m['id'], ModelPreferences())
+            m['key'] = hashlib.sha256(m['id'].encode()).hexdigest()[:16]
+            m['preferences'] = prefs.model_dump(mode='json')
+            m['last_settings'] = prefs.last_settings.model_dump() if prefs.last_settings else m['last_settings']
+        result = {'clusters': nodes, 'models': list(models.values()), 'jobs': self.jobs[-20:]}
+        self.cache = result
+        self.cache_time = time.monotonic()
+        return result
+
+    def cluster(self, cluster_id):
+        if cluster_id == 'self' and not self.registry.list():
+            return SimpleNamespace(id='self', kind='local-docker')
+        return self.registry.get(cluster_id)
+
+    async def update_preferences(self, model_id, preferences):
+        if preferences.cluster_id:
+            self.cluster(preferences.cluster_id)
+        if preferences.last_settings and preferences.last_settings.model_id != model_id:
+            raise ValueError('Saved settings must belong to this model')
+        state = await self.inventory(force=True)
+        previous = self.preferences.get(model_id, ModelPreferences())
+        applied = []
+        try:
+            for node in state['clusters']:
+                if node['active_model'] == model_id:
+                    await self.call(self.cluster(node['id']), 'retain',
+                                    {'model_id': model_id, 'keep_loaded': preferences.keep_loaded})
+                    applied.append(node['id'])
+        except Exception:
+            for cid in applied:
+                await self.call(self.cluster(cid), 'retain',
+                                {'model_id': model_id, 'keep_loaded': previous.keep_loaded})
+            raise
+        self.preferences[model_id] = preferences
+        self.save()
+        self.cache = None
+        return preferences
+
+    async def enqueue(self, request):
+        for job in self.jobs:
+            if job['model_id'] == request.model_id and job['status'] in {'queued', 'waiting', 'loading'}:
+                return job
+        if len(self.tasks) >= 64:
+            raise ValueError('The pool load queue is full')
+        if request.settings:
+            if request.settings.model_id != request.model_id:
+                raise ValueError('Launch settings must belong to this model')
+            prefs = self.preferences.get(request.model_id, ModelPreferences()).model_copy(
+                update={'last_settings': request.settings})
+            self.preferences[request.model_id] = prefs
+        job = {'id': uuid4().hex, 'model_id': request.model_id, 'status': 'queued',
+               'message': 'Waiting for a compatible cluster', 'cluster_id': None}
+        self.jobs.append(job)
+        self.save()
+        task = asyncio.create_task(self.run(job, request))
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+        return job
+
+    async def run(self, job, request):
+        selected = None
+        try:
+            deadline = time.monotonic() + 1800
+            while time.monotonic() < deadline:
+                async with self.scheduling:
+                    state = await self.inventory(force=True)
+                    prefs = self.preferences.get(request.model_id, ModelPreferences())
+                    settings = request.settings or prefs.last_settings
+                    payload = {'model_id': request.model_id,
+                               'settings': settings.model_dump() if settings else None,
+                               'keep_loaded': prefs.keep_loaded}
+                    candidates = [n for n in state['clusters'] if n['available']
+                        and (not prefs.cluster_id or n['id'] == prefs.cluster_id)
+                        and any(m['id'] == request.model_id and m['loadable'] for m in n['models'])]
+                    if not candidates:
+                        raise ValueError('No reachable cluster has a runnable copy of this model'
+                                         + (' on the required cluster' if prefs.cluster_id else ''))
+                    # Prefer an existing residency, then empty resources, then eviction of an unpinned model.
+                    candidates.sort(key=lambda n: (n['active_model'] != request.model_id,
+                                                   n['active_model'] is not None, n['id']))
+                    reasons = []
+                    compatible = False
+                    for node in candidates:
+                        if node['id'] in self.reserved or node['busy']:
+                            compatible = True
+                            reasons.append(node['name'] + ': another request is active')
+                            continue
+                        if node['keep_loaded'] and node['active_model'] != request.model_id:
+                            compatible = True
+                            reasons.append(node['name'] + ': retained model reserves the resources')
+                            continue
+                        cluster = self.cluster(node['id'])
+                        try:
+                            plan = await self.call(cluster, 'plan', payload)
+                        except (httpx.HTTPError, ValueError, RuntimeError):
+                            reasons.append(node['name'] + ': cluster preflight unavailable')
+                            continue
+                        if not plan['compatible']:
+                            reasons.append(node['name'] + ': ' + plan.get('reason', 'Incompatible settings'))
+                            continue
+                        compatible = True
+                        selected = cluster
+                        self.reserved.add(cluster.id)
+                        job.update(status='loading', cluster_id=cluster.id,
+                                   message='Loading on ' + node['name'])
+                        break
+                    if selected:
+                        self.save()
+                        break
+                    if not compatible:
+                        raise ValueError('; '.join(reasons))
+                    job.update(status='waiting', message='; '.join(reasons))
+                    self.save()
+                await asyncio.sleep(2)
+            if not selected:
+                raise TimeoutError('Pool queue deadline exceeded (30 minutes)')
+            result = await self.call(selected, 'load', payload)
+            prefs = self.preferences.get(request.model_id, ModelPreferences())
+            if prefs.keep_loaded != payload['keep_loaded']:
+                await self.call(selected, 'retain', {'model_id': request.model_id,
+                                                     'keep_loaded': prefs.keep_loaded})
+            if result.get('settings'):
+                prefs.last_settings = ModelLaunchRequest.model_validate(result['settings'])
+                self.preferences[request.model_id] = prefs
+            job.update(status='ready', message='Model ready')
+        except asyncio.CancelledError:
+            job.update(status='cancelled', message='Load cancelled')
+            raise
+        except Exception as error:
+            job.update(status='failed', message=self.node.models.safe_error(error))
+        finally:
+            if selected:
+                self.reserved.discard(selected.id)
+            self.cache = None
+            self.save()
+
+    async def unload(self, model_id):
+        for job in self.jobs:
+            if job['model_id'] == model_id and job['status'] in {'queued', 'waiting', 'loading'}:
+                raise ValueError('Wait for the pending load to finish before unloading')
+        state = await self.inventory(force=True)
+        for node in state['clusters']:
+            if node['active_model'] == model_id:
+                await self.call(self.cluster(node['id']), 'unload', {'model_id': model_id})
+        prefs = self.preferences.get(model_id, ModelPreferences())
+        prefs.keep_loaded = False
+        self.preferences[model_id] = prefs
+        self.cache = None
+        self.save()
+        return {'status': 'unloaded'}
+
+
+    async def infer(self, model_id, path, scope, receive, send):
+        state = await self.inventory()
+        prefs = self.preferences.get(model_id, ModelPreferences())
+        resident = next((n for n in state['clusters'] if n['available']
+                         and n['active_model'] == model_id and n['id'] not in self.reserved
+                         and (not prefs.cluster_id or n['id'] == prefs.cluster_id)), None)
+        if resident:
+            job = {'status': 'ready', 'cluster_id': resident['id']}
+        else:
+            job = await self.enqueue(PoolLoadRequest(model_id=model_id))
+        async with asyncio.timeout(1800):
+            while job['status'] not in {'ready', 'failed', 'cancelled'}:
+                await asyncio.sleep(.2)
+            if job['status'] != 'ready':
+                await JSONResponse({'error': job['message']}, status_code=503)(scope, receive, send)
+                return
+            cluster = self.cluster(job['cluster_id'])
+            if self.local(cluster):
+                await self.node.infer(model_id, path, scope, receive, send)
+            else:
+                target = '/api/v1/pool/node/inference/' + path
+                query = scope.get('query_string', b'').decode()
+                query += ('&' if query else '') + urlencode({'model_id': model_id})
+                await forward_http(cluster.endpoint + target, dict(scope, query_string=query.encode()),
+                                   receive, send, token=self.settings.model_admin_token,
+                                   transport=self.transport)
+
+
+async def forward_http(url, scope, receive, send, token=None, transport=None):
+    request = Request(scope, receive)
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > 64 * 1024 * 1024:
+            await JSONResponse({'error': 'Request exceeds 64 MiB'}, status_code=413)(scope, receive, send)
+            return
+    query = scope.get('query_string', b'').decode()
+    if query:
+        url += '?' + query
+    headers = {k.decode(): v.decode() for k, v in scope['headers'] if k.lower() not in HOP_HEADERS}
+    if token:
+        parsed = httpx.URL(url)
+        target = parsed.raw_path.decode()
+        headers.update(signed_controller_headers(token, request.method, target, bytes(body)))
+    async with httpx.AsyncClient(timeout=1800, trust_env=False, transport=transport) as client:
+        async with client.stream(request.method, url, content=bytes(body), headers=headers) as upstream:
+            response = StreamingResponse(upstream.aiter_raw(), status_code=upstream.status_code)
+            response.raw_headers = [(k, v) for k, v in upstream.headers.raw if k.lower() not in HOP_HEADERS]
+            await response(scope, receive, send)
+
+
+class PoolResponse(Response):
+    def __init__(self, handler):
+        super().__init__()
+        self.handler = handler
+
+    async def __call__(self, scope, receive, send):
+        started = False
+        async def tracked_send(message):
+            nonlocal started
+            if message['type'] == 'http.response.start':
+                started = True
+            await send(message)
+        try:
+            await self.handler(scope, receive, tracked_send)
+        except (ValueError, RuntimeError, TimeoutError, httpx.HTTPError):
+            if started:
+                raise
+            await JSONResponse({'error': 'Pool inference unavailable; inspect the load queue'},
+                               status_code=503)(scope, receive, send)

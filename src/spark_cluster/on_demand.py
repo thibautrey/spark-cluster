@@ -39,6 +39,8 @@ HOP_HEADERS = {
 class InferenceProfile(BaseModel):
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
     model: str
+    model_id: str | None = None
+    launch_settings: dict = Field(default_factory=dict)
     listen_host: str = "127.0.0.1"
     listen_port: int = Field(ge=1024, le=65535)
     upstream_port: int = Field(ge=1024, le=65535)
@@ -84,7 +86,7 @@ class ListenerServer(uvicorn.Server):
 
 
 class OnDemandInference:
-    def __init__(self, docker: DockerEngineClient, profiles: list[InferenceProfile]):
+    def __init__(self, docker: DockerEngineClient, profiles: list[InferenceProfile], state_path: Path | None = None):
         self.docker = docker
         self.profiles = profiles
         self.lock = asyncio.Lock()
@@ -95,6 +97,68 @@ class OnDemandInference:
         self.sockets: list[socket.socket] = []
         self.pending = 0
         self.last_error: str | None = None
+        self.state_path = state_path
+        self.retained: set[str] = set()
+        self.changed = asyncio.Event()
+        self.dynamic: set[str] = set()
+        self.pool = None
+        if state_path and state_path.exists():
+            state = json.loads(state_path.read_text())
+            self.retained = set(state.get("retained", []))
+            for item in state.get("profiles", []):
+                profile = InferenceProfile.model_validate(item)
+                if not any(p.id == profile.id for p in self.profiles):
+                    self.profiles.append(profile)
+                    self.dynamic.add(profile.id)
+
+    def persist(self) -> None:
+        if not self.state_path:
+            return
+        self.state_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        temporary = self.state_path.with_suffix(".tmp")
+        temporary.touch(mode=0o600, exist_ok=True)
+        temporary.chmod(0o600)
+        temporary.write_text(json.dumps({
+            "retained": sorted(self.retained),
+            "profiles": [p.model_dump() for p in self.profiles if p.id in self.dynamic],
+        }))
+        temporary.replace(self.state_path)
+
+    def profile_for(self, model_id: str) -> InferenceProfile | None:
+        return next((p for p in self.profiles if model_id in {p.id, p.model, p.model_id}), None)
+
+    def retain(self, profile: InferenceProfile, retained: bool) -> None:
+        if retained:
+            self.retained.add(profile.id)
+        else:
+            self.retained.discard(profile.id)
+        self.persist()
+        self.changed.set()
+
+    def blocked(self, profile: InferenceProfile) -> bool:
+        return bool(self.active and self.active.id != profile.id and self.active.id in self.retained)
+
+    @contextlib.asynccontextmanager
+    async def lease(self, profile: InferenceProfile):
+        while True:
+            await self.lock.acquire()
+            if not self.blocked(profile):
+                break
+            self.changed.clear()
+            self.lock.release()
+            await self.changed.wait()
+        try:
+            yield
+        finally:
+            self.lock.release()
+            self.changed.set()
+
+    def register(self, profile: InferenceProfile) -> None:
+        if self.profile_for(profile.model_id or profile.model):
+            return
+        self.profiles.append(profile)
+        self.dynamic.add(profile.id)
+        self.persist()
 
     def status(self) -> dict:
         return {
@@ -108,6 +172,9 @@ class OnDemandInference:
                     "model": p.model,
                     "port": p.listen_port,
                     "idle_seconds": p.idle_seconds,
+                    "model_id": p.model_id or p.model,
+                    "keep_loaded": p.id in self.retained,
+                    "launch_settings": p.launch_settings,
                 }
                 for p in self.profiles
             ],
@@ -117,6 +184,9 @@ class OnDemandInference:
         name = quote(profile.name, safe="")
         response = await self.docker.request("GET", f"/containers/{name}/json", allow={404})
         if response.status_code == 404:
+            if self.active and self.active.id == profile.id:
+                self.active = None
+                self.changed.set()
             return
         if (
             response.json().get("Config", {}).get("Labels", {}).get("spark-cluster.on-demand")
@@ -129,15 +199,18 @@ class OnDemandInference:
         await self.docker.request("DELETE", f"/containers/{name}", allow={404}, timeout=30)
         if self.active and self.active.id == profile.id:
             self.active = None
+            self.changed.set()
 
     async def start(self) -> None:
-        if not self.profiles:
+        if not self.profiles and not self.docker.available:
             return
         if not await self.docker.ping():
             raise RuntimeError("On-demand inference requires Docker access")
         # Bind every listener before accepting any requests; conflicts fail startup.
         try:
             for profile in self.profiles:
+                if profile.id in self.dynamic:
+                    continue
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.sockets.append(sock)
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -145,8 +218,18 @@ class OnDemandInference:
                 sock.listen(128)
                 sock.setblocking(False)
             for profile in self.profiles:
-                await self.remove(profile)  # reclaim only labelled leftovers after a crash
-            for profile, sock in zip(self.profiles, self.sockets, strict=True):
+                state = await self.docker.request("GET", f"/containers/{profile.name}/json", allow={404})
+                if (profile.id in self.retained and state.status_code == 200
+                    and state.json().get("State", {}).get("Running")
+                    and state.json().get("Config", {}).get("Labels", {}).get("spark-cluster.on-demand") == profile.id):
+                    if self.active:
+                        raise RuntimeError("Multiple retained runtimes cannot share one GPU slot")
+                    self.active = profile
+                    self.last_used = time.monotonic()
+                else:
+                    await self.remove(profile)
+            listeners = [p for p in self.profiles if p.id not in self.dynamic]
+            for profile, sock in zip(listeners, self.sockets, strict=True):
                 server = ListenerServer(
                     uvicorn.Config(
                         DemandProxy(self, profile),
@@ -171,7 +254,7 @@ class OnDemandInference:
             self.tasks[-1].cancel()  # idle reaper
             await asyncio.gather(*self.tasks, return_exceptions=True)
         async with self.lock:
-            if self.active:
+            if self.active and self.active.id not in self.retained:
                 await self.remove(self.active)
         for sock in self.sockets:
             sock.close()
@@ -182,7 +265,8 @@ class OnDemandInference:
             if self.lock.locked() or not self.active:
                 continue
             async with self.lock:
-                if self.active and time.monotonic() - self.last_used >= self.active.idle_seconds:
+                if (self.active and self.active.id not in self.retained
+                    and time.monotonic() - self.last_used >= self.active.idle_seconds):
                     try:
                         await self.remove(self.active)
                     except Exception:
@@ -190,6 +274,8 @@ class OnDemandInference:
                         logger.exception("On-demand idle cleanup failed")
 
     async def ensure(self, profile: InferenceProfile) -> None:
+        if self.blocked(profile):
+            raise RuntimeError("The GPU slot is reserved by a retained model")
         if self.active and self.active.id == profile.id:
             state = await self.docker.request(
                 "GET", f"/containers/{profile.name}/json", allow={404}
@@ -234,9 +320,10 @@ class OnDemandInference:
 
 
 class DemandProxy:
-    def __init__(self, manager: OnDemandInference, profile: InferenceProfile):
+    def __init__(self, manager: OnDemandInference, profile: InferenceProfile, internal: bool = False):
         self.manager = manager
         self.profile = profile
+        self.internal = internal
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -257,6 +344,10 @@ class DemandProxy:
             )
             await JSONResponse(body)(scope, receive, send)
             return
+        if self.manager.pool and not self.internal:
+            model_id = self.profile.model_id or self.profile.model
+            await self.manager.pool.infer(model_id, path.lstrip('/'), scope, receive, send)
+            return
         if self.manager.pending >= 64:
             await JSONResponse({"error": "Inference queue is full"}, status_code=503)(
                 scope, receive, send
@@ -274,7 +365,7 @@ class DemandProxy:
         response_started = False
         try:
             async with asyncio.timeout(1800):
-                async with self.manager.lock:
+                async with self.manager.lease(self.profile):
                     try:
                         await self.manager.ensure(self.profile)
                         query = scope.get("query_string", b"").decode("ascii")

@@ -199,7 +199,7 @@ class DockerEngineClient:
         if b'"error"' in response.content:
             raise RuntimeError("Docker reported an image pull failure")
 
-    async def launch(
+    def runtime_payload(
         self,
         *,
         cluster: ClusterTarget,
@@ -215,17 +215,9 @@ class DockerEngineClient:
         max_num_batched_tokens: int,
         expert_parallel: bool,
         chunked_prefill: bool,
-    ) -> str:
+    ) -> dict:
         if tensor_parallel * pipeline_parallel > cluster.gpu_count:
             raise ValueError("Requested parallelism exceeds GPUs assigned to this cluster")
-        image_path = quote(image, safe="")
-        image_response = await self.request(
-            "GET", f"/images/{image_path}/json", allow={404}, timeout=10
-        )
-        if image_response.status_code == 404:
-            raise RuntimeError(
-                f"Runtime image {image} is not present on the Docker host; install it first"
-            )
         controller_root = self.settings.model_cache_path.resolve()
         resolved_model = Path(model_path).resolve()
         if controller_root not in resolved_model.parents:
@@ -259,8 +251,6 @@ class DockerEngineClient:
             command.append("--enable-expert-parallel")
         if chunked_prefill:
             command.append("--enable-chunked-prefill")
-        name = self.container_name(cluster.id)
-        await self._remove_existing(name)
         device_ids = [
             str(item.index) for item in cluster.gpus[: tensor_parallel * pipeline_parallel]
         ]
@@ -290,6 +280,44 @@ class DockerEngineClient:
                 "spark-cluster.model": served_model_name,
             },
         }
+        return payload
+
+    async def launch(
+        self,
+        *,
+        cluster: ClusterTarget,
+        image: str,
+        model_path: str,
+        served_model_name: str,
+        context_length: int,
+        tensor_parallel: int,
+        pipeline_parallel: int,
+        gpu_memory_utilization: float,
+        kv_cache_dtype: str,
+        max_num_seqs: int,
+        max_num_batched_tokens: int,
+        expert_parallel: bool,
+        chunked_prefill: bool,
+    ) -> str:
+        if tensor_parallel * pipeline_parallel > cluster.gpu_count:
+            raise ValueError("Requested parallelism exceeds GPUs assigned to this cluster")
+        image_path = quote(image, safe="")
+        image_response = await self.request(
+            "GET", f"/images/{image_path}/json", allow={404}, timeout=10
+        )
+        if image_response.status_code == 404:
+            raise RuntimeError(
+                f"Runtime image {image} is not present on the Docker host; install it first"
+            )
+        payload = self.runtime_payload(
+            cluster=cluster, image=image, model_path=model_path, served_model_name=served_model_name,
+            context_length=context_length, tensor_parallel=tensor_parallel, pipeline_parallel=pipeline_parallel,
+            gpu_memory_utilization=gpu_memory_utilization, kv_cache_dtype=kv_cache_dtype,
+            max_num_seqs=max_num_seqs, max_num_batched_tokens=max_num_batched_tokens,
+            expert_parallel=expert_parallel, chunked_prefill=chunked_prefill,
+        )
+        name = self.container_name(cluster.id)
+        await self._remove_existing(name)
         response = await self.request(
             "POST",
             "/containers/create",

@@ -1257,26 +1257,16 @@ $('served-model-name').addEventListener('input', () => {
 });
 $('launch-form').addEventListener('submit', async event => {
   event.preventDefault();
-  if (!launchFit?.fits || !launchFit?.parallel_fits) return;
-  $('launch-model-button').disabled = true;
-  $('launch-model-button').textContent = 'Checking runtimes…';
-  const payload = launchPayload();
+  const button = $('launch-model-button');
+  button.disabled = true;
   try {
-    const report = await api('/api/v1/runtime-management/readiness', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({model_id: payload.model_id, engine_id: payload.engine_id})});
-    if (!report.ready) {
-      pendingLaunchPayload = payload;
-      openRuntimeReadinessSheet(report, $('launch-model-button'));
-      $('launch-model-button').textContent = 'Launch on cluster';
-      $('launch-model-button').disabled = false;
-      return;
-    }
-    await queueModelLaunch(payload);
+    await window.loadModelInPool(launchPayload());
+    button.textContent = 'Load queued';
   } catch (error) {
-    $('launch-fit').className = 'fit-result no-fit';
-    $('launch-fit').innerHTML = `<span class="fit-symbol">!</span><div><b>Runtime check failed</b><small>${escapeHtml(error.message)}</small></div>`;
-    $('launch-model-button').textContent = 'Launch on cluster';
-    $('launch-model-button').disabled = false;
-  }
+    $('launch-fit').hidden = false;
+    $('launch-fit').textContent = error.message;
+    button.textContent = 'Load model';
+  } finally { button.disabled = false; }
 });
 $('runtime-install').addEventListener('click', installRuntimeOnNodes);
 $('runtime-sheet-close').addEventListener('click', closeRuntimeReadinessSheet);

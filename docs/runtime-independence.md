@@ -87,3 +87,34 @@ Unlike direct-runtime mode above, this mode depends on the controller for infere
 shutdown drains requests and removes its temporary runtime; crash recovery reclaims only containers
 labelled with the matching `spark-cluster.on-demand` profile. Docker runtimes have no restart policy.
 The ordinary direct-runtime path and remote clusters are unchanged when no recipes are configured.
+
+## Model pool and retention
+
+The model pool is independent of the dashboard's selected cluster. `/api/v1/pool` merges
+installed models and live residency across local Docker and authenticated remote bridges.
+The model list provides **Load model**, **Settings**, and **Unload**. Load reuses saved launch
+parameters, or the exact imported service recipe. A first generic launch uses conservative
+8k context and one GPU, followed by a memory and engine preflight on each candidate.
+
+**Keep loaded** protects a model from both idle unloading and eviction. This setting is
+persistent. Retained Docker runtimes survive controller restarts and are adopted again only
+when their ownership labels match. Other loads use a different compatible cluster or wait
+with a visible reason. **Unload** explicitly releases the model and clears retention.
+A saved cluster is a strict requirement for subsequent loads; **Automatic — pool** prefers
+existing residency, then idle clusters, then eviction of unretained models. Changing placement
+settings does not migrate an in-flight runtime. Independent clusters remain placement units:
+a model's tensor/pipeline ranks run inside one chosen cluster.
+
+All pool members must run this protocol version and use the configured shared administration
+token for signed node control and inference. An unavailable or older bridge is reported as
+unavailable and cannot silently receive a load. Model files and a compatible engine must
+already be installed on a candidate; the scheduler never assumes a host-specific Docker
+recipe or binary can be moved to a different architecture.
+
+Clients can use `/api/v1/pool/serve/MODEL_KEY/v1/...` on the controller, where `MODEL_KEY` is
+advertised in the pool inventory. Imported legacy listeners route through this same pool.
+GPU leases cover the complete streaming response. Node mutation and inference endpoints are
+signed; backend API authentication is preserved separately. Pool-managed Kubernetes clients
+must use this gateway for request leases and idle accounting. Manual direct-runtime traffic
+remains outside the pool's request accounting. Pending loads are marked interrupted after a
+controller restart rather than replayed; saved settings and retention persist.

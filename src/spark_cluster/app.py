@@ -62,6 +62,7 @@ from .model_manager import (
     ModelManager,
 )
 from .model_relay import ModelRelay
+from .model_pool import ModelPool, ModelPreferences, PoolNode, PoolLoadRequest, NodeLoadRequest, PoolResponse
 from .models import (
     BenchmarkRequest,
     BenchmarkResult,
@@ -168,7 +169,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     on_demand = OnDemandInference(
         docker_engine,
         load_profiles(settings.on_demand_profiles_path) if settings.on_demand_profiles_path else [],
+        state_path=settings.setup_state_path / "on-demand-state.json",
     )
+    pool_node = PoolNode(settings, cluster_registry, model_manager, deployment_service, on_demand)
+    model_pool = ModelPool(settings, cluster_registry, pool_node)
+    on_demand.pool = model_pool
     setup_service = ClusterSetupService(settings, runtime.store)
     runtime_prerequisites = RuntimePrerequisiteService(
         settings,
@@ -278,9 +283,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await deployment_service.start()
         await setup_service.start()
         await on_demand.start()
+        await pool_node.start()
         try:
             yield
         finally:
+            await model_pool.close()
+            await pool_node.close()
             await on_demand.stop()
         if local_monitor:
             local_monitor.cancel()
@@ -311,6 +319,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.cluster_registry = cluster_registry
     app.state.docker_engine = docker_engine
     app.state.on_demand = on_demand
+    app.state.model_pool = model_pool
+    app.state.pool_node = pool_node
     mcp_server = SparkClusterMCP(
         browser=browser,
         runtime=runtime,
@@ -958,6 +968,73 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/launches", response_model=list[ModelLaunchJob])
     async def launches() -> list[ModelLaunchJob]:
         return await deployment_service.launches()
+
+    @app.get("/api/v1/pool")
+    async def pool_inventory():
+        return await model_pool.inventory()
+
+    @app.put("/api/v1/pool/models/{model_id:path}/settings", dependencies=[Depends(require_model_token)])
+    async def pool_preferences(model_id: str, preferences: ModelPreferences):
+        try:
+            return await model_pool.update_preferences(model_id, preferences)
+        except (KeyError, ValueError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.post("/api/v1/pool/load", status_code=202, dependencies=[Depends(require_model_token)])
+    async def pool_load(request: PoolLoadRequest):
+        try:
+            return await model_pool.enqueue(request)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.post("/api/v1/pool/unload", dependencies=[Depends(require_model_token)])
+    async def pool_unload(request: PoolLoadRequest):
+        try:
+            return await model_pool.unload(request.model_id)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.get("/api/v1/pool/node/status", dependencies=[Depends(require_model_token)])
+    async def pool_node_status():
+        return await pool_node.inventory()
+
+    @app.post("/api/v1/pool/node/{action}", dependencies=[Depends(require_model_token)])
+    async def pool_node_action(action: str, request: NodeLoadRequest):
+        try:
+            if action == "plan":
+                return await pool_node.plan(request)
+            if action == "load":
+                return await pool_node.load(request)
+            if action == "retain":
+                await pool_node.retain(request.model_id, request.keep_loaded)
+            elif action == "unload":
+                await pool_node.unload(request.model_id)
+            else:
+                raise HTTPException(status_code=404, detail="Unknown node action")
+            return {"status": "ok"}
+        except (ValueError, RuntimeError) as error:
+            raise HTTPException(status_code=409, detail=model_manager.safe_error(error)) from error
+
+    @app.api_route("/api/v1/pool/node/inference/{path:path}",
+                   methods=["GET", "POST", "DELETE"], dependencies=[Depends(require_model_token)])
+    async def pool_node_inference(request: Request, path: str, model_id: str):
+        from urllib.parse import parse_qsl, urlencode
+        scope = dict(request.scope)
+        scope["query_string"] = urlencode([(k, v) for k, v in parse_qsl(request.url.query)
+                                            if k != "model_id"]).encode()
+        async def handler(_, receive, send):
+            await pool_node.infer(model_id, path, scope, receive, send)
+        return PoolResponse(handler)
+
+    @app.api_route("/api/v1/pool/serve/{key}/{path:path}", methods=["GET", "POST", "DELETE"])
+    async def pool_inference(request: Request, key: str, path: str):
+        inventory = await model_pool.inventory()
+        model = next((m for m in inventory["models"] if m["key"] == key), None)
+        if not model:
+            raise HTTPException(status_code=404, detail="Unknown pool model")
+        async def handler(scope, receive, send):
+            await model_pool.infer(model["id"], path, scope, receive, send)
+        return PoolResponse(handler)
 
     @app.get("/api/v1/inference/status")
     async def inference_status() -> dict:
