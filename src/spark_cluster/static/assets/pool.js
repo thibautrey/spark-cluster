@@ -24,7 +24,7 @@
       }
       const closest = capacities.filter(item => item.missing_gib !== null)
         .sort((a, b) => a.missing_gib - b.missing_gib)[0];
-      return {fits: !closest, selected, capacity: closest || null, alternatives: []};
+      return {fits: false, selected, capacity: closest || null, alternatives: []};
     }
     const capacity = capacities.find(item => item.cluster_id === selected) || null;
     return {
@@ -36,7 +36,10 @@
   }
   function capacityMarkup(context) {
     const capacity = context.capacity;
-    if (!capacity) return '<div class="pool-model-capacity unknown"><span>Memory preflight unavailable for this cluster</span></div>';
+    if (!capacity) {
+      const alternative = context.alternatives[0];
+      return `<div class="pool-model-capacity unknown"><span>Memory preflight unavailable for this cluster</span>${alternative ? `<small>Fits on ${escapeHtml(alternative.cluster_name)} · switch cluster or choose All</small>` : ''}</div>`;
+    }
     if (context.fits) {
       const location = context.selected === 'all' ? `Fits on ${escapeHtml(capacity.cluster_name)}` : `Fits in ${escapeHtml(capacity.cluster_name)}`;
       return `<div class="pool-model-capacity fits"><span>✓ ${location}</span><small>${capacity.required_gib.toFixed(1)} GiB required · ${capacity.available_gib.toFixed(1)} GiB available</small></div>`;

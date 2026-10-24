@@ -401,3 +401,41 @@ async def test_transient_cluster_context_targets_that_cluster_without_saving_aff
     assert job["status"] == "ready"
     assert job["cluster_id"] == "second"
     assert pool.preferences.get("org/model", ModelPreferences()).cluster_id is None
+
+
+@pytest.mark.asyncio
+async def test_inventory_keeps_per_cluster_capacity_and_fit_alternatives(tmp_path):
+    pool = FakePool(tmp_path)
+    pool.nodes["first"]["models"][0]["capacity"] = {
+        "fits": False,
+        "required_gib": 12.0,
+        "available_gib": 8.0,
+        "missing_gib": 4.0,
+        "context_length": 32768,
+        "confidence": "architecture",
+    }
+    pool.nodes["second"]["models"][0]["capacity"] = {
+        "fits": True,
+        "required_gib": 12.0,
+        "available_gib": 16.0,
+        "missing_gib": 0.0,
+        "context_length": 32768,
+        "confidence": "architecture",
+    }
+    state = await pool.inventory(force=True)
+    model = next(item for item in state["models"] if item["id"] == "org/model")
+    assert model["available_clusters"] == ["second"]
+    assert model["cluster_capacity"] == [
+        {
+            "cluster_id": "first",
+            "cluster_name": "first",
+            "available": True,
+            **pool.nodes["first"]["models"][0]["capacity"],
+        },
+        {
+            "cluster_id": "second",
+            "cluster_name": "second",
+            "available": True,
+            **pool.nodes["second"]["models"][0]["capacity"],
+        },
+    ]
