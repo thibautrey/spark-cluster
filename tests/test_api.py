@@ -115,19 +115,17 @@ def test_local_gpu_performance_plan_skips_spark_setup_history(tmp_path, monkeypa
     assert response.json()["collective_backend"] == "NCCL over local PCIe"
 
 
-def test_controller_refuses_to_proxy_inference_and_advertises_direct_runtime(tmp_path):
+def test_global_v1_routes_model_requests_through_the_pool(tmp_path):
     with make_client(tmp_path) as client:
-        endpoint = client.get("/api/v1/runtime").json()
-        assert endpoint["routing_mode"] == "direct-runtime"
-        assert endpoint["controller_required"] is False
-        assert endpoint["chat_completions_url"] == "http://127.0.0.1:9/v1/chat/completions"
+        root = client.get("/v1")
+        assert root.status_code == 200
+        assert root.json()["models"] == "/v1/models"
         response = client.post(
             "/v1/chat/completions",
             json={"model": "anything", "messages": []},
         )
-        assert response.status_code == 421
-        assert "never routed" in response.json()["detail"]
-        assert endpoint["base_url"] in response.json()["detail"]
+        assert response.status_code == 404
+        assert "not available in the pool" in response.json()["detail"]
 
 
 def test_ingest_token_is_enforced(tmp_path):
