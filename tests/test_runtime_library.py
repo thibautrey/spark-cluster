@@ -65,7 +65,7 @@ def add_pool(library, address="192.168.50.10", ready=True):
     )
     if ready:
         request = SetupRequest(
-            name="Spark",
+            name="spark",
             topology="direct",
             nodes=[
                 SetupNode(
