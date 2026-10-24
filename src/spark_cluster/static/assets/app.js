@@ -31,23 +31,125 @@ const formatBytes = (value) => value >= 2 ** 30 ? `${(value / 2 ** 30).toFixed(1
 const pct = (used, total) => total ? Math.min(100, used / total * 100) : 0;
 const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, character => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'}[character]));
 
-async function api(path, options = {}) {
-  const response = await fetch(path, {...options, headers: {'Content-Type': 'application/json', ...(options.headers || {})}});
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = typeof body.detail === 'string' ? body.detail : Array.isArray(body.detail) ? body.detail.map(item => item.msg).join('; ') : body.detail?.message || `Request failed (${response.status})`;
-    const error = new Error(detail);
-    error.payload = body;
-    throw error;
-  }
-  return body;
+const adminTokenStorageKey = 'spark-cluster.admin-token';
+let adminTokenWaiter = null;
+let adminTokenSheetOpener = null;
+let adminTokenCloseTimer = null;
+let adminTokenVerifying = false;
+
+function storedAdminToken() {
+  try { return localStorage.getItem(adminTokenStorageKey)?.trim() || ''; }
+  catch { return ''; }
 }
 
-function clusterAuthHeaders() {
-  const candidates = [$('setup-token')?.value, $('admin-token')?.value, $('launch-admin-token')?.value];
-  const token = candidates.find(value => value?.trim())?.trim();
+function saveAdminToken(token) {
+  try { localStorage.setItem(adminTokenStorageKey, token); } catch {}
+}
+
+function clearAdminToken() {
+  try { localStorage.removeItem(adminTokenStorageKey); } catch {}
+}
+
+function adminAuthHeaders() {
+  const token = storedAdminToken();
   return token ? {Authorization: `Bearer ${token}`} : {};
 }
+window.adminAuthHeaders = adminAuthHeaders;
+
+function openAdminTokenSheet(message = 'Enter the administration token to continue this action.') {
+  clearTimeout(adminTokenCloseTimer);
+  adminTokenSheetOpener ||= document.activeElement;
+  $('admin-token-description').textContent = message;
+  $('admin-token-error').hidden = true;
+  $('admin-token-error').textContent = '';
+  $('admin-token-value').value = '';
+  $('admin-token-submit').disabled = false;
+  $('admin-token-submit').textContent = 'Continue';
+  $('admin-token-sheet').hidden = false;
+  document.body.classList.add('bottom-sheet-open');
+  requestAnimationFrame(() => {
+    $('admin-token-sheet').classList.add('open');
+    $('admin-token-value').focus({preventScroll: true});
+  });
+}
+
+function closeAdminTokenSheet() {
+  if ($('admin-token-sheet').hidden) return;
+  $('admin-token-sheet').classList.remove('open');
+  document.body.classList.remove('bottom-sheet-open');
+  const opener = adminTokenSheetOpener;
+  adminTokenSheetOpener = null;
+  clearTimeout(adminTokenCloseTimer);
+  adminTokenCloseTimer = setTimeout(() => {
+    $('admin-token-sheet').hidden = true;
+    if (opener?.isConnected) opener.focus({preventScroll: true});
+  }, 220);
+}
+
+function requestAdminToken(message) {
+  if (!adminTokenWaiter) {
+    adminTokenWaiter = {};
+    adminTokenWaiter.promise = new Promise((resolve, reject) => {
+      adminTokenWaiter.resolve = resolve;
+      adminTokenWaiter.reject = reject;
+    });
+    openAdminTokenSheet(message);
+  }
+  return adminTokenWaiter.promise;
+}
+
+function rejectAdminCandidate() {
+  clearAdminToken();
+  adminTokenVerifying = false;
+  $('admin-token-error').textContent = 'The controller rejected this token. Check it and try again.';
+  $('admin-token-error').hidden = false;
+  $('admin-token-submit').disabled = false;
+  $('admin-token-submit').textContent = 'Continue';
+  $('admin-token-value').select();
+}
+
+function acceptAdminCandidate(token) {
+  saveAdminToken(token);
+  adminTokenVerifying = false;
+  closeAdminTokenSheet();
+}
+
+async function api(path, options = {}) {
+  let candidate = options.headers?.Authorization?.replace(/^Bearer\s+/i, '').trim()
+    || storedAdminToken();
+  while (true) {
+    const headers = {'Content-Type': 'application/json', ...(options.headers || {})};
+    if (candidate) headers.Authorization = `Bearer ${candidate}`;
+    const response = await fetch(path, {...options, headers});
+    const body = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      if (candidate && candidate === storedAdminToken()) clearAdminToken();
+      if (adminTokenVerifying) rejectAdminCandidate();
+      candidate = await requestAdminToken(
+        candidate
+          ? 'The saved token was rejected. Enter the current administration token.'
+          : 'Enter the administration token to continue this action.'
+      );
+      continue;
+    }
+    if (!response.ok) {
+      const detail = typeof body.detail === 'string' ? body.detail : Array.isArray(body.detail) ? body.detail.map(item => item.msg).join('; ') : body.detail?.message || `Request failed (${response.status})`;
+      const error = new Error(detail);
+      error.payload = body;
+      throw error;
+    }
+    if (candidate && (adminTokenVerifying || candidate !== storedAdminToken())) {
+      acceptAdminCandidate(candidate);
+    }
+    return body;
+  }
+}
+
+
+function clusterAuthHeaders() {
+  return adminAuthHeaders();
+}
+
 
 function renderClusters(state) {
   clusterState = state;
@@ -360,7 +462,6 @@ function renderHuggingFacePrompt() {
   const visible = downloading && hfTokenStatus && !hfTokenStatus.configured;
   $('hf-token-prompt').hidden = !visible;
   $('hf-token-form').hidden = !visible;
-  $('hf-token-admin-label').hidden = !hfTokenStatus?.requires_admin || Boolean(Object.keys(clusterAuthHeaders()).length);
   if (!visible) closeHuggingFaceTokenSheet();
 }
 
@@ -379,15 +480,13 @@ $('hf-token-form').addEventListener('submit', async event => {
   $('hf-token-save').disabled = true;
   $('hf-token-message').textContent = 'Validating token and restarting active downloads…';
   try {
-    const admin = $('hf-token-admin').value.trim();
     const state = await api('/api/v1/controller/huggingface', {
       method: 'PUT',
-      headers: admin ? {Authorization: `Bearer ${admin}`} : clusterAuthHeaders(),
+      headers: adminAuthHeaders(),
       body: JSON.stringify({token: $('hf-download-token').value.trim()}),
     });
     hfTokenStatus = {...hfTokenStatus, configured: state.configured};
     $('hf-download-token').value = '';
-    $('hf-token-admin').value = '';
     $('hf-token-message').textContent = '';
     $('hf-token-saved').textContent = `Hugging Face token saved. ${state.restarted_downloads.length} active download(s) restarted from preserved files. Higher request limits apply; a speed increase is not guaranteed.`;
     $('hf-token-saved').hidden = false;
@@ -555,9 +654,9 @@ async function loadPerformancePlan(apply = true) {
 }
 
 function launchAuthHeaders() {
-  const token = $('launch-admin-token').value.trim();
-  return token ? {Authorization: `Bearer ${token}`} : {};
+  return adminAuthHeaders();
 }
+
 
 async function checkLaunchFit() {
   const request = ++launchFitRequest;
@@ -974,7 +1073,7 @@ async function prewarmPrefix() {
   button.textContent = 'Prewarming…';
   try {
     const modelId = $('cache-model-id').value.trim();
-    await api('/api/v1/cache/prefixes/prewarm', {method: 'POST', headers: authHeaders($('cache-admin-token').value), body: JSON.stringify({
+    await api('/api/v1/cache/prefixes/prewarm', {method: 'POST', headers: authHeaders(), body: JSON.stringify({
       model_id: modelId,
       tokenizer_id: $('cache-tokenizer-id').value.trim() || modelId,
       prompt: $('cache-prefix-prompt').value,
@@ -1043,7 +1142,6 @@ function openModelActionSheet(action, target, opener) {
   $('action-sheet-confirm').textContent = configuration.confirm;
   $('action-sheet-confirm').className = configuration.danger ? 'danger' : 'primary';
   $('action-sheet-error').hidden = true;
-  $('action-admin-token').value = $('admin-token').value;
   $('action-sheet').hidden = false;
   document.body.classList.add('bottom-sheet-open');
   requestAnimationFrame(() => {
@@ -1077,8 +1175,7 @@ async function confirmModelAction() {
     const path = action.action === 'delete'
       ? `/api/v1/model-management/models/${action.repoId.split('/').map(encodeURIComponent).join('/')}`
       : `/api/v1/downloads/${encodeURIComponent(action.jobId)}/${action.action}`;
-    await api(path, {method: action.action === 'delete' ? 'DELETE' : 'POST', headers: authHeaders($('action-admin-token').value)});
-    $('admin-token').value = $('action-admin-token').value;
+    await api(path, {method: action.action === 'delete' ? 'DELETE' : 'POST', headers: authHeaders()});
     await refreshLibrary();
     closeModelActionSheet();
   } catch (error) {
@@ -1102,10 +1199,10 @@ function fitPayload() {
   };
 }
 
-function authHeaders(tokenOverride = '') {
-  const token = tokenOverride.trim() || $('admin-token').value.trim();
-  return token ? {Authorization: `Bearer ${token}`} : {};
+function authHeaders() {
+  return adminAuthHeaders();
 }
+
 
 function renderFit(plan) {
   currentFit = plan;
@@ -1173,6 +1270,35 @@ async function checkFit() {
   }
 }
 
+$('admin-token-form').addEventListener('submit', event => {
+  event.preventDefault();
+  if (adminTokenVerifying || !adminTokenWaiter) return;
+  const token = $('admin-token-value').value.trim();
+  if (!token) return;
+  adminTokenVerifying = true;
+  $('admin-token-error').hidden = true;
+  $('admin-token-submit').disabled = true;
+  $('admin-token-submit').textContent = 'Verifying…';
+  const waiter = adminTokenWaiter;
+  adminTokenWaiter = null;
+  waiter.resolve(token);
+});
+function cancelAdminTokenPrompt() {
+  if (adminTokenVerifying) return;
+  if (adminTokenWaiter) {
+    const waiter = adminTokenWaiter;
+    adminTokenWaiter = null;
+    waiter.reject(new Error('Administrator authentication was cancelled.'));
+  }
+  closeAdminTokenSheet();
+}
+$('admin-token-close').addEventListener('click', cancelAdminTokenPrompt);
+$('admin-token-cancel').addEventListener('click', cancelAdminTokenPrompt);
+$('admin-token-backdrop').addEventListener('click', cancelAdminTokenPrompt);
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !$('admin-token-sheet').hidden) cancelAdminTokenPrompt();
+});
+
 $('copy-endpoint').addEventListener('click', async () => {
   await navigator.clipboard.writeText($('api-endpoint').textContent);
   $('copy-endpoint').textContent = 'Copied';
@@ -1186,7 +1312,6 @@ $('copy-mcp-endpoint').addEventListener('click', async () => {
 });
 $('check-fit').addEventListener('click', checkFit);
 $('model-form').addEventListener('input', event => {
-  if (event.target.id === 'admin-token') return;
   ++fitRequestVersion;
   currentFit = null;
   $('check-fit').disabled = false;

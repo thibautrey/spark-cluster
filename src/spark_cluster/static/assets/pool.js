@@ -10,10 +10,8 @@
   const modelField = document.getElementById('pool-settings-model');
   const message = document.getElementById('pool-message');
   const field = id => document.getElementById(id);
-  const auth = () => {
-    const token = field('pool-admin-token').value.trim() || document.getElementById('launch-admin-token')?.value.trim();
-    return token ? {Authorization: `Bearer ${token}`} : {};
-  };
+  const auth = () => window.adminAuthHeaders();
+
   const pending = id => state.jobs.findLast(job => job.model_id === id && ['queued', 'waiting', 'loading'].includes(job.status));
   function render() {
     const markup = state.models.filter(model => (field('pool-show-unavailable').checked || model.loadable || model.placements.length) && model.id.toLowerCase().includes(field('pool-search').value.toLowerCase())).sort((a, b) => Number(b.placements.length > 0) - Number(a.placements.length > 0) || a.id.localeCompare(b.id)).map(model => {

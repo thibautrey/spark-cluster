@@ -444,3 +444,30 @@ def test_global_v1_supports_header_query_and_multipart_model_selection(tmp_path,
         "v1/audio/transcriptions",
     ]
     assert b"RIFFtest" in calls[2][2]
+
+
+def test_admin_token_is_origin_scoped_and_requested_in_a_sheet(tmp_path):
+    with make_client(tmp_path) as client:
+        page = client.get("/").text
+        script = client.get("/assets/app.js").text
+        pool = client.get("/assets/pool.js").text
+        setup = client.get("/assets/setup.js").text
+    assert 'id="admin-token-sheet"' in page
+    assert 'id="admin-token-value"' in page
+    assert "Stored locally in this browser after validation" in page
+    for removed_id in (
+        "pool-admin-token",
+        "launch-admin-token",
+        "cache-admin-token",
+        "action-admin-token",
+        "hf-token-admin",
+        "setup-token",
+    ):
+        assert f'id="{removed_id}"' not in page
+    assert "localStorage.setItem(adminTokenStorageKey, token)" in script
+    assert "localStorage.removeItem(adminTokenStorageKey)" in script
+    assert "if (response.status === 401)" in script
+    assert "requestAdminToken(" in script
+    assert "window.adminAuthHeaders = adminAuthHeaders" in script
+    assert "window.adminAuthHeaders()" in pool
+    assert "window.adminAuthHeaders()" in setup

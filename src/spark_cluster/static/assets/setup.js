@@ -1,4 +1,4 @@
-// Uses the shared dashboard API helper. Credentials stay in the current DOM only.
+// Uses the shared dashboard API helper and its origin-scoped administrator credential.
 let setupStage = 0;
 let setupState = null;
 let setupCandidates = [];
@@ -9,7 +9,7 @@ let setupBusy = false;
 let setupPolling = false;
 let hardwareTopology = null;
 let setupDiscoveryState = 'idle';
-const setupAuth = () => $('setup-token').value.trim() ? {Authorization: `Bearer ${$('setup-token').value.trim()}`} : {};
+const setupAuth = () => window.adminAuthHeaders();
 const setupPayload = () => ({name: $('setup-name').value.trim(), topology: $('setup-topology').value, nodes: [...setupSelection.values()].map(node => ({address: node.address, username: node.username || 'nvidia', fingerprint: node.fingerprint, role: node.role || 'worker', fabric_address: node.fabric_address || null}))});
 
 function setupError(message = '') {

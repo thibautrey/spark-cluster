@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=compact-pool-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=stored-admin-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -43,7 +43,7 @@
               <header class="bottom-sheet-header"><span class="catalog-sheet-handle" aria-hidden="true"></span><div><h3 id="setup-sheet-title">Add cluster</h3></div><a class="setup-sheet-guide" href="https://docs.nvidia.com/sync/latest/cluster-assistant.html" target="_blank" rel="noopener">NVIDIA Sync guide ↗</a><span class="pill" id="setup-mode">Connecting</span><button class="catalog-sheet-close" id="setup-sheet-close" type="button" aria-label="Close cluster setup">×</button></header>
               <div class="setup-sheet-content">
             <ol class="setup-rail" id="setup-rail" aria-label="Setup progress"><li class="active">1 <span>Discover</span></li><li>2 <span>Configure</span></li><li>3 <span>Check</span></li><li>4 <span>Install</span></li><li>5 <span>Ready</span></li></ol>
-            <div class="setup-auth"><div class="setup-auth-copy"><span class="setup-lock" aria-hidden="true">⌁</span><div><b>Administrator access</b><span id="setup-access">Enter the controller token to make changes.</span></div></div><label><span class="sr-only">Administration token</span><input id="setup-token" type="password" autocomplete="off" placeholder="Administration token" /></label><button class="secondary" id="setup-connect" type="button">Unlock</button></div>
+            <div class="setup-auth"><div class="setup-auth-copy"><span class="setup-lock" aria-hidden="true">⌁</span><div><b>Administrator access</b><span id="setup-access">Enter the controller token to make changes.</span></div></div><button class="secondary" id="setup-connect" type="button">Administrator access</button></div>
             <div id="setup-error" class="setup-error" role="alert" hidden></div>
             <div class="setup-page" data-setup-page="0">
               <div class="setup-choice-grid">
@@ -125,7 +125,6 @@
                 <label>Tokenizer id<input id="cache-tokenizer-id" placeholder="owner/model" /></label>
                 <label class="wide">Reusable prefix<textarea id="cache-prefix-prompt" rows="5" placeholder="System prompt or repository context…"></textarea></label>
                 <label>Priority<input id="cache-prefix-priority" type="number" min="0" max="100" value="50" /></label>
-                <label>Admin token <span class="optional">optional</span><input id="cache-admin-token" type="password" autocomplete="off" /></label>
                 <button class="primary" id="cache-prewarm" type="button">Prewarm prefix</button>
               </div>
               <div id="cache-prefix-records" class="cache-prefix-records"><div class="empty-state">No tracked prefixes yet.</div></div>
@@ -154,7 +153,7 @@
                 <header class="bottom-sheet-header"><span class="catalog-sheet-handle" aria-hidden="true"></span><div><h3 id="hf-token-title">Speed up downloads</h3></div><button class="catalog-sheet-close" id="hf-token-close" type="button" aria-label="Close Hugging Face token setup">×</button></header>
                 <form id="hf-token-form" class="hf-token-form hf-token-sheet-content" hidden>
                   <div class="hf-token-copy"><span aria-hidden="true">HF</span><div><b>Use a read token</b><small>Higher request limits can reduce throttling. <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer">Create a token ↗</a></small></div></div>
-                  <div class="hf-token-fields"><label><span class="sr-only">Hugging Face token</span><input id="hf-download-token" type="password" autocomplete="off" placeholder="Hugging Face token · hf_…" required /></label><label id="hf-token-admin-label" hidden><span class="sr-only">Controller admin token</span><input id="hf-token-admin" type="password" autocomplete="off" placeholder="Controller admin token" /></label><button type="submit" id="hf-token-save">Save token</button></div>
+                  <div class="hf-token-fields"><label><span class="sr-only">Hugging Face token</span><input id="hf-download-token" type="password" autocomplete="off" placeholder="Hugging Face token · hf_…" required /></label><button type="submit" id="hf-token-save">Save token</button></div>
                   <p id="hf-token-message" role="status"></p>
                 </form>
               </section>
@@ -204,7 +203,6 @@
                   <details class="download-options" id="download-options"><summary><span>Download options</span><small>Automatic defaults</small></summary><div class="download-options-body">
                     <div class="form-row"><label>Revision<input id="revision" name="revision" value="main" /></label><label>Fallback precision<select id="weight-bits" name="bits"><option value="4">4-bit</option><option value="8">8-bit</option><option value="16">BF16 / FP16</option></select></label></div>
                     <div class="form-row three"><label>Context<select id="context-length" name="context"><option value="8192">8k</option><option value="32768" selected>32k</option><option value="131072">128k</option><option value="262144">256k</option><option value="524288">512k</option></select></label><label>Concurrency<input id="concurrency" name="concurrency" type="number" min="1" max="1024" value="1" /></label><label>KV precision<select id="fit-kv-dtype"><option value="auto">Automatic</option><option value="bf16">BF16</option><option value="fp8_e4m3">FP8</option></select></label></div>
-                    <label>Admin token <span class="optional">optional</span><input id="admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label>
                   </div></details>
                   <div class="fit-result neutral" id="fit-result"><span class="fit-symbol">?</span><div><b>Check compatibility</b><small>Memory, storage, and runtime support.</small></div></div>
                   <details class="fit-details" id="fit-details" hidden></details>
@@ -225,7 +223,6 @@
               <div class="action-sheet-content">
                 <div class="action-sheet-summary"><span id="action-sheet-icon">!</span><div><h4 id="action-sheet-model"></h4><p id="action-sheet-description"></p></div></div>
                 <div class="action-sheet-impact" id="action-sheet-impact"></div>
-                <label>Admin token <span class="optional">optional</span><input id="action-admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label>
                 <p class="action-sheet-error" id="action-sheet-error" role="alert" hidden></p>
                 <div class="action-sheet-actions"><button class="secondary" id="action-sheet-cancel" type="button">Keep current state</button><button class="primary" id="action-sheet-confirm" type="button">Confirm</button></div>
               </div>
@@ -239,7 +236,7 @@
 
         <section class="panel launch-panel idle" id="launch" data-route-view="launch">
           <section id="model-pool" class="model-pool">
-            <div class="pool-filters"><label>Find a model<input id="pool-search" type="search" placeholder="Model name…" /></label><label class="pool-checkbox"><input id="pool-show-unavailable" type="checkbox" /> Include models needing runtime support</label><label class="pool-auth">Admin token <span class="optional">optional</span><input id="pool-admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label></div>
+            <div class="pool-filters"><label>Find a model<input id="pool-search" type="search" placeholder="Model name…" /></label><label class="pool-checkbox"><input id="pool-show-unavailable" type="checkbox" /> Include models needing runtime support</label></div>
             <p id="pool-message" role="status"></p>
             <div id="pool-model-list" class="pool-model-grid"></div>
           </section>
@@ -325,7 +322,6 @@
                 <div class="runtime-switches"><label><input id="launch-expert-parallel" type="checkbox" /> Expert parallel</label><label><input id="launch-eplb" type="checkbox" /> Expert load balancing</label><label><input id="launch-cuda-graphs" type="checkbox" checked /> CUDA graphs</label><label><input id="launch-chunked-prefill" type="checkbox" checked /> Chunked prefill</label></div>
                 <div class="form-row"><label>CPU cache GiB<input id="launch-cache-cpu" type="number" min="0" max="512" value="32" /></label><label>NVMe cache GiB<input id="launch-cache-disk" type="number" min="0" max="16384" value="1536" /></label></div>
               </details>
-              <label>Admin token <span class="optional">optional</span><input id="launch-admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label>
               </div></details>
               <div class="performance-plan" id="performance-plan" hidden></div>
               <div class="fit-result neutral" id="launch-fit" hidden></div>
@@ -383,13 +379,26 @@
         </section>
       </main>
     </div>
+    <div class="bottom-sheet admin-token-sheet" id="admin-token-sheet" hidden>
+      <button class="bottom-sheet-backdrop" id="admin-token-backdrop" type="button" tabindex="-1" aria-label="Close administrator access"></button>
+      <section class="bottom-sheet-panel admin-token-panel" role="dialog" aria-modal="true" aria-labelledby="admin-token-title">
+        <header class="bottom-sheet-header"><span class="catalog-sheet-handle" aria-hidden="true"></span><div><p class="eyebrow">SECURE ACTION</p><h3 id="admin-token-title">Administrator access</h3></div><button class="catalog-sheet-close" id="admin-token-close" type="button" aria-label="Close administrator access">×</button></header>
+        <form id="admin-token-form" class="admin-token-content">
+          <div class="admin-token-summary"><span aria-hidden="true">⌁</span><div><h4>Controller token required</h4><p id="admin-token-description">Enter the administration token to continue this action.</p></div></div>
+          <label>Administration token<input id="admin-token-value" type="password" autocomplete="current-password" required autofocus /></label>
+          <label class="admin-token-storage"><span>Stored locally in this browser after validation</span><small>The token stays on this device and is removed automatically if the controller rejects it.</small></label>
+          <p class="action-sheet-error" id="admin-token-error" role="alert" hidden></p>
+          <div class="action-sheet-actions"><button class="secondary" id="admin-token-cancel" type="button">Cancel</button><button class="primary" id="admin-token-submit" type="submit">Continue</button></div>
+        </form>
+      </section>
+    </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=global-v1-v1"></script>
+    <script src="/assets/app.js?v=stored-admin-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>
     <script src="/assets/catalog.js?v=sheet-titles-v1"></script>
-    <script src="/assets/setup.js?v=setup-focus-v1"></script>
-    <script src="/assets/pool.js?v=compact-pool-v1" defer></script>
+    <script src="/assets/setup.js?v=stored-admin-v1"></script>
+    <script src="/assets/pool.js?v=stored-admin-v1" defer></script>
 </body>
 </html>
