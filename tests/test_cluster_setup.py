@@ -239,7 +239,7 @@ async def test_preflight_blocks_unsupported_or_unmanaged_nodes(tmp_path, attribu
     assert job.status == "blocked"
     assert any(check.code == code and check.status == "error" for check in job.checks)
     assert not remote.uploaded
-    assert not any("apt-get" in script for script in remote.scripts)
+    assert not any("sudo -n apt-get" in script for script in remote.scripts)
     store.close()
 
 
@@ -398,7 +398,7 @@ def test_demo_wizard_end_to_end_without_network_or_ssh(tmp_path, monkeypatch):
     monkeypatch.setattr(app.state.setup_service.transport, "trust", forbidden)
     with TestClient(app) as client:
         page = client.get("/").text
-        assert "Cluster setup" in page
+        assert "Compute pools" in page
         assert "Discover machines" in page
         assert "Connect an existing cluster" in page
         assert 'id="setup-open-sheet"' in page

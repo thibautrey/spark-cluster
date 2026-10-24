@@ -404,7 +404,9 @@ class ClusterSetupService:
                 data = json.loads(
                     await self.transport.probe(node, probe)
                     if hasattr(self.transport, "probe")
-                    else await self.transport.run(node, "python3 - <<'PROBE'\n" + probe + "\nPROBE\n")
+                    else await self.transport.run(
+                        node, "python3 - <<'PROBE'\n" + probe + "\nPROBE\n"
+                    )
                 )
                 facts[node.address] = data
             except (SetupFailure, OSError, ValueError):
@@ -415,7 +417,8 @@ class ClusterSetupService:
                         status="error",
                         message="SSH key authentication or Python probe failed",
                         remedy="Verify the host fingerprint and SSH key. "
-                        "Install Python 3 and enable OpenSSH. SSH bootstrap requires a POSIX shell; "
+                        "Install Python 3 and enable OpenSSH. "
+                        "SSH bootstrap requires a POSIX shell; "
                         "for native Windows, connect an existing runtime controller instead.",
                     )
                 )
@@ -454,7 +457,8 @@ class ClusterSetupService:
                 f"{data.get('os') or platform_name} · {kind}",
                 (
                     "Automated installation currently supports apt-based Linux with NVIDIA GPUs. "
-                    "For macOS, Windows or ROCm, connect a separately configured runtime through an existing pool controller."
+                    "For macOS, Windows or ROCm, connect a separately configured runtime "
+                    "through an existing pool controller."
                 ),
             )
             minimum_memory = 100 if kind == "dgx-spark" else 8

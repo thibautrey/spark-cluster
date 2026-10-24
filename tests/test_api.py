@@ -480,7 +480,7 @@ def test_cluster_dropdown_exposes_global_capacity_context(tmp_path):
         page = client.get("/").text
         app_script = client.get("/assets/app.js").text
         pool_script = client.get("/assets/pool.js").text
-    assert "All clusters · pool" in app_script
+    assert "All compute pools" in app_script
     assert "spark-cluster.cluster-context" in app_script
     assert "window.selectedClusterContext" in app_script
     assert "cluster-context-changed" in app_script
@@ -498,4 +498,4 @@ def test_pool_ui_renders_global_and_per_machine_load_progress(tmp_path):
     assert "pool-machine-progress" in pool_script
     assert "memory_after_gib" in pool_script
     assert "now - job.completed_at < 12" in pool_script
-    assert "load-progress-v1" in page
+    assert "adaptive-pools-v1" in page

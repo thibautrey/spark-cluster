@@ -141,6 +141,15 @@ def accelerator_facts():
     if amd:
         names = [line.split(":", 1)[-1].strip() for line in amd.splitlines() if "Card" in line]
         return "amd", "rocm", names or ["AMD GPU"]
+    if system == "windows":
+        output = command(
+            "powershell", "-NoProfile", "-NonInteractive", "-Command",
+            "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+        )
+        names = [name for name in output.splitlines() if name.strip()]
+        if names:
+            vendor = "amd" if "AMD" in output.upper() else "unknown"
+            return vendor, "unverified", names
     return "none", "cpu", []
 
 
