@@ -116,7 +116,7 @@ function renderOverviewMetrics(snapshot) {
   $('output-unit').textContent = runtimeReady ? ' tok/s' : '';
   $('hit-rate').textContent = snapshot.cache_hit_rate.toFixed(1);
   $('hit-ring').style.background = `conic-gradient(var(--green) ${snapshot.cache_hit_rate}%,#202a38 0)`;
-  $('memory-used').textContent = Math.round(memoryUsed);
+  $('memory-used').textContent = memoryUsed.toFixed(1);
   $('memory-total').textContent = ` / ${Math.round(memoryTotal)} GiB`;
   const memoryPercent = pct(memoryUsed, memoryTotal);
   $('memory-total').title = `${memoryPercent.toFixed(0)}% allocated`;
