@@ -157,11 +157,30 @@ function clusterAuthHeaders() {
 }
 
 
+const clusterContextStorageKey = 'spark-cluster.cluster-context';
+function storedClusterContext() {
+  try { return localStorage.getItem(clusterContextStorageKey) || 'all'; }
+  catch { return 'all'; }
+}
+function saveClusterContext(value) {
+  try { localStorage.setItem(clusterContextStorageKey, value); } catch {}
+}
+function selectedClusterContext() {
+  return $('cluster-select')?.value || 'all';
+}
+window.selectedClusterContext = selectedClusterContext;
+
 function renderClusters(state) {
   clusterState = state;
   const select = $('cluster-select');
   $('cluster-add-local').hidden = state.clusters.some(cluster => cluster.kind === 'local-docker');
-  select.innerHTML = state.clusters.length ? state.clusters.map(cluster => `<option value="${escapeHtml(cluster.id)}" ${cluster.id === state.active_cluster_id ? 'selected' : ''}>${escapeHtml(cluster.name)} · ${cluster.kind === 'local-docker' ? `${cluster.gpu_count} GPU${cluster.gpu_count === 1 ? '' : 's'}` : 'remote'}</option>`).join('') : '<option value="">No cluster configured</option>';
+  const storedContext = storedClusterContext();
+  const context = storedContext === 'all' || state.clusters.some(cluster => cluster.id === storedContext)
+    ? storedContext : 'all';
+  select.innerHTML = state.clusters.length
+    ? `<option value="all">All clusters · pool</option>` + state.clusters.map(cluster => `<option value="${escapeHtml(cluster.id)}">${escapeHtml(cluster.name)} · ${cluster.kind === 'local-docker' ? `${cluster.gpu_count} GPU${cluster.gpu_count === 1 ? '' : 's'}` : 'remote'}</option>`).join('')
+    : '<option value="all">All clusters · pool</option>';
+  select.value = context;
   $('cluster-list').innerHTML = state.clusters.length ? state.clusters.map(cluster => {
     const capacity = cluster.gpu_count
       ? `${cluster.gpu_count} × ${escapeHtml(cluster.gpu_model || 'NVIDIA GPU')}${cluster.gpu_memory_gib ? ` · ${cluster.gpu_memory_gib} GiB each` : ''}`
@@ -171,9 +190,14 @@ function renderClusters(state) {
     return `<article class="cluster-card ${cluster.active ? 'active' : ''}" data-cluster-id="${escapeHtml(cluster.id)}"><div class="cluster-card-head"><span class="cluster-card-icon">${cluster.kind === 'local-docker' ? 'GPU' : 'LAN'}</span><div><b>${escapeHtml(cluster.name)}</b><small>${capacity}${issue}</small></div></div>${cluster.active ? activeActions : `<button class="secondary" type="button" data-select-cluster="${escapeHtml(cluster.id)}">Use this cluster</button>`}</article>`;
   }).join('') : '<div class="empty-state"><b>No cluster configured</b><span>Add a cluster to begin.</span></div>';
   const active = state.clusters.find(cluster => cluster.id === state.active_cluster_id);
-  updateMemoryLanguage(active);
+  const contextual = context === 'all' ? null : state.clusters.find(cluster => cluster.id === context);
+  updateMemoryLanguage(contextual || active);
+  if (context === 'all') {
+    $('cluster-fleet-status').textContent = 'All clusters are available to the model scheduler.';
+  } else if (contextual) {
+    $('cluster-fleet-status').textContent = `${contextual.name} is required for model capacity and manual loads.`;
+  }
   if (active) {
-    $('cluster-fleet-status').textContent = `${active.name} is the active target for capacity, downloads, launches, logs and telemetry.`;
     if (latestSnapshot) {
       renderTopology(latestSnapshot.nodes);
       renderMemory(latestSnapshot.nodes);
@@ -196,15 +220,25 @@ async function loadClusters() {
 }
 
 async function selectCluster(clusterId) {
-  if (!clusterId || clusterId === clusterState.active_cluster_id) return;
-  const previous = clusterState.active_cluster_id;
+  if (!clusterId) return;
+  const previous = selectedClusterContext();
+  saveClusterContext(clusterId);
+  if (clusterId === 'all') {
+    $('cluster-fleet-status').textContent = 'All clusters are available to the model scheduler.';
+    document.dispatchEvent(new CustomEvent('cluster-context-changed', {detail: {clusterId}}));
+    return;
+  }
+  if (clusterId === clusterState.active_cluster_id) {
+    document.dispatchEvent(new CustomEvent('cluster-context-changed', {detail: {clusterId}}));
+    return;
+  }
   try {
     await api(`/api/v1/clusters/${encodeURIComponent(clusterId)}/select`, {method:'POST', headers:clusterAuthHeaders()});
     location.reload();
   } catch (error) {
-    $('cluster-select').value = previous || '';
-    $('cluster-fleet-status').textContent = `${error.message} Enter the administration token on this page, then retry.`;
-    location.hash = '#setup';
+    saveClusterContext(previous);
+    $('cluster-select').value = previous;
+    $('cluster-fleet-status').textContent = error.message;
   }
 }
 

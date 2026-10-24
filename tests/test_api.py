@@ -473,3 +473,18 @@ def test_admin_token_is_origin_scoped_and_requested_in_a_sheet(tmp_path):
     assert "window.adminAuthHeaders()" in setup
     assert "loadSetup(true, false)" in setup
     assert "promptForAdmin = true" in script
+
+
+def test_cluster_dropdown_exposes_global_capacity_context(tmp_path):
+    with make_client(tmp_path) as client:
+        page = client.get("/").text
+        app_script = client.get("/assets/app.js").text
+        pool_script = client.get("/assets/pool.js").text
+    assert "All clusters · pool" in app_script
+    assert "spark-cluster.cluster-context" in app_script
+    assert "window.selectedClusterContext" in app_script
+    assert "cluster-context-changed" in app_script
+    assert "Needs ${capacity.missing_gib.toFixed(1)} GiB more" in pool_script
+    assert "Fits on ${escapeHtml(alternative.cluster_name)}" in pool_script
+    assert "cluster_id: window.selectedClusterContext" in pool_script
+    assert "pool-model-capacity" in page or "pool-model-capacity" in pool_script

@@ -16,7 +16,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from .local_docker import local_gpu_snapshot
-from .models import ModelFitRequest, ModelLaunchRequest
+from .models import ModelFitPlan, ModelFitRequest, ModelLaunchRequest
 from .on_demand import HOP_HEADERS, DemandProxy, InferenceProfile
 from .remote_cluster import signed_controller_headers
 from .runtime_engines import build_execution_plan
@@ -87,6 +87,7 @@ class ModelPreferences(BaseModel):
 class PoolLoadRequest(BaseModel):
     model_id: str = Field(min_length=1, max_length=200)
     settings: ModelLaunchRequest | None = None
+    cluster_id: str | None = None
 
 
 class NodeLoadRequest(PoolLoadRequest):
@@ -189,6 +190,83 @@ class PoolNode:
     def local_cluster(self):
         return next((c for c in self.registry.list() if c.kind == "local-docker"), None)
 
+    @staticmethod
+    def profile_context(profile: InferenceProfile | None, fallback: int) -> int:
+        if not profile:
+            return fallback
+        env = profile.container.get("Env") or []
+        for item in env:
+            if isinstance(item, str) and item.startswith("CTX="):
+                try:
+                    return int(item.split("=", 1)[1])
+                except ValueError:
+                    pass
+        command = profile.container.get("Cmd") or []
+        for flag in ("--max-model-len", "--context-length", "-c", "--ctx-size"):
+            if flag in command:
+                try:
+                    return int(command[command.index(flag) + 1])
+                except (ValueError, IndexError, TypeError):
+                    pass
+        return fallback
+
+    async def model_capacity(self, model: dict, available_gib: float) -> dict | None:
+        model_path = model.get("model_path")
+        if not model_path:
+            return None
+        manifest_fit = None
+        try:
+            payload = json.loads((Path(model_path) / ".spark-cluster.json").read_text())
+            manifest_fit = ModelFitPlan.model_validate(payload["fit"])
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            pass
+        saved = model.get("last_settings")
+        profile = model.get("profile")
+        if saved:
+            launch = ModelLaunchRequest.model_validate(saved)
+            request = ModelFitRequest(
+                repo_id=model["id"],
+                revision=manifest_fit.revision if manifest_fit else "main",
+                bits_per_weight=launch.bits_per_weight,
+                context_length=launch.context_length,
+                concurrent_sequences=launch.concurrent_sequences,
+                kv_cache_dtype=launch.kv_cache_dtype,
+            )
+            fit = await self.models.fit_for_local(request)
+        elif manifest_fit:
+            context = self.profile_context(profile, manifest_fit.context_length)
+            if context != manifest_fit.context_length:
+                fit = await self.models.fit_for_local(
+                    ModelFitRequest(
+                        repo_id=model["id"],
+                        revision=manifest_fit.revision,
+                        bits_per_weight=(
+                            manifest_fit.detected_bits_per_weight or manifest_fit.bits_per_weight
+                        ),
+                        context_length=context,
+                        concurrent_sequences=manifest_fit.concurrent_sequences,
+                        kv_cache_dtype=manifest_fit.kv_cache_dtype,
+                    )
+                )
+            else:
+                fit = manifest_fit
+        else:
+            return None
+        required_gib = (
+            fit.resident_weights_gib + fit.resident_kv_cache_gib + fit.runtime_overhead_gib
+        )
+        if required_gib <= 0:
+            required_gib = fit.total_required_gib
+        missing_gib = max(0.0, required_gib - available_gib)
+        return {
+            "fits": missing_gib <= 0.01,
+            "required_gib": round(required_gib, 2),
+            "available_gib": round(available_gib, 2),
+            "missing_gib": round(missing_gib, 2),
+            "context_length": fit.context_length,
+            "confidence": fit.confidence,
+        }
+
     async def inventory(self) -> dict:
         active_profile = self.demand.active
         if active_profile:
@@ -236,6 +314,7 @@ class PoolNode:
                 "aliases": sorted({p.id, p.model, key}),
                 "served_model_name": p.model,
                 "runtime": profile_runtime(p),
+                "profile": p,
             }
         active = self.demand.active
         active_id = active.model_id or active.model if active else self.native.get("model_id")
@@ -245,7 +324,30 @@ class PoolNode:
         if active_id in models:
             models[active_id]["loaded"] = True
             models[active_id]["keep_loaded"] = bool(retained)
+        cluster = self.local_cluster()
+        snapshot = local_gpu_snapshot(cluster, self.settings) if cluster else None
+        if snapshot:
+            usable_total = sum(
+                node.memory.total_gib * self.settings.model_usable_memory_fraction
+                for node in snapshot.nodes
+            )
+            external_used = (
+                0.0
+                if active_id
+                else sum(
+                    node.memory.accelerator_used_gib or node.memory.used_gib
+                    for node in snapshot.nodes
+                )
+            )
+            available_gib = max(0.0, usable_total - external_used)
+        else:
+            available_gib = (
+                self.settings.fallback_node_count
+                * self.settings.fallback_node_memory_gib
+                * self.settings.model_usable_memory_fraction
+            )
         for model in models.values():
+            model["capacity"] = await self.model_capacity(model, available_gib)
             if model.get("runtime") or not model.get("model_path"):
                 continue
             saved = model.get("last_settings")
@@ -263,6 +365,7 @@ class PoolNode:
         for model in models.values():
             model["runtime_models"] = self.metadata_for(model["id"])
             model.pop("model_path", None)
+            model.pop("profile", None)
         return {
             "models": list(models.values()),
             "active_model": active_id,
@@ -613,6 +716,7 @@ class ModelPool:
                         "served_model_name": m.get("served_model_name"),
                         "runtime": m.get("runtime"),
                         "runtime_models": m.get("runtime_models"),
+                        "cluster_capacity": [],
                     },
                 )
                 entry["aliases"] = sorted(set(entry["aliases"] + m.get("aliases", [])))
@@ -623,9 +727,19 @@ class ModelPool:
                     entry["runtime"] = m.get("runtime") or entry.get("runtime")
                 if m.get("runtime_models"):
                     entry["runtime_models"] = m["runtime_models"]
+                capacity = m.get("capacity")
+                entry["cluster_capacity"].append(
+                    {
+                        "cluster_id": node["id"],
+                        "cluster_name": node["name"],
+                        "available": node["available"],
+                        **(capacity or {"fits": False, "missing_gib": None}),
+                    }
+                )
                 if m["loadable"]:
                     entry["loadable"] = True
-                    entry["available_clusters"].append(node["id"])
+                    if capacity and capacity["fits"]:
+                        entry["available_clusters"].append(node["id"])
                 if m.get("loaded"):
                     entry["placements"].append(
                         {
@@ -745,6 +859,9 @@ class ModelPool:
                 async with self.scheduling:
                     state = await self.inventory(force=True)
                     prefs = self.preferences.get(request.model_id, ModelPreferences())
+                    target_cluster_id = request.cluster_id or prefs.cluster_id
+                    if target_cluster_id:
+                        self.cluster(target_cluster_id)
                     settings = request.settings or prefs.last_settings
                     payload = {
                         "model_id": request.model_id,
@@ -755,13 +872,13 @@ class ModelPool:
                         n
                         for n in state["clusters"]
                         if n["available"]
-                        and (not prefs.cluster_id or n["id"] == prefs.cluster_id)
+                        and (not target_cluster_id or n["id"] == target_cluster_id)
                         and any(m["id"] == request.model_id and m["loadable"] for m in n["models"])
                     ]
                     if not candidates:
                         raise ValueError(
                             "No reachable cluster has a runnable copy of this model"
-                            + (" on the required cluster" if prefs.cluster_id else "")
+                            + (" on the required cluster" if target_cluster_id else "")
                         )
                     # Reuse residency, then idle resources, then evict an unretained model.
                     candidates.sort(

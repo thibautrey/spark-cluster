@@ -13,6 +13,37 @@
   const auth = () => window.adminAuthHeaders();
 
   const pending = id => state.jobs.findLast(job => job.model_id === id && ['queued', 'waiting', 'loading'].includes(job.status));
+  function capacityContext(model) {
+    const selected = window.selectedClusterContext?.() || 'all';
+    const capacities = (model.cluster_capacity || []).filter(item => item.available);
+    const fitting = capacities.filter(item => item.fits);
+    if (selected === 'all') {
+      if (fitting.length) {
+        const best = fitting.sort((a, b) => b.available_gib - a.available_gib)[0];
+        return {fits: true, selected, capacity: best, alternatives: fitting};
+      }
+      const closest = capacities.filter(item => item.missing_gib !== null)
+        .sort((a, b) => a.missing_gib - b.missing_gib)[0];
+      return {fits: !closest, selected, capacity: closest || null, alternatives: []};
+    }
+    const capacity = capacities.find(item => item.cluster_id === selected) || null;
+    return {
+      fits: capacity ? capacity.fits : false,
+      selected,
+      capacity,
+      alternatives: fitting.filter(item => item.cluster_id !== selected),
+    };
+  }
+  function capacityMarkup(context) {
+    const capacity = context.capacity;
+    if (!capacity) return '<div class="pool-model-capacity unknown"><span>Memory preflight unavailable for this cluster</span></div>';
+    if (context.fits) {
+      const location = context.selected === 'all' ? `Fits on ${escapeHtml(capacity.cluster_name)}` : `Fits in ${escapeHtml(capacity.cluster_name)}`;
+      return `<div class="pool-model-capacity fits"><span>✓ ${location}</span><small>${capacity.required_gib.toFixed(1)} GiB required · ${capacity.available_gib.toFixed(1)} GiB available</small></div>`;
+    }
+    const alternative = context.alternatives[0];
+    return `<div class="pool-model-capacity missing"><span>Needs ${capacity.missing_gib.toFixed(1)} GiB more on ${escapeHtml(capacity.cluster_name)}</span>${alternative ? `<small>Fits on ${escapeHtml(alternative.cluster_name)} · switch cluster or choose All</small>` : '<small>No compatible cluster currently has enough memory</small>'}</div>`;
+  }
   function render() {
     const markup = state.models.filter(model => (field('pool-show-unavailable').checked || model.loadable || model.placements.length) && model.id.toLowerCase().includes(field('pool-search').value.toLowerCase())).sort((a, b) => Number(b.placements.length > 0) - Number(a.placements.length > 0) || a.id.localeCompare(b.id)).map(model => {
       const job = pending(model.id);
@@ -22,12 +53,15 @@
       const runtime = job?.runtime || model.runtime;
       const runtimeName = runtime?.name || 'Runtime detection unavailable';
       const runtimeState = runtime?.selection === 'configured' ? 'Configured' : 'Auto-detected';
+      const capacity = capacityContext(model);
+      const canLoad = model.loadable && capacity.fits;
       return `<article class="pool-model-card" data-pool-model="${escapeHtml(model.id)}">
         <div class="pool-model-heading"><h3>${escapeHtml(model.id)}</h3><span class="pill ${loaded ? 'ready' : ''}">${retained && loaded ? 'Kept loaded' : retained ? 'Retention enabled' : loaded ? 'Loaded' : 'On demand'}</span></div>
         <p>${loaded ? model.placements.map(p => escapeHtml(p.cluster_name)).join(', ') : model.preferences.cluster_id ? `Required cluster: ${escapeHtml(state.clusters.find(c => c.id === model.preferences.cluster_id)?.name || 'unavailable')}` : 'Automatic placement in the pool'}</p>
         <div class="pool-model-runtime"><span>⚡</span><div><b>${escapeHtml(runtimeName)}</b><small>${escapeHtml(runtimeState)}</small></div></div>
+        ${capacityMarkup(capacity)}
         ${job ? `<p class="pool-job" role="status">${escapeHtml(job.message)}</p>` : last?.status === 'failed' ? `<p class="pool-error">${escapeHtml(last.message)}</p>` : ''}
-        <div class="pool-model-actions"><button class="primary" data-pool-action="load" ${job || !model.loadable ? 'disabled' : ''}>${job ? 'Waiting…' : loaded ? 'Loaded' : 'Load model'}</button><button class="secondary" data-pool-action="settings">Settings</button>${loaded ? '<button class="secondary" data-pool-action="unload">Unload</button>' : ''}</div>
+        <div class="pool-model-actions"><button class="primary" data-pool-action="load" ${job || !canLoad ? 'disabled' : ''} title="${!canLoad && capacity.capacity ? `${capacity.capacity.missing_gib.toFixed(1)} GiB additional memory required` : ''}">${job ? 'Waiting…' : loaded ? 'Loaded' : 'Load model'}</button><button class="secondary" data-pool-action="settings">Settings</button>${loaded ? '<button class="secondary" data-pool-action="unload">Unload</button>' : ''}</div>
         ${!model.loadable ? '<small>Runtime support is required before loading this model.</small>' : ''}
       </article>`;
     }).join('') || '<div class="empty-state">Download a model or connect a cluster to add it to the pool.</div>';
@@ -129,17 +163,18 @@
     button.disabled = true;
     try {
       const action = button.dataset.poolAction;
-      await api(`/api/v1/pool/${action}`, {method: 'POST', headers: auth(), body: JSON.stringify({model_id: model.id})});
+      await api(`/api/v1/pool/${action}`, {method: 'POST', headers: auth(), body: JSON.stringify({model_id: model.id, cluster_id: window.selectedClusterContext?.() === 'all' ? null : window.selectedClusterContext?.()})});
       message.textContent = action === 'load' ? 'Load queued. The pool will reuse the saved settings.' : 'Model unloaded and retention disabled.';
       await refresh();
     } catch (error) { message.textContent = error.message; button.disabled = false; }
   });
   window.loadModelInPool = async settings => {
-    await api('/api/v1/pool/load', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({model_id: settings.model_id, settings})});
+    await api('/api/v1/pool/load', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({model_id: settings.model_id, settings, cluster_id: window.selectedClusterContext?.() === 'all' ? null : window.selectedClusterContext?.()})});
     await refresh();
   };
   field('pool-search').addEventListener('input', render);
   field('pool-show-unavailable').addEventListener('change', render);
+  document.addEventListener('cluster-context-changed', render);
   void refresh();
   setInterval(refresh, 3000);
 })();

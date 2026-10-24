@@ -355,3 +355,49 @@ async def test_invalid_runtime_model_metadata_is_not_cached(tmp_path, monkeypatc
     await node.capture_runtime_metadata("org/model", "http://127.0.0.1:31000")
     assert node.runtime_metadata == {}
     assert not node.metadata_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_capacity_reports_exact_memory_shortfall():
+    fit = SimpleNamespace(
+        resident_weights_gib=8.0,
+        resident_kv_cache_gib=2.0,
+        runtime_overhead_gib=2.0,
+        total_required_gib=12.0,
+        context_length=32768,
+        confidence="architecture",
+    )
+
+    async def fit_for_local(request):
+        return fit
+
+    node = PoolNode.__new__(PoolNode)
+    node.models = SimpleNamespace(fit_for_local=fit_for_local)
+    model = {
+        "id": "org/model",
+        "model_path": "/missing",
+        "profile": None,
+        "last_settings": ModelLaunchRequest(
+            model_id="org/model", served_model_name="model", context_length=32768
+        ).model_dump(),
+    }
+    capacity = await node.model_capacity(model, available_gib=9.5)
+    assert capacity == {
+        "fits": False,
+        "required_gib": 12.0,
+        "available_gib": 9.5,
+        "missing_gib": 2.5,
+        "context_length": 32768,
+        "confidence": "architecture",
+    }
+
+
+@pytest.mark.asyncio
+async def test_transient_cluster_context_targets_that_cluster_without_saving_affinity(tmp_path):
+    pool = FakePool(tmp_path)
+    request = PoolLoadRequest(model_id="org/model", cluster_id="second")
+    job = await pool.enqueue(request)
+    await finished(pool)
+    assert job["status"] == "ready"
+    assert job["cluster_id"] == "second"
+    assert pool.preferences.get("org/model", ModelPreferences()).cluster_id is None
