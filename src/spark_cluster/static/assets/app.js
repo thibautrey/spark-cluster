@@ -23,6 +23,7 @@ let hfTokenSheetOpener = null;
 let hfTokenSheetCloseTimer = null;
 let latestDownloads = [];
 let clusterState = {clusters: [], active_cluster_id: null};
+let latestSnapshot = null;
 
 const formatNumber = (value) => value >= 1e9 ? `${(value / 1e9).toFixed(1)}B` : value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : value >= 1e3 ? `${(value / 1e3).toFixed(1)}k` : `${Math.round(value)}`;
 const formatBytes = (value) => value >= 2 ** 30 ? `${(value / 2 ** 30).toFixed(1)} GiB` : value >= 2 ** 20 ? `${(value / 2 ** 20).toFixed(1)} MiB` : `${Math.round(value / 1024)} KiB`;
@@ -61,6 +62,7 @@ function renderClusters(state) {
   const active = state.clusters.find(cluster => cluster.id === state.active_cluster_id);
   if (active) {
     $('cluster-fleet-status').textContent = `${active.name} is the active target for capacity, downloads, launches, logs and telemetry.`;
+    if (latestSnapshot) renderTopology(latestSnapshot.nodes);
   }
 }
 
@@ -84,6 +86,7 @@ async function selectCluster(clusterId) {
 }
 
 function render(snapshot) {
+  latestSnapshot = snapshot;
   const memoryUsed = snapshot.nodes.reduce((sum, node) => sum + node.memory.used_gib, 0);
   const memoryTotal = snapshot.nodes.reduce((sum, node) => sum + node.memory.total_gib, 0);
   $('stream-status').title = `Updated ${new Date(snapshot.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})}`;
@@ -97,7 +100,6 @@ function render(snapshot) {
   $('memory-bar').style.width = `${memoryPercent}%`;
   $('memory-bar').parentElement.setAttribute('aria-valuenow', memoryPercent.toFixed(0));
   $('prefix-reuse').textContent = formatNumber(snapshot.prefix_reuse_tokens);
-  $('node-count').textContent = `${snapshot.nodes.length} nodes`;
   renderTopology(snapshot.nodes);
   renderCache(snapshot.cache_tiers);
   renderMemory(snapshot.nodes);
@@ -107,12 +109,31 @@ function render(snapshot) {
 }
 
 function renderTopology(nodes) {
-  $('topology-map').innerHTML = '<div class="fabric-line"></div>' + nodes.map(node => `
+  const active = clusterState.clusters.find(cluster => cluster.id === clusterState.active_cluster_id);
+  const topology = $('topology-map');
+  if (active?.kind === 'local-docker') {
+    topology.classList.add('local-host-topology');
+    const gpus = active.gpus?.length ? active.gpus : nodes.map((node, index) => ({name: active.gpu_model || node.hostname, memory_gib: node.memory.total_gib, index}));
+    const gpuCount = active.gpu_count || gpus.length;
+    const gpuCards = gpus.map((gpu, index) => {
+      const node = nodes[index];
+      return `<article class="topology-gpu ${escapeHtml(node?.status || 'offline')}">
+        <div class="topology-gpu-head"><span class="node-icon">${index}</span><div><b>GPU ${index}</b><small>${escapeHtml(gpu.name || active.gpu_model || 'NVIDIA GPU')}</small></div><i class="node-state ${escapeHtml(node?.status || 'offline')}" title="${escapeHtml(node?.status || 'offline')}"></i></div>
+        <div class="node-stats"><span>LOAD<b>${(node?.gpu_utilization || 0).toFixed(0)}%</b></span><span>MEM<b>${(node?.memory.used_gib || 0).toFixed(0)} / ${(node?.memory.total_gib || gpu.memory_gib || 0).toFixed(0)}</b></span><span>OUTPUT<b>${(node?.output_tokens_per_second || 0).toFixed(0)} t/s</b></span><span>TEMP<b>${(node?.temperature_c || 0).toFixed(0)}°C</b></span></div>
+      </article>`;
+    }).join('');
+    topology.innerHTML = `<article class="topology-host"><div class="topology-host-head"><span class="cluster-card-icon">HOST</span><div><b>${escapeHtml(active.name)}</b><small>${escapeHtml(active.host_address || 'local Docker host')} · ${gpuCount} GPU${gpuCount === 1 ? '' : 's'}</small></div></div><div class="topology-gpus">${gpuCards}</div></article>`;
+    $('node-count').textContent = `1 host · ${gpuCount} GPU${gpuCount === 1 ? '' : 's'}`;
+  } else {
+    topology.classList.remove('local-host-topology');
+    topology.innerHTML = '<div class="fabric-line"></div>' + nodes.map(node => `
     <div class="node ${escapeHtml(node.status)}">
       <div class="node-top"><span class="node-icon">${node.role === 'head' ? 'H' : 'W'}</span><i class="node-state ${escapeHtml(node.status)}" title="${escapeHtml(node.status)}"></i></div>
       <h3>${escapeHtml(node.hostname)}</h3><p>${escapeHtml(node.role.toUpperCase())} · ${escapeHtml(node.address)}</p>
       <div class="node-stats"><span>GPU<b>${node.gpu_utilization.toFixed(0)}%</b></span><span>MEM<b>${node.memory.used_gib.toFixed(0)} / ${node.memory.total_gib.toFixed(0)}</b></span><span>OUTPUT<b>${node.output_tokens_per_second.toFixed(0)} t/s</b></span><span>TEMP<b>${node.temperature_c.toFixed(0)}°C</b></span></div>
     </div>`).join('');
+    $('node-count').textContent = `${nodes.length} node${nodes.length === 1 ? '' : 's'}`;
+  }
   const states = [['healthy', 'green', 'Healthy'], ['degraded', 'amber', 'Degraded'], ['offline', 'muted', 'Offline']];
   $('topology-statuses').innerHTML = states.filter(([status]) => nodes.some(node => node.status === status)).map(([, className, label]) => `<span><i class="${className}"></i>${label}</span>`).join('');
 }
