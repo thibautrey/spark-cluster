@@ -515,8 +515,23 @@ async function checkLaunchFit() {
     const parallelFits = requestedNodes >= launchFit.minimum_nodes && requestedNodes <= launchFit.cluster_nodes;
     const canLaunch = launchFit.fits && parallelFits;
     $('launch-fit').className = `fit-result ${canLaunch ? 'fit' : 'no-fit'}`;
-    const blocker = !launchFit.runtime_storage_fits ? 'Missing runtime artifacts or storage' : !launchFit.runtime_fits ? 'No validated runtime placement' : !launchFit.launch_supported ? 'Specialized engine required' : 'Adjust runtime parallelism';
-    $('launch-fit').innerHTML = `<span class="fit-symbol">${canLaunch ? '✓' : '!'}</span><div><b>${canLaunch ? `Ready with ${escapeHtml(launchFit.placement_strategy.replaceAll('-', ' '))}` : blocker}</b><small>${launchFit.total_required_gib.toFixed(1)} GiB resident runtime · ${launchFit.minimum_nodes} nodes minimum · ${requestedNodes} selected of ${launchFit.cluster_nodes} available · ${launchFit.headroom_gib.toFixed(1)} GiB headroom</small></div>`;
+    const accelerators = count => `${count} accelerator${count === 1 ? '' : 's'}`;
+    let decision = `Fits on ${accelerators(requestedNodes)}`;
+    let detail = `${launchFit.total_required_gib.toFixed(1)} GiB required · ${launchFit.headroom_gib.toFixed(1)} GiB headroom`;
+    if (!launchFit.runtime_storage_fits) {
+      decision = 'Not enough runtime storage';
+      detail = `${launchFit.runtime_storage_required_gib.toFixed(1)} GiB required for runtime artifacts`;
+    } else if (!launchFit.launch_supported) {
+      decision = 'Specialized runtime required';
+      detail = launchFit.engine_recommendation;
+    } else if (!launchFit.runtime_fits) {
+      decision = `Needs ${accelerators(launchFit.minimum_nodes)}`;
+      detail = `${accelerators(launchFit.cluster_nodes)} available at the selected context · ${launchFit.total_required_gib.toFixed(1)} GiB required`;
+    } else if (!parallelFits) {
+      decision = requestedNodes < launchFit.minimum_nodes ? `Use at least ${accelerators(launchFit.minimum_nodes)}` : `Only ${accelerators(launchFit.cluster_nodes)} available`;
+      detail = `TP ${payload.tensor_parallel} × PP ${payload.pipeline_parallel} selects ${accelerators(requestedNodes)}`;
+    }
+    $('launch-fit').innerHTML = `<span class="fit-symbol">${canLaunch ? '✓' : '!'}</span><div><b>${escapeHtml(decision)}</b><small>${escapeHtml(detail)}</small></div>`;
     launchFit.parallel_fits = parallelFits;
     $('launch-fit').hidden = false;
     button.textContent = 'Launch on cluster';
