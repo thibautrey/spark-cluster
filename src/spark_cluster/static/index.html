@@ -58,7 +58,7 @@
             <div class="setup-plan-fields"><label>Compute pool name<input id="setup-name" value="compute-pool" pattern="[a-z][a-z0-9-]{0,39}" /></label><label>Machine topology<select id="setup-topology"><option value="single">Single machine · one or more GPUs</option><option value="switch">Networked machines</option><option value="direct">Direct high-speed links</option><option value="ring">DGX Spark ring</option></select></label></div>
             <div class="topology-choice-note" id="topology-choice-note">Choose the machines first. Distributed fabric options appear only when the detected hardware supports them.</div>
             <div id="setup-machine-summary" class="setup-machine-summary"></div><div id="setup-roles" class="setup-roles"></div>
-            <div class="setup-callout"><b>One-time access preparation</b><p>Use an existing SSH key on the bootstrap host and an account with noninteractive sudo. Verify each displayed fingerprint on its device with <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code>. Passwords and private keys are never requested in this page.</p><label class="setup-checkbox"><input id="setup-trust" type="checkbox" /> I verified the selected machines’ host fingerprints.</label></div>
+            <div class="setup-callout"><b>One-time access preparation</b><p>Use an existing SSH key and enter the machine’s actual SSH account. Verify its host fingerprint locally (OpenSSH host keys: /etc/ssh on Linux/macOS, C:\ProgramData\ssh on Windows). Linux installation also requires noninteractive sudo. Passwords and private keys are never requested in this page.</p><label class="setup-checkbox"><input id="setup-trust" type="checkbox" /> I verified the selected machines’ host fingerprints.</label></div>
             <div class="hardware-assistant" id="hardware-assistant" hidden>
               <div class="hardware-head"><div><p class="eyebrow">PHYSICAL CABLING</p><h3>ConnectX-7 cable assistant</h3><p>First see the expected layout, then inspect every Spark over SSH to detect cable carrier, negotiated speed, RDMA port and network placement.</p></div><div><span class="pill pending" id="hardware-verdict">Not inspected</span><button class="primary" id="setup-hardware-scan" type="button">Inspect cables</button></div></div>
               <div class="hardware-guide">
@@ -74,7 +74,7 @@
           </div>
           <div class="setup-page" data-setup-page="2" hidden>
             <div class="setup-check-head"><div><h3>Readiness & assisted fixes</h3><p class="setup-note">Checks adapt to the detected OS, accelerator backend, memory, storage, access method and network topology.</p></div><button class="secondary" id="setup-check" type="button">Run checks</button></div>
-            <div id="setup-checks" class="setup-checks"><div class="empty-state">Run checks before installing.</div></div>
+            <div id="setup-check-machine-summary" class="setup-machine-summary"></div><div id="setup-checks" class="setup-checks"><div class="empty-state">Run checks before installing.</div></div>
             <div class="setup-callout"><b>Review the installation</b><p id="setup-review">Select machines first.</p><p id="setup-install-description">The installation plan will adapt to the detected machine type. Unsupported platforms are never given Linux or DGX-specific commands.</p><label class="setup-checkbox"><input id="setup-approve" type="checkbox" /> Install the proposed services on the selected machines.</label></div>
           </div>
           <div class="setup-page" data-setup-page="3" hidden>

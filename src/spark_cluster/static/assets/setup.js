@@ -10,7 +10,7 @@ let setupPolling = false;
 let hardwareTopology = null;
 let setupDiscoveryState = 'idle';
 const setupAuth = () => window.adminAuthHeaders();
-const setupPayload = () => ({name: $('setup-name').value.trim(), topology: $('setup-topology').value, nodes: [...setupSelection.values()].map(node => ({address: node.address, username: node.username || 'nvidia', fingerprint: node.fingerprint, role: node.role || 'worker', fabric_address: node.fabric_address || null}))});
+const setupPayload = () => ({name: $('setup-name').value.trim(), topology: $('setup-topology').value, nodes: [...setupSelection.values()].map(node => ({address: node.address, username: node.username || '', fingerprint: node.fingerprint, role: node.role || 'worker', fabric_address: node.fabric_address || null}))});
 
 function requiresDgxFabric() {
   return setupSelection.size > 1 && [...setupSelection.values()].every(node => node.machine_kind === 'dgx-spark');
@@ -31,7 +31,9 @@ function adaptSetupForMachines() {
     : 'Machines share a compute pool. Model placement depends on available runtimes; combining GPU memory requires a compatible distributed runtime.';
   const labels = {'dgx-spark':'DGX Spark', 'linux-nvidia':'Linux · NVIDIA', 'linux-amd':'Linux · AMD', 'mac-apple-silicon':'Apple Silicon', 'windows-gpu':'Windows · GPU'};
   const instructions = {'metal-agent':'macOS: automatic installation is not available. Connect a separately configured Metal runtime through an existing pool controller.', 'windows-agent':'Windows: automatic installation is not available. Connect a separately configured runtime through an existing pool controller.', 'docker-rocm':'ROCm: automatic installation is not available. Connect a separately configured ROCm runtime through an existing pool controller.'};
-  $('setup-machine-summary').innerHTML = nodes.map(node => `<article class="setup-diagnostic ${node.install_supported === false ? 'warning' : 'pass'}"><span>⬡</span><div><b>${escapeHtml(node.hostname || node.address)} · ${escapeHtml(labels[node.machine_kind] || node.machine_kind || 'Hardware not inspected')}</b><small>${escapeHtml(node.platform || 'OS detected during readiness check')} · ${escapeHtml(node.architecture || 'architecture pending')}${node.accelerator_backend ? ` · ${escapeHtml(node.accelerator_backend.toUpperCase())}` : ''}</small><p>${escapeHtml((node.accelerators || []).join(', ') || 'GPU detection pending')}${node.memory_gib ? ` · ${Math.round(node.memory_gib)} GiB system/unified memory` : ''}</p><small>${escapeHtml(instructions[node.setup_strategy] || (node.install_supported ? 'Linux NVIDIA provisioning · k3s and GPU runtime' : node.machine_kind ? 'Automatic provisioning is unavailable for this platform.' : 'Run readiness checks to detect the platform and installation path.'))}</small></div></article>`).join('');
+  const summary = nodes.map(node => `<article class="setup-diagnostic ${node.install_supported === false ? 'warning' : 'pass'}"><span>⬡</span><div><b>${escapeHtml(node.hostname || node.address)} · ${escapeHtml(labels[node.machine_kind] || node.machine_kind || 'Hardware not inspected')}</b><small>${escapeHtml(node.platform || 'OS detected during readiness check')} · ${escapeHtml(node.architecture || 'architecture pending')}${node.accelerator_backend ? ` · ${escapeHtml(node.accelerator_backend.toUpperCase())}` : ''}</small><p>${escapeHtml((node.accelerators || []).join(', ') || 'GPU detection pending')}${node.memory_gib ? ` · ${Math.round(node.memory_gib)} GiB system/unified memory` : ''}</p><small>${escapeHtml(instructions[node.setup_strategy] || (node.install_supported ? 'Linux NVIDIA provisioning · k3s and GPU runtime' : node.machine_kind ? 'Automatic provisioning is unavailable for this platform.' : 'Run readiness checks to detect the platform and installation path.'))}</small></div></article>`).join('');
+  $('setup-machine-summary').innerHTML = summary;
+  $('setup-check-machine-summary').innerHTML = summary;
 }
 
 function setupError(message = '') {
@@ -60,7 +62,7 @@ function setupNavigate(stage) {
 }
 function setupButtons() {
   $('setup-next').disabled = setupBusy || !setupState?.enabled || !setupSelection.size ||
-    (setupStage === 1 && (!$('setup-trust').checked || (requiresDgxFabric() && (!hardwareTopology || hardwareTopology.verdict === 'error')))) ||
+    (setupStage === 1 && ([...setupSelection.values()].some(node => !node.username?.trim()) || !$('setup-trust').checked || (requiresDgxFabric() && (!hardwareTopology || hardwareTopology.verdict === 'error')))) ||
     (setupStage === 2 && (!setupChecks || setupChecks.some(check => check.status === 'error') || !$('setup-approve').checked));
   ['setup-discover', 'setup-attach', 'setup-check', 'setup-connect', 'setup-back', 'setup-resume', 'setup-hardware-scan'].forEach(id => { $(id).disabled = setupBusy || (id === 'setup-hardware-scan' && !$('setup-trust').checked); });
 }
@@ -91,7 +93,7 @@ function renderSetupRoles() {
   else if ($('setup-topology').value === 'single') $('setup-topology').value = 'switch';
   if (nodes.length !== 4 && $('setup-topology').value === 'ring') $('setup-topology').value = 'switch';
   adaptSetupForMachines();
-  $('setup-roles').innerHTML = nodes.map(node => `<div class="setup-role"><div><b>${escapeHtml(node.hostname)}</b><small>${escapeHtml(node.address)}</small></div><label class="setup-checkbox"><input type="radio" name="setup-head" data-head="${escapeHtml(node.address)}" ${node.role === 'head' ? 'checked' : ''} /> Head</label><label>SSH user<input data-user="${escapeHtml(node.address)}" aria-label="SSH user ${escapeHtml(node.address)}" value="${escapeHtml(node.username || 'nvidia')}" pattern="[a-z_][a-z0-9_-]{0,31}" /></label>${requiresDgxFabric() ? `<label>Fabric IPv4<input data-fabric="${escapeHtml(node.address)}" aria-label="Fabric IPv4 ${escapeHtml(node.address)}" value="${escapeHtml(node.fabric_address || '')}" placeholder="Auto-detect from Sync" /></label>` : ''}</div>`).join('');
+  $('setup-roles').innerHTML = nodes.map(node => `<div class="setup-role"><div><b>${escapeHtml(node.hostname)}</b><small>${escapeHtml(node.address)}</small></div><label class="setup-checkbox"><input type="radio" name="setup-head" data-head="${escapeHtml(node.address)}" ${node.role === 'head' ? 'checked' : ''} /> Head</label><label>SSH user<input data-user="${escapeHtml(node.address)}" aria-label="SSH user ${escapeHtml(node.address)}" value="${escapeHtml(node.username || '')}" pattern="[a-z_][a-z0-9_-]{0,31}" /></label>${requiresDgxFabric() ? `<label>Fabric IPv4<input data-fabric="${escapeHtml(node.address)}" aria-label="Fabric IPv4 ${escapeHtml(node.address)}" value="${escapeHtml(node.fabric_address || '')}" placeholder="Auto-detect from Sync" /></label>` : ''}</div>`).join('');
   renderHardwareTopology(hardwareTopology || expectedHardwareTopology());
 }
 
@@ -222,7 +224,7 @@ $('setup-discover').addEventListener('click', () => setupAction(async () => {
 $('setup-nodes').addEventListener('change', event => {
   const address = event.target.dataset.selectNode;
   if (!address) return;
-  if (event.target.checked) setupSelection.set(address, {...setupCandidates.find(node => node.address === address), username:'nvidia', role:'worker'});
+  if (event.target.checked) setupSelection.set(address, {...setupCandidates.find(node => node.address === address), username:'', role:'worker'});
   else setupSelection.delete(address);
   $('setup-trust').checked = false;
   invalidateSetup();
