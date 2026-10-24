@@ -1114,7 +1114,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return {"type": "http.request", "body": forwarded, "more_body": False}
 
         async def handler(scope, _, send):
-            await model_pool.infer(model["id"], f"v1/{path}", scope, replay_receive, send)
+            forwarded_scope = dict(scope)
+            forwarded_scope["headers"] = [
+                (name, value)
+                for name, value in scope["headers"]
+                if name.lower() != b"content-length"
+            ]
+            await model_pool.infer(model["id"], f"v1/{path}", forwarded_scope, replay_receive, send)
 
         return PoolResponse(handler)
 
