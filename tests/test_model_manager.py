@@ -552,7 +552,7 @@ async def test_inventory_serves_completed_jobs_while_storage_scan_runs(
         metadata(),
         runtime.latest,
         settings,
-    )
+    ).model_copy(update={"launch_supported": False})
     store.save_download(
         DownloadJob(
             id="completed-job",
@@ -589,7 +589,9 @@ async def test_inventory_serves_completed_jobs_while_storage_scan_runs(
         started_at = time.monotonic()
         models = await manager.local_models()
         assert time.monotonic() - started_at < 0.5
-        assert [(model.id, model.size_bytes) for model in models] == [("acme/model", 123)]
+        assert [(model.id, model.size_bytes, model.launch_supported) for model in models] == [
+            ("acme/model", 123, False)
+        ]
         assert scan_started.wait(1)
     finally:
         release_scan.set()

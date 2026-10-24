@@ -1176,6 +1176,7 @@ class ModelManager:
                 path=job.target_path,
                 size_bytes=job.total_bytes or job.downloaded_bytes,
                 downloaded_at=job.updated_at,
+                launch_supported=job.fit.launch_supported,
             )
         return list(models.values())
 
@@ -1258,6 +1259,12 @@ class ModelManager:
                         size_bytes=directory_size(manifest_path.parent),
                         downloaded_at=downloaded_at,
                         loaded=repo_id in loaded,
+                        launch_supported=(
+                            manifest["fit"].get("launch_supported")
+                            if isinstance(manifest.get("fit"), dict)
+                            and isinstance(manifest["fit"].get("launch_supported"), bool)
+                            else None
+                        ),
                     )
                 )
             except (OSError, ValueError, KeyError, json.JSONDecodeError):

@@ -226,6 +226,7 @@ class LocalModel(BaseModel):
     size_bytes: int = 0
     downloaded_at: datetime | None = None
     loaded: bool = False
+    launch_supported: bool | None = None
 
 
 class ModelMutationResult(BaseModel):

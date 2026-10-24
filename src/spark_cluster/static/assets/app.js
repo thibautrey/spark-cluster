@@ -227,7 +227,7 @@ function renderModels(models) {
 function updateLaunchModelOptions(models) {
   const select = $('launch-model');
   const selected = select.value;
-  const managed = models.filter(model => model.source === 'managed');
+  const managed = models.filter(model => model.source === 'managed' && model.launch_supported !== false);
   select.innerHTML = `<option value="">${managed.length ? 'Select a downloaded model' : 'No downloaded models'}</option>` + managed.map(model => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.id)}</option>`).join('');
   if (managed.some(model => model.id === selected)) select.value = selected;
 }
