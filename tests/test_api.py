@@ -99,9 +99,8 @@ def test_local_gpu_performance_plan_skips_spark_setup_history(tmp_path, monkeypa
     def fail_setup_history(*_args, **_kwargs):
         raise AssertionError("Local PCIe planning must not read Spark setup history")
 
-    monkeypatch.setattr(SnapshotStore, "list_setup_jobs", fail_setup_history)
-
     with TestClient(app) as client:
+        monkeypatch.setattr(SnapshotStore, "list_setup_jobs", fail_setup_history)
         response = client.post(
             "/api/v1/performance/plan",
             json={"model_id": "Qwen/Qwen2.5-Coder-3B-Instruct-AWQ"},
