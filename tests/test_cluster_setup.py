@@ -229,7 +229,7 @@ def test_topology_and_shell_inputs_are_validated():
 
 
 def test_bootstrap_confirmation_requires_a_valid_account_and_ed25519_host_key():
-    key = base64.b64encode(b"host-key").decode()
+    key = base64.b64encode(b"h" * 32).decode()
     confirmation = BootstrapConfirmRequest(username="spark", host_key=f"ssh-ed25519 {key} host")
     assert confirmation.host_key == f"ssh-ed25519 {key}"
     with pytest.raises(ValidationError):
@@ -242,7 +242,9 @@ def test_bootstrap_confirmation_requires_a_valid_account_and_ed25519_host_key():
 async def test_dedicated_bootstrap_command_confirms_host_key_and_ssh(tmp_path, monkeypatch):
     host_key = base64.b64encode(b"machine-host-key").decode()
     transport = FakeBootstrapTransport(host_key)
-    service = ClusterSetupService(settings(tmp_path), SnapshotStore(tmp_path / "state.db"), transport)
+    service = ClusterSetupService(
+        settings(tmp_path), SnapshotStore(tmp_path / "state.db"), transport
+    )
     generated_public_key = f"ssh-ed25519 {base64.b64encode(b'dedicated-key').decode()} test"
 
     async def generate(enrollment_id):

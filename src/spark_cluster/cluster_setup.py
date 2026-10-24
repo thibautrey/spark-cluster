@@ -365,17 +365,20 @@ class ClusterSetupService:
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise SetupFailure("Configure a reachable HTTP(S) controller public URL")
         if parsed.username or parsed.password or parsed.query or parsed.fragment:
-            raise SetupFailure("The controller public URL must not contain credentials or parameters")
+            raise SetupFailure(
+                "The controller public URL must not contain credentials or parameters"
+            )
         return value.rstrip("/")
 
     def _bootstrap_command(self, public_key: str, token: str, callback_base_url: str) -> str:
         marker = f"spark-cluster:{self._controller_id()}"
         callback = f"{callback_base_url}/api/v1/setup/bootstrap/confirm"
+        awk_filter = shlex.quote(f'$NF != "{marker}"')
         return (
             "set -eu; umask 077; d=\"$HOME/.ssh\"; a=\"$d/authorized_keys\"; "
             "mkdir -p \"$d\"; chmod 700 \"$d\"; touch \"$a\"; chmod 600 \"$a\"; "
             "t=$(mktemp \"$a.XXXXXX\"); "
-            f"awk {shlex.quote(f'$NF != \"{marker}\"')} \"$a\" >\"$t\"; "
+            f"awk {awk_filter} \"$a\" >\"$t\"; "
             f"printf '%s\\n' {shlex.quote(public_key)} >>\"$t\"; "
             "chmod 600 \"$t\"; mv \"$t\" \"$a\"; "
             "h=$(cat /etc/ssh/ssh_host_ed25519_key.pub); "
