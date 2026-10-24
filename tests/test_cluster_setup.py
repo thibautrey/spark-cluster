@@ -83,6 +83,9 @@ class FakeTransport:
         self.sudo = True
         self.toolkit = True
         self.architecture = "aarch64"
+        self.machine_kind = "dgx-spark"
+        self.platform = "linux"
+        self.install_supported = True
         self.k3s = False
         self.fabric = True
         self.uploaded = False
@@ -106,6 +109,13 @@ class FakeTransport:
                     "hostname": "spark-" + suffix,
                     "architecture": self.architecture,
                     "gpu": "NVIDIA GB10",
+                    "platform": self.platform,
+                    "machine_kind": self.machine_kind,
+                    "setup_strategy": "k3s-cluster",
+                    "install_supported": self.install_supported,
+                    "accelerators": ["NVIDIA GB10"],
+                    "accelerator_backend": "cuda",
+                    "accelerator_vendor": "nvidia",
                     "driver": "580.0",
                     "memory_gib": 128,
                     "available_gib": 110,
@@ -215,7 +225,7 @@ async def test_preflight_autodetects_fabric_and_flags_automatic_repairs(tmp_path
     "attribute,value,code",
     [
         ("sudo", False, "sudo"),
-        ("architecture", "x86_64", "gb10"),
+        ("install_supported", False, "platform"),
         ("k3s", True, "ownership"),
         ("fabric", False, "fabric"),
     ],
@@ -447,3 +457,47 @@ def test_packaged_chart_matches_development_chart():
     packaged = Path(__file__).parents[1] / "src/spark_cluster/chart"
     assert source.is_symlink()
     assert source.resolve() == packaged.resolve()
+
+
+@pytest.mark.asyncio
+async def test_generic_nvidia_pool_has_no_dgx_fabric_requirement(tmp_path):
+    store = SnapshotStore(tmp_path / "state.db")
+    remote = FakeTransport()
+    remote.machine_kind = "linux-nvidia"
+    remote.architecture = "x86_64"
+    remote.fabric = False
+    service = ClusterSetupService(settings(tmp_path), store, remote)
+    result = await service.inspect_hardware(plan())
+    assert not any(check.status == "error" for check in result["checks"])
+    assert not any(check.code.startswith("fabric") for check in result["checks"])
+    assert result["topology"] is None
+    assert result["nodes"][0]["machine_kind"] == "linux-nvidia"
+    store.close()
+
+
+@pytest.mark.parametrize("system,vendor,names,arch,kind,strategy,supported", [
+    ("darwin", "apple", ["Apple M4 Max"], "arm64", "mac-apple-silicon", "metal-agent", False),
+    ("windows", "nvidia", ["RTX 5090"], "AMD64", "windows-gpu", "windows-agent", False),
+    ("linux", "nvidia", ["RTX 4090"], "x86_64", "linux-nvidia", "k3s-nvidia", True),
+    ("linux", "amd", ["MI300X"], "x86_64", "linux-amd", "docker-rocm", False),
+    ("linux", "nvidia", ["NVIDIA GB10"], "aarch64", "dgx-spark", "k3s-cluster", True),
+])
+def test_machine_classification(system, vendor, names, arch, kind, strategy, supported):
+    from spark_cluster.setup_probe import machine_class
+    assert machine_class(system, vendor, names, arch) == (kind, strategy, supported)
+
+
+@pytest.mark.asyncio
+async def test_native_platform_blocks_bootstrap_without_dgx_checks(tmp_path):
+    store = SnapshotStore(tmp_path / "state.db")
+    remote = FakeTransport()
+    remote.machine_kind = "mac-apple-silicon"
+    remote.platform = "darwin"
+    remote.install_supported = False
+    service = ClusterSetupService(settings(tmp_path), store, remote)
+    result = await service.inspect_hardware(plan(1))
+    assert any(c.code == "platform" and c.status == "error" for c in result["checks"])
+    assert not any(c.code in {"fabric", "sudo", "toolkit"} for c in result["checks"])
+    assert result["topology"] is None
+    assert not remote.uploaded
+    store.close()

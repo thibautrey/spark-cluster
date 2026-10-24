@@ -165,6 +165,21 @@ class SSHTransport:
         args = self.command(node)
         return (await process(args, script.encode(), timeout)).decode()
 
+    async def probe(self, node: SetupNode, source: str) -> str:
+        # A single quoted Python expression works with POSIX, PowerShell and cmd.exe.
+        # Bootstrap scripts remain POSIX-only and are gated by detected platform.
+        encoded = base64.b64encode(source.encode()).decode()
+        expression = f"import base64;exec(compile(base64.b64decode('{encoded}'),'<probe>','exec'))"
+        for executable in ("python3", "python", "py -3"):
+            try:
+                result = await process(
+                    self.command(node, [f'{executable} -c "{expression}"']), timeout=60
+                )
+                return result.decode()
+            except SetupFailure:
+                continue
+        raise SetupFailure("Python 3 hardware inspection failed")
+
     async def upload(self, node: SetupNode, archive: bytes) -> None:
         # Archive is generated exclusively from the packaged chart; no user paths.
         encoded = base64.b64encode(archive).decode()
@@ -187,6 +202,7 @@ class ClusterSetupService:
         self.discovery_lock = asyncio.Lock()
         self.on_cluster_ready: Callable[[SetupJob], Awaitable[None]] | None = None
         self.last_hardware_topology = None
+        self.last_machine_facts: dict[str, dict] = {}
 
     @property
     def enabled(self) -> bool:
@@ -341,19 +357,41 @@ class ClusterSetupService:
             checks = await self._preflight(request)
             return {
                 "checks": checks,
-                "nodes": request.nodes,
+                "nodes": [
+                    {
+                        **node.model_dump(mode="json"),
+                        **self.last_machine_facts.get(node.address, {}),
+                    }
+                    for node in request.nodes
+                ],
                 "topology": self.last_hardware_topology,
             }
 
     async def _preflight(self, request: SetupRequest) -> list[SetupCheck]:
         if self.mode == "demo":
+            self.last_machine_facts = {
+                node.address: {
+                    "hostname": f"demo-{index + 1}",
+                    "platform": "linux",
+                    "architecture": "aarch64",
+                    "machine_kind": "dgx-spark",
+                    "setup_strategy": "k3s-cluster",
+                    "install_supported": True,
+                    "accelerator_vendor": "nvidia",
+                    "accelerator_backend": "cuda",
+                    "accelerators": ["NVIDIA GB10"],
+                    "memory_gib": 128.0,
+                    "disk_gib": 500.0,
+                }
+                for index, node in enumerate(request.nodes)
+            }
             self.last_hardware_topology = build_hardware_topology(request, {}, simulated=True)
             return [
                 SetupCheck(
                     node=node.address,
                     code="demo",
                     status="pass",
-                    message="Simulated GB10, fabric, SSH and storage checks",
+                    message="Simulated platform, accelerator, network and storage checks",
                 )
                 for node in request.nodes
             ]
@@ -364,7 +402,9 @@ class ClusterSetupService:
         for node in request.nodes:
             try:
                 data = json.loads(
-                    await self.transport.run(node, "python3 - <<'PROBE'\n" + probe + "\nPROBE\n")
+                    await self.transport.probe(node, probe)
+                    if hasattr(self.transport, "probe")
+                    else await self.transport.run(node, "python3 - <<'PROBE'\n" + probe + "\nPROBE\n")
                 )
                 facts[node.address] = data
             except (SetupFailure, OSError, ValueError):
@@ -375,7 +415,8 @@ class ClusterSetupService:
                         status="error",
                         message="SSH key authentication or Python probe failed",
                         remedy="Verify the host fingerprint and SSH key. "
-                        "Install Python 3 on DGX OS.",
+                        "Install Python 3 and enable OpenSSH. SSH bootstrap requires a POSIX shell; "
+                        "for native Windows, connect an existing runtime controller instead.",
                     )
                 )
                 continue
@@ -394,38 +435,58 @@ class ClusterSetupService:
                     )
                 )
 
+            kind = data.get("machine_kind", "unknown")
+            platform_name = data.get("platform", "unknown")
+            accelerators = data.get("accelerators", [])
+            backend = data.get("accelerator_backend", "cpu")
             check(
-                "gb10",
-                "GB10" in data["gpu"] and data["architecture"] == "aarch64",
-                f"{data['gpu'] or 'GPU unavailable'} · {data['architecture']}",
-                "Use a DGX Spark / GB10 running current DGX OS and a working NVIDIA driver.",
+                "accelerator",
+                bool(accelerators),
+                (
+                    f"{', '.join(accelerators) if accelerators else 'No accelerator detected'} "
+                    f"· {backend}"
+                ),
+                "Install a supported GPU/accelerator driver or add this machine as CPU-only.",
             )
             check(
+                "platform",
+                data.get("install_supported", False),
+                f"{data.get('os') or platform_name} · {kind}",
+                (
+                    "Automated installation currently supports apt-based Linux with NVIDIA GPUs. "
+                    "For macOS, Windows or ROCm, connect a separately configured runtime through an existing pool controller."
+                ),
+            )
+            minimum_memory = 100 if kind == "dgx-spark" else 8
+            check(
                 "memory",
-                data["memory_gib"] >= 100,
-                f"{data['memory_gib']:.0f} GiB unified memory",
-                "Use a 128 GiB GB10 system.",
+                data["memory_gib"] >= minimum_memory,
+                f"{data['memory_gib']:.0f} GiB system/unified memory",
+                f"Provide at least {minimum_memory} GiB for this machine type.",
+                warning=kind != "dgx-spark",
             )
             check(
                 "disk",
-                data["disk_gib"] >= 50,
-                f"{data['disk_gib']:.0f} GiB free on /var/lib",
-                "Free at least 50 GiB for base services; models need additional space.",
+                data["disk_gib"] >= 20,
+                f"{data['disk_gib']:.0f} GiB free storage",
+                "Free at least 20 GiB for the runtime; model files need additional space.",
             )
-            check(
-                "sudo",
-                data["sudo"],
-                "Noninteractive sudo access",
-                "Configure a bootstrap account with sudo -n access, then retry. "
-                "No passwords are stored.",
-            )
-            check(
-                "toolkit",
-                data["toolkit"],
-                "NVIDIA container runtime",
-                "Install nvidia-container-toolkit from the DGX OS package repositories.",
-                True,
-            )
+            if platform_name == "linux":
+                check(
+                    "sudo",
+                    data["sudo"],
+                    "Noninteractive sudo access",
+                    "Configure a bootstrap account with sudo -n access, then retry. "
+                    "No passwords are stored.",
+                )
+                if data.get("accelerator_vendor") == "nvidia":
+                    check(
+                        "toolkit",
+                        data["toolkit"],
+                        "NVIDIA container runtime",
+                        "Install nvidia-container-toolkit from your Linux distribution or NVIDIA.",
+                        True,
+                    )
             check(
                 "ownership",
                 not data["k3s"]
@@ -443,7 +504,7 @@ class ClusterSetupService:
                 "System clock is synchronized",
                 "Enable NTP and correct the system clock.",
             )
-            if len(request.nodes) > 1:
+            if len(request.nodes) > 1 and kind == "dgx-spark":
                 if not node.fabric_address:
                     addresses = [
                         address
@@ -470,6 +531,12 @@ class ClusterSetupService:
                     "connect supported QSFP cables, "
                     "then enter each node's configured fabric IPv4 address.",
                 )
+        self.last_machine_facts = facts
+        distributed_dgx = (
+            len(request.nodes) > 1
+            and len(facts) == len(request.nodes)
+            and all(data.get("machine_kind") == "dgx-spark" for data in facts.values())
+        )
         hostnames = [data["hostname"] for data in facts.values()]
         if len(hostnames) != len(set(hostnames)):
             checks.append(
@@ -501,10 +568,10 @@ class ClusterSetupService:
                     status="error",
                     message="NVIDIA drivers differ",
                     remedy="Update all nodes to the same DGX OS / driver release "
-                    "using DGX Dashboard.",
+                    "using the appropriate vendor tools.",
                 )
             )
-        if not any(check.status == "error" for check in checks) and len(request.nodes) > 1:
+        if not any(check.status == "error" for check in checks) and distributed_dgx:
             for node in request.nodes:
                 peers = [peer.fabric_address for peer in request.nodes if peer != node]
                 command = "set -e\n" + "\n".join(
@@ -530,7 +597,7 @@ class ClusterSetupService:
                             remedy="Check Sync routes, QSFP cabling, switch ports and ICMP policy.",
                         )
                     )
-        if len(request.nodes) > 1:
+        if distributed_dgx:
             # Refresh neighbor evidence after bounded fabric-only pings. Never trust a subnet
             # match alone as proof that the expected peer is on the other end of a link.
             peers = sorted(
@@ -559,8 +626,17 @@ class ClusterSetupService:
                         pass  # Original facts remain useful; missing evidence stays amber.
 
                 await asyncio.gather(*(refresh(node) for node in request.nodes))
-        self.last_hardware_topology = build_hardware_topology(request, facts)
-        if self.last_hardware_topology.verdict in {"error", "warning"}:
+        self.last_hardware_topology = (
+            build_hardware_topology(request, facts)
+            if distributed_dgx
+            or len(request.nodes) == 1
+            and all(data.get("machine_kind") == "dgx-spark" for data in facts.values())
+            else None
+        )
+        if self.last_hardware_topology and self.last_hardware_topology.verdict in {
+            "error",
+            "warning",
+        }:
             checks.append(
                 SetupCheck(
                     node="cluster",

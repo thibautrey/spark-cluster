@@ -12,6 +12,28 @@ let setupDiscoveryState = 'idle';
 const setupAuth = () => window.adminAuthHeaders();
 const setupPayload = () => ({name: $('setup-name').value.trim(), topology: $('setup-topology').value, nodes: [...setupSelection.values()].map(node => ({address: node.address, username: node.username || 'nvidia', fingerprint: node.fingerprint, role: node.role || 'worker', fabric_address: node.fabric_address || null}))});
 
+function requiresDgxFabric() {
+  return setupSelection.size > 1 && [...setupSelection.values()].every(node => node.machine_kind === 'dgx-spark');
+}
+function adaptSetupForMachines() {
+  const nodes = [...setupSelection.values()];
+  const dgx = requiresDgxFabric();
+  $('hardware-assistant').hidden = !dgx;
+  $('setup-sync-guide').hidden = !dgx;
+  for (const option of $('setup-topology').options) {
+    option.hidden = option.value === 'single' ? nodes.length !== 1 : option.value === 'switch' ? nodes.length < 2 : !dgx || (option.value === 'ring' && nodes.length !== 4);
+    option.disabled = option.hidden;
+  }
+  if (!dgx && nodes.length > 1) $('setup-topology').value = 'switch';
+  $('topology-choice-note').textContent = dgx
+    ? 'DGX Spark cluster: choose the physical fabric layout and inspect its ConnectX links.'
+    : nodes.length === 1 ? 'One machine, one or more GPUs: no cluster fabric is required.'
+    : 'Machines share a compute pool. Model placement depends on available runtimes; combining GPU memory requires a compatible distributed runtime.';
+  const labels = {'dgx-spark':'DGX Spark', 'linux-nvidia':'Linux · NVIDIA', 'linux-amd':'Linux · AMD', 'mac-apple-silicon':'Apple Silicon', 'windows-gpu':'Windows · GPU'};
+  const instructions = {'metal-agent':'macOS: automatic installation is not available. Connect a separately configured Metal runtime through an existing pool controller.', 'windows-agent':'Windows: automatic installation is not available. Connect a separately configured runtime through an existing pool controller.', 'docker-rocm':'ROCm: automatic installation is not available. Connect a separately configured ROCm runtime through an existing pool controller.'};
+  $('setup-machine-summary').innerHTML = nodes.map(node => `<article class="setup-diagnostic ${node.install_supported === false ? 'warning' : 'pass'}"><span>⬡</span><div><b>${escapeHtml(node.hostname || node.address)} · ${escapeHtml(labels[node.machine_kind] || node.machine_kind || 'Hardware not inspected')}</b><small>${escapeHtml(node.platform || 'OS detected during readiness check')} · ${escapeHtml(node.architecture || 'architecture pending')}${node.accelerator_backend ? ` · ${escapeHtml(node.accelerator_backend.toUpperCase())}` : ''}</small><p>${escapeHtml((node.accelerators || []).join(', ') || 'GPU detection pending')}${node.memory_gib ? ` · ${Math.round(node.memory_gib)} GiB system/unified memory` : ''}</p><small>${escapeHtml(instructions[node.setup_strategy] || (node.install_supported ? 'Linux NVIDIA provisioning · k3s and GPU runtime' : node.machine_kind ? 'Automatic provisioning is unavailable for this platform.' : 'Run readiness checks to detect the platform and installation path.'))}</small></div></article>`).join('');
+}
+
 function setupError(message = '') {
   $('setup-error').hidden = !message;
   $('setup-error').textContent = message;
@@ -31,14 +53,14 @@ function setupNavigate(stage) {
   });
   $('setup-back').hidden = stage === 0 || stage >= 3;
   $('setup-next').hidden = stage >= 3;
-  $('setup-next').textContent = ['Choose machines →', 'Check readiness →', 'Install cluster →'][stage] || '';
+  $('setup-next').textContent = ['Choose machines →', 'Check readiness →', 'Install compute pool →'][stage] || '';
   $('setup-summary').textContent = `${setupSelection.size} machine${setupSelection.size === 1 ? '' : 's'} selected${setupJob ? ` · ${setupJob.status}` : ''}`;
   renderSetupDiscoveryState();
   setupButtons();
 }
 function setupButtons() {
   $('setup-next').disabled = setupBusy || !setupState?.enabled || !setupSelection.size ||
-    (setupStage === 1 && (!$('setup-trust').checked || (setupSelection.size > 1 && (!hardwareTopology || hardwareTopology.verdict === 'error')))) ||
+    (setupStage === 1 && (!$('setup-trust').checked || (requiresDgxFabric() && (!hardwareTopology || hardwareTopology.verdict === 'error')))) ||
     (setupStage === 2 && (!setupChecks || setupChecks.some(check => check.status === 'error') || !$('setup-approve').checked));
   ['setup-discover', 'setup-attach', 'setup-check', 'setup-connect', 'setup-back', 'setup-resume', 'setup-hardware-scan'].forEach(id => { $(id).disabled = setupBusy || (id === 'setup-hardware-scan' && !$('setup-trust').checked); });
 }
@@ -59,7 +81,7 @@ function invalidateSetup() {
   setupButtons();
 }
 function renderSetupCandidates() {
-  $('setup-nodes').innerHTML = setupCandidates.length ? setupCandidates.map(node => `<label class="setup-node ${setupSelection.has(node.address) ? 'selected' : ''}"><input type="checkbox" data-select-node="${escapeHtml(node.address)}" ${setupSelection.has(node.address) ? 'checked' : ''} /><span class="setup-node-icon">⬡</span><span><b>${escapeHtml(node.hostname)}</b><small>${escapeHtml(node.address)} · ${escapeHtml(node.source)} · SSH reachable</small><code>${escapeHtml(node.fingerprint)}</code><small>${escapeHtml(node.gpu)}</small></span></label>`).join('') : '<div class="empty-state"><b>No SSH machine found</b><span>Check power, network isolation and SSH. Try an IPv4 address or /24 subnet.</span></div>';
+  $('setup-nodes').innerHTML = setupCandidates.length ? setupCandidates.map(node => `<label class="setup-node ${setupSelection.has(node.address) ? 'selected' : ''}"><input type="checkbox" data-select-node="${escapeHtml(node.address)}" ${setupSelection.has(node.address) ? 'checked' : ''} /><span class="setup-node-icon">⬡</span><span><b>${escapeHtml(node.hostname)}</b><small>${escapeHtml(node.address)} · ${escapeHtml(node.source)} · SSH reachable</small><code>${escapeHtml(node.fingerprint)}</code><small>${escapeHtml(node.gpu || 'Hardware detected during readiness check')}</small></span></label>`).join('') : '<div class="empty-state"><b>No SSH machine found</b><span>Check power, network isolation and SSH. Try an IPv4 address or /24 subnet.</span></div>';
   renderSetupDiscoveryState();
 }
 function renderSetupRoles() {
@@ -68,7 +90,8 @@ function renderSetupRoles() {
   if (nodes.length === 1) $('setup-topology').value = 'single';
   else if ($('setup-topology').value === 'single') $('setup-topology').value = 'switch';
   if (nodes.length !== 4 && $('setup-topology').value === 'ring') $('setup-topology').value = 'switch';
-  $('setup-roles').innerHTML = nodes.map(node => `<div class="setup-role"><div><b>${escapeHtml(node.hostname)}</b><small>${escapeHtml(node.address)}</small></div><label class="setup-checkbox"><input type="radio" name="setup-head" data-head="${escapeHtml(node.address)}" ${node.role === 'head' ? 'checked' : ''} /> Head</label><label>SSH user<input data-user="${escapeHtml(node.address)}" aria-label="SSH user ${escapeHtml(node.address)}" value="${escapeHtml(node.username || 'nvidia')}" pattern="[a-z_][a-z0-9_-]{0,31}" /></label><label>Fabric IPv4<input data-fabric="${escapeHtml(node.address)}" aria-label="Fabric IPv4 ${escapeHtml(node.address)}" value="${escapeHtml(node.fabric_address || '')}" placeholder="Auto-detect from Sync" /></label></div>`).join('');
+  adaptSetupForMachines();
+  $('setup-roles').innerHTML = nodes.map(node => `<div class="setup-role"><div><b>${escapeHtml(node.hostname)}</b><small>${escapeHtml(node.address)}</small></div><label class="setup-checkbox"><input type="radio" name="setup-head" data-head="${escapeHtml(node.address)}" ${node.role === 'head' ? 'checked' : ''} /> Head</label><label>SSH user<input data-user="${escapeHtml(node.address)}" aria-label="SSH user ${escapeHtml(node.address)}" value="${escapeHtml(node.username || 'nvidia')}" pattern="[a-z_][a-z0-9_-]{0,31}" /></label>${requiresDgxFabric() ? `<label>Fabric IPv4<input data-fabric="${escapeHtml(node.address)}" aria-label="Fabric IPv4 ${escapeHtml(node.address)}" value="${escapeHtml(node.fabric_address || '')}" placeholder="Auto-detect from Sync" /></label>` : ''}</div>`).join('');
   renderHardwareTopology(hardwareTopology || expectedHardwareTopology());
 }
 
@@ -105,7 +128,7 @@ function hardwarePositions(topology) {
 }
 
 function renderHardwareTopology(topology) {
-  if (!topology) return;
+  if (!topology || !requiresDgxFabric()) return;
   const positions = hardwarePositions(topology);
   const line = link => {
     const source = positions[link.source], target = positions[link.target];
@@ -132,7 +155,7 @@ function renderSetupChecks(checks, target) {
 function renderSetupJob(job) {
   setupJob = job;
   if (job.hardware_topology) hardwareTopology = job.hardware_topology;
-  $('setup-job-title').textContent = job.mode === 'demo' ? 'Simulated cluster installation' : 'Installing cluster services';
+  $('setup-job-title').textContent = job.mode === 'demo' ? 'Simulated compute pool installation' : 'Installing compute pool services';
   $('setup-job-status').textContent = job.status;
   $('setup-steps').innerHTML = job.steps.map((step, index) => `<div class="setup-step ${step.status}"><i>${step.status === 'done' ? '✓' : step.status === 'failed' ? '!' : index + 1}</i><div><b>${escapeHtml(step.label)}</b><small>${escapeHtml(step.message || step.status)}</small></div></div>`).join('');
   $('setup-logs').textContent = job.logs.map(log => `${new Date(log.timestamp).toLocaleTimeString()}  ${log.node}\n${log.message}`).join('\n\n');
@@ -143,8 +166,8 @@ function renderSetupJob(job) {
   $('setup-job-error').textContent = job.error || '';
   if (job.status === 'ready') {
     $('setup-open').href = job.dashboard_url || '#models';
-    $('setup-open').textContent = job.mode === 'demo' ? 'Explore demo model launcher →' : 'Open cluster dashboard →';
-    document.querySelector('.setup-ready h3').textContent = job.mode === 'demo' ? 'Demo setup complete' : 'Your cluster services are ready';
+    $('setup-open').textContent = job.mode === 'demo' ? 'Explore demo model launcher →' : 'Open pool dashboard →';
+    document.querySelector('.setup-ready h3').textContent = job.mode === 'demo' ? 'Demo setup complete' : 'Your compute pool is ready';
   }
   setupNavigate(job.status === 'ready' ? 4 : 3);
 }
@@ -169,10 +192,10 @@ async function loadSetup(restore = false, promptForAdmin = true) {
 $('setup-connect').addEventListener('click', () => setupAction(() => loadSetup(true)));
 $('setup-attach').addEventListener('click', () => setupAction(async () => {
   const address = $('setup-existing-address').value.trim();
-  if (!address) throw new Error('Enter the management IPv4 of the cluster head.');
+  if (!address) throw new Error('Enter the management IPv4 of the pool controller.');
   const connection = await api('/api/v1/setup/connect', {method:'POST', headers:setupAuth(), body:JSON.stringify({address, port:Number($('setup-existing-port').value)})});
   await loadSetup();
-  $('discovery-note').textContent = `Connected to ${connection.cluster_name} through ${connection.url}. Cluster data and commands now use this controller.`;
+  $('discovery-note').textContent = `Connected to ${connection.cluster_name} through ${connection.url}. Pool data and commands now use this controller.`;
   location.hash = '#overview';
 }));
 $('setup-discover').addEventListener('click', () => setupAction(async () => {
@@ -215,14 +238,7 @@ $('setup-roles').addEventListener('input', event => {
 });
 $('setup-name').addEventListener('input', invalidateSetup);
 $('setup-topology').addEventListener('input', () => {
-  const topology = $('setup-topology').value;
-  $('topology-choice-note').textContent = topology === 'switch'
-    ? 'Best decode scaling and required for independent model pools. NVIDIA measured 36.34 tok/s on four Sparks with RoCEnante versus 32.82 tok/s on a physical ring for Qwen3.8-27B NVFP4.'
-    : topology === 'ring'
-      ? 'Official switchless four-Spark layout. NCCL follows the ring directly; choose a switch later for any-to-any traffic or independent model pools.'
-      : topology === 'direct'
-        ? 'Direct point-to-point fabric for two Sparks, or a three-Spark triangle.'
-        : 'No fabric cable is required for a standalone Spark.';
+  adaptSetupForMachines();
   invalidateSetup();
   renderSetupRoles();
 });

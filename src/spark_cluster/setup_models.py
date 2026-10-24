@@ -68,9 +68,9 @@ class SetupRequest(BaseModel):
         if sum(node.role == "head" for node in self.nodes) != 1:
             raise ValueError("Select exactly one head node")
         if len(self.nodes) == 4 and self.topology not in {"ring", "switch"}:
-            raise ValueError("Use a four-node ring or a ConnectX-7 switch")
+            raise ValueError("Use a four-node ring or networked topology")
         if self.topology == "ring" and len(self.nodes) != 4:
-            raise ValueError("The switchless ring topology requires exactly four Sparks")
+            raise ValueError("The switchless ring topology requires exactly four machines")
         if (len(self.nodes) == 1) != (self.topology == "single"):
             raise ValueError("Use single topology for one node only")
         return self

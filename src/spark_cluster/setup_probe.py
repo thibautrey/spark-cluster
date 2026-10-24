@@ -1,4 +1,4 @@
-"""Read-only probe executed over authenticated SSH on a candidate Spark."""
+"""Read-only probe executed over authenticated SSH on a candidate machine."""
 
 import glob
 import ipaddress
@@ -80,6 +80,85 @@ def peer_checks(interface, peers):
     return results
 
 
+def system_memory():
+    system = platform.system().lower()
+    if system == "linux":
+        try:
+            values = dict(
+                line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines()
+            )
+            return (
+                int(values["MemTotal"].split()[0]) / 1024**2,
+                int(values["MemAvailable"].split()[0]) / 1024**2,
+            )
+        except (OSError, KeyError, ValueError):
+            return 0.0, 0.0
+    if system == "darwin":
+        try:
+            total = int(command("sysctl", "-n", "hw.memsize")) / 2**30
+            return total, None
+        except ValueError:
+            return 0.0, 0.0
+    if system == "windows":
+        try:
+            import ctypes
+
+            class MemoryStatus(ctypes.Structure):
+                _fields_ = [
+                    ("length", ctypes.c_ulong),
+                    ("memory_load", ctypes.c_ulong),
+                    ("total", ctypes.c_ulonglong),
+                    ("available", ctypes.c_ulonglong),
+                    ("total_page", ctypes.c_ulonglong),
+                    ("available_page", ctypes.c_ulonglong),
+                    ("total_virtual", ctypes.c_ulonglong),
+                    ("available_virtual", ctypes.c_ulonglong),
+                    ("available_extended", ctypes.c_ulonglong),
+                ]
+
+            status = MemoryStatus()
+            status.length = ctypes.sizeof(status)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
+            return status.total / 2**30, status.available / 2**30
+        except (AttributeError, OSError):
+            return 0.0, 0.0
+    return 0.0, 0.0
+
+
+def accelerator_facts():
+    names = [
+        item
+        for item in command("nvidia-smi", "--query-gpu=name", "--format=csv,noheader").splitlines()
+        if item
+    ]
+    if names:
+        return "nvidia", "cuda", names
+    system = platform.system().lower()
+    if system == "darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
+        name = command("sysctl", "-n", "machdep.cpu.brand_string") or "Apple Silicon"
+        return "apple", "metal", [name]
+    amd = command("rocm-smi", "--showproductname")
+    if amd:
+        names = [line.split(":", 1)[-1].strip() for line in amd.splitlines() if "Card" in line]
+        return "amd", "rocm", names or ["AMD GPU"]
+    return "none", "cpu", []
+
+
+def machine_class(system, vendor, names, architecture):
+    joined = " ".join(names).upper()
+    if system == "linux" and "GB10" in joined and architecture == "aarch64":
+        return "dgx-spark", "k3s-cluster", True
+    if system == "linux" and vendor == "nvidia":
+        return "linux-nvidia", "k3s-nvidia", True
+    if system == "linux" and vendor == "amd":
+        return "linux-amd", "docker-rocm", False
+    if system == "darwin" and vendor == "apple":
+        return "mac-apple-silicon", "metal-agent", False
+    if system == "windows" and vendor != "none":
+        return "windows-gpu", "windows-agent", False
+    return f"{system or 'unknown'}-cpu", "unsupported", False
+
+
 if __name__ == "__main__":
     interfaces = []
     addresses = {
@@ -131,33 +210,58 @@ if __name__ == "__main__":
             interfaces[-1]["neighbors"] = json.loads(
                 command("ip", "-j", "neigh", "show", "dev", item["ifname"]) or "[]"
             )
-    memory = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines())
+    total_memory, available_memory = system_memory()
+    system = platform.system().lower()
+    vendor, backend, accelerators = accelerator_facts()
+    machine_kind, setup_strategy, install_supported = machine_class(
+        system, vendor, accelerators, platform.machine()
+    )
+    state_root = Path("/var/lib") if Path("/var/lib").exists() else Path.home()
     marker = Path("/var/lib/spark-cluster/cluster-name")
     role = Path("/var/lib/spark-cluster/cluster-role")
     print(
         json.dumps(
             {
                 "hostname": socket.gethostname(),
+                "platform": system,
                 "architecture": platform.machine(),
-                "gpu": command("nvidia-smi", "--query-gpu=name", "--format=csv,noheader"),
+                "machine_kind": machine_kind,
+                "setup_strategy": setup_strategy,
+                "install_supported": install_supported and shutil.which("apt-get") is not None,
+                "accelerator_vendor": vendor,
+                "accelerator_backend": backend,
+                "accelerators": accelerators,
+                "gpu": "\n".join(accelerators),
                 "driver": command(
                     "nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"
                 ),
-                "memory_gib": int(memory["MemTotal"].split()[0]) / 1024**2,
-                "available_gib": int(memory["MemAvailable"].split()[0]) / 1024**2,
-                "disk_gib": shutil.disk_usage("/var/lib").free / 2**30,
-                "sudo": subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0,
-                "toolkit": shutil.which("nvidia-container-runtime") is not None,
+                "memory_gib": total_memory,
+                "available_gib": available_memory,
+                "disk_gib": shutil.disk_usage(state_root).free / 2**30,
+                "sudo": (
+                    subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0
+                    if system != "windows" and shutil.which("sudo")
+                    else False
+                ),
+                "toolkit": (
+                    shutil.which("nvidia-container-runtime") is not None
+                    if backend == "cuda"
+                    else backend in {"metal", "rocm"}
+                ),
                 "k3s": shutil.which("k3s") is not None,
                 "managed_cluster": marker.read_text().strip() if marker.exists() else None,
                 "managed_role": role.read_text().strip() if role.exists() else None,
                 "interfaces": interfaces,
                 "rdma": bool(glob.glob("/sys/class/infiniband/*")),
                 "clock": time.time(),
-                "os": platform.freedesktop_os_release().get("PRETTY_NAME", ""),
+                "os": (
+                    platform.freedesktop_os_release().get("PRETTY_NAME", "")
+                    if system == "linux"
+                    else platform.platform()
+                ),
                 "dgx_release": command("cat", "/etc/dgx-release"),
-                "uid": os.getuid(),
-                "gid": os.getgid(),
+                "uid": os.getuid() if hasattr(os, "getuid") else None,
+                "gid": os.getgid() if hasattr(os, "getgid") else None,
             }
         )
     )

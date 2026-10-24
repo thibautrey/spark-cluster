@@ -1,11 +1,11 @@
 const dashboardRoutes = {
-  setup: {title: 'Cluster setup'},
-  overview: {title: 'Cluster overview'},
+  setup: {title: 'Compute pools'},
+  overview: {title: 'Pool overview'},
   api: {title: 'Inference API'},
   models: {title: 'Model library'},
   launch: {title: 'Launch a model'},
   logs: {title: 'Runtime logs'},
-  topology: {title: 'Cluster topology'},
+  topology: {title: 'Pool topology'},
   cache: {title: 'KV cache'},
   memory: {title: 'Memory'},
 };

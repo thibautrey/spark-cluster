@@ -178,22 +178,22 @@ function renderClusters(state) {
   const context = storedContext === 'all' || state.clusters.some(cluster => cluster.id === storedContext)
     ? storedContext : 'all';
   select.innerHTML = state.clusters.length
-    ? `<option value="all">All clusters · pool</option>` + state.clusters.map(cluster => `<option value="${escapeHtml(cluster.id)}">${escapeHtml(cluster.name)} · ${cluster.kind === 'local-docker' ? `${cluster.gpu_count} GPU${cluster.gpu_count === 1 ? '' : 's'}` : 'remote'}</option>`).join('')
-    : '<option value="all">All clusters · pool</option>';
+    ? `<option value="all">All compute pools</option>` + state.clusters.map(cluster => `<option value="${escapeHtml(cluster.id)}">${escapeHtml(cluster.name)} · ${cluster.kind === 'local-docker' ? `${cluster.gpu_count} GPU${cluster.gpu_count === 1 ? '' : 's'}` : 'remote'}</option>`).join('')
+    : '<option value="all">All compute pools</option>';
   select.value = context;
   $('cluster-list').innerHTML = state.clusters.length ? state.clusters.map(cluster => {
     const capacity = cluster.gpu_count
       ? `${cluster.gpu_count} × ${escapeHtml(cluster.gpu_model || 'NVIDIA GPU')}${cluster.gpu_memory_gib ? ` · ${cluster.gpu_memory_gib} GiB each` : ''}`
-      : escapeHtml(cluster.endpoint || 'Remote cluster');
+      : escapeHtml(cluster.endpoint || 'Remote compute pool');
     const issue = cluster.status === 'ready' ? '' : ` · ${escapeHtml(cluster.status)}`;
     const activeActions = `<div class="cluster-card-actions"><span class="pill ready">Active</span>${cluster.kind === 'local-docker' ? '<button class="secondary cluster-refresh" type="button" data-refresh-local aria-label="Refresh local GPUs" title="Refresh local GPUs">↻</button>' : ''}</div>`;
-    return `<article class="cluster-card ${cluster.active ? 'active' : ''}" data-cluster-id="${escapeHtml(cluster.id)}"><div class="cluster-card-head"><span class="cluster-card-icon">${cluster.kind === 'local-docker' ? 'GPU' : 'LAN'}</span><div><b>${escapeHtml(cluster.name)}</b><small>${capacity}${issue}</small></div></div>${cluster.active ? activeActions : `<button class="secondary" type="button" data-select-cluster="${escapeHtml(cluster.id)}">Use this cluster</button>`}</article>`;
-  }).join('') : '<div class="empty-state"><b>No cluster configured</b><span>Add a cluster to begin.</span></div>';
+    return `<article class="cluster-card ${cluster.active ? 'active' : ''}" data-cluster-id="${escapeHtml(cluster.id)}"><div class="cluster-card-head"><span class="cluster-card-icon">${cluster.kind === 'local-docker' ? 'GPU' : 'LAN'}</span><div><b>${escapeHtml(cluster.name)}</b><small>${capacity}${issue}</small></div></div>${cluster.active ? activeActions : `<button class="secondary" type="button" data-select-cluster="${escapeHtml(cluster.id)}">Use this pool</button>`}</article>`;
+  }).join('') : '<div class="empty-state"><b>No compute pool configured</b><span>Add a compute pool to begin.</span></div>';
   const active = state.clusters.find(cluster => cluster.id === state.active_cluster_id);
   const contextual = context === 'all' ? null : state.clusters.find(cluster => cluster.id === context);
   updateMemoryLanguage(contextual || active);
   if (context === 'all') {
-    $('cluster-fleet-status').textContent = 'All clusters are available to the model scheduler.';
+    $('cluster-fleet-status').textContent = 'All compute pools are available to the model scheduler.';
   } else if (contextual) {
     $('cluster-fleet-status').textContent = `${contextual.name} is required for model capacity and manual loads.`;
   }
@@ -224,7 +224,7 @@ async function selectCluster(clusterId) {
   const previous = selectedClusterContext();
   saveClusterContext(clusterId);
   if (clusterId === 'all') {
-    $('cluster-fleet-status').textContent = 'All clusters are available to the model scheduler.';
+    $('cluster-fleet-status').textContent = 'All compute pools are available to the model scheduler.';
     document.dispatchEvent(new CustomEvent('cluster-context-changed', {detail: {clusterId}}));
     return;
   }
@@ -763,7 +763,7 @@ function renderRuntimeReadiness(report) {
       <i>${node.role === 'head' ? 'H' : index + 1}</i>
       <div><b>${escapeHtml(node.address)}</b><small>${escapeHtml(node.installed_version ? `Installed ${node.installed_version} · ${node.message}` : node.message)}</small></div>
       <span>${escapeHtml(node.status)}</span>
-    </article>`).join('') : '<div class="catalog-empty">No SSH-managed nodes are available.<br>Complete Cluster setup before installing a runtime.</div>';
+    </article>`).join('') : '<div class="catalog-empty">No SSH-managed nodes are available.<br>Complete Compute pools before installing a runtime.</div>';
   const selected = $('runtime-terminal-node').value;
   $('runtime-terminal-node').innerHTML = report.nodes.map(node => `<option value="${escapeHtml(node.address)}">${escapeHtml(node.address)} · ${escapeHtml(node.role)}</option>`).join('');
   if (report.nodes.some(node => node.address === selected)) $('runtime-terminal-node').value = selected;
