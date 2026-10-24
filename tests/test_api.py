@@ -55,7 +55,7 @@ def test_dashboard_and_live_snapshot(tmp_path):
         assert "api('/api/v1/pool').then(renderPoolEndpoint)" in dashboard_js
         assert "Direct to cluster runtime" not in page.text
         assert "OpenAI pool endpoint" in page.text
-        assert "{MODEL_KEY}" in dashboard_js
+        assert "`${window.location.origin}/v1`" in dashboard_js
 
 
 def test_history_metrics_and_capacity(tmp_path):
