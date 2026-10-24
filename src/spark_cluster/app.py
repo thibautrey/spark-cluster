@@ -258,7 +258,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         active = cluster_registry.active()
                         if active and active.kind == "local-docker":
                             snapshot = await asyncio.to_thread(local_gpu_snapshot, active, settings)
-                            snapshot.runtime.model = settings.runtime_model
+                            snapshot.runtime.model = (
+                                (on_demand.active.model if on_demand.active else "No model loaded")
+                                if on_demand.profiles
+                                else settings.runtime_model
+                            )
                             snapshot.runtime.quantization = settings.runtime_quantization
                             snapshot.runtime.context_length = settings.runtime_context_length
                             snapshot.runtime.tensor_parallel = settings.runtime_tensor_parallel
@@ -536,6 +540,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "mode": settings.mode,
             "logs_mode": log_service.mode,
             "runtime_control_mode": deployment_service.mode,
+            "on_demand": on_demand.status(),
             "has_snapshot": runtime.latest is not None,
         }
 
@@ -974,6 +979,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "launches": launches_value,
             "logs_mode": log_service.mode,
             "runtime_control_mode": deployment_service.mode,
+            "on_demand": on_demand.status(),
         }
 
     @app.post(
@@ -1007,6 +1013,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return await deployment_service.retry(job_id)
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Launch job not found") from error
+        except EngineNotExecutable as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @app.post(
         "/api/v1/runtime-management/readiness",
