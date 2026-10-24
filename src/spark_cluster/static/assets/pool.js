@@ -4,7 +4,9 @@
   let polling = false;
   let lastMarkup = null;
   const root = document.getElementById('model-pool');
-  const dialog = document.getElementById('pool-model-settings');
+  const sheet = document.getElementById('pool-model-settings');
+  let sheetOpener = null;
+  let sheetCloseTimer = null;
   const modelField = document.getElementById('pool-settings-model');
   const message = document.getElementById('pool-message');
   const field = id => document.getElementById(id);
@@ -40,14 +42,19 @@
   function openSettings(model) {
     editing = model;
     modelField.textContent = model.id;
+    clearTimeout(sheetCloseTimer);
+    sheetOpener = document.activeElement;
     field('pool-settings-error').textContent = '';
+    field('pool-settings-error').hidden = true;
     field('pool-keep-loaded').checked = model.preferences.keep_loaded || model.placements.some(p => p.keep_loaded);
     field('pool-cluster').innerHTML = '<option value="">Automatic — pool</option>' + state.clusters.map(cluster => `<option value="${escapeHtml(cluster.id)}">${escapeHtml(cluster.name)}${cluster.available ? '' : ' (unavailable)'}</option>`).join('');
     if (model.preferences.cluster_id && !state.clusters.some(c => c.id === model.preferences.cluster_id)) {
       field('pool-cluster').add(new Option('Unavailable saved cluster', model.preferences.cluster_id));
     }
     field('pool-cluster').value = model.preferences.cluster_id || '';
-    field('pool-api-url').value = location.origin + model.endpoint_path;
+    field('pool-api-url').textContent = location.origin + model.endpoint_path;
+    field('pool-settings-state').textContent = model.placements.length ? (model.preferences.keep_loaded ? 'Kept loaded' : 'Loaded') : 'On demand';
+    field('pool-placement-note').textContent = model.preferences.cluster_id ? 'This cluster is required on the next load. Changing placement does not move a running model.' : 'Automatic placement checks residency, availability, memory and runtime compatibility.';
     const settings = model.last_settings;
     field('pool-saved-settings').textContent = settings ? JSON.stringify(settings, null, 2) : model.editable_settings ? 'The last successful launch settings will be reused. A first launch uses conservative defaults and checks every candidate cluster.' : 'The saved service configuration will be reused exactly.';
     field('pool-advanced-settings').hidden = !model.editable_settings;
@@ -56,9 +63,34 @@
     field('pool-pipeline').value = settings?.pipeline_parallel || 1;
     field('pool-memory').value = settings?.gpu_memory_utilization || 0.82;
     field('pool-served-name').value = settings?.served_model_name || model.id.split('/').at(-1);
-    dialog.showModal();
+    sheet.hidden = false;
+    document.body.classList.add('bottom-sheet-open');
+    requestAnimationFrame(() => {
+      sheet.classList.add('open');
+      field('pool-settings-close').focus();
+    });
   }
-  field('pool-settings-close').addEventListener('click', () => dialog.close());
+  function closeSettings() {
+    if (sheet.hidden) return;
+    sheet.classList.remove('open');
+    document.body.classList.remove('bottom-sheet-open');
+    clearTimeout(sheetCloseTimer);
+    sheetCloseTimer = setTimeout(() => {
+      sheet.hidden = true;
+      sheetOpener?.focus();
+    }, 220);
+  }
+  field('pool-settings-close').addEventListener('click', closeSettings);
+  field('pool-settings-cancel').addEventListener('click', closeSettings);
+  field('pool-settings-backdrop').addEventListener('click', closeSettings);
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !sheet.hidden) closeSettings();
+  });
+  field('pool-copy-api').addEventListener('click', async () => {
+    await navigator.clipboard.writeText(field('pool-api-url').textContent);
+    field('pool-copy-api').textContent = 'Copied';
+    setTimeout(() => { field('pool-copy-api').textContent = 'Copy'; }, 1200);
+  });
   field('pool-settings-form').addEventListener('submit', async event => {
     event.preventDefault();
     const button = field('pool-settings-save');
@@ -71,9 +103,12 @@
     } : null;
     try {
       await api(`/api/v1/pool/models/${encodeURIComponent(editing.id)}/settings`, {method: 'PUT', headers: auth(), body: JSON.stringify({keep_loaded: field('pool-keep-loaded').checked, cluster_id: field('pool-cluster').value || null, last_settings: lastSettings})});
-      dialog.close();
+      closeSettings();
       await refresh();
-    } catch (error) { field('pool-settings-error').textContent = error.message; }
+    } catch (error) {
+      field('pool-settings-error').textContent = error.message;
+      field('pool-settings-error').hidden = false;
+    }
     finally { button.disabled = false; }
   });
   root.addEventListener('click', async event => {

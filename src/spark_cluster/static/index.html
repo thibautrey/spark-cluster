@@ -239,30 +239,57 @@
 
         <section class="panel launch-panel idle" id="launch" data-route-view="launch">
           <section id="model-pool" class="model-pool">
-            <div class="pool-header"><div><p class="eyebrow">MODEL POOL</p><h2>Models</h2><p id="pool-summary">Discovering available clusters…</p></div><label>Admin token <span class="optional">optional</span><input id="pool-admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label></div>
+            <div class="pool-header"><div><p class="eyebrow">MODEL POOL</p><h2>Models</h2><p id="pool-summary">Discovering available clusters…</p></div><label class="pool-auth">Admin token <span class="optional">optional</span><input id="pool-admin-token" type="password" autocomplete="off" placeholder="Required only when configured" /></label></div>
             <p class="pool-help">Load a model with its saved settings. The pool chooses a compatible cluster. Keep a model loaded to protect its resources, or choose a required cluster in Settings.</p>
             <div class="pool-filters"><label>Find a model<input id="pool-search" type="search" placeholder="Model name…" /></label><label class="pool-checkbox"><input id="pool-show-unavailable" type="checkbox" /> Include models needing runtime support</label></div>
             <p id="pool-message" role="status"></p>
             <div id="pool-model-list" class="pool-model-grid"></div>
           </section>
-          <dialog id="pool-model-settings" class="pool-settings-dialog">
-            <form id="pool-settings-form"><div class="pool-header"><h3>Model settings</h3><button id="pool-settings-close" type="button" class="secondary" aria-label="Close model settings">×</button></div>
-              <p id="pool-settings-model"></p>
-              <label class="pool-checkbox"><input type="checkbox" id="pool-keep-loaded" /> Keep loaded</label>
-              <p class="pool-help">Protect against inactivity unloading and eviction. Other models use another cluster or wait until you release these resources. Unload explicitly releases this reservation.</p>
-              <label>Run on cluster<select id="pool-cluster"><option value="">Automatic — pool</option></select></label>
-              <p class="pool-help">A selected cluster is required on the next load. Changing it does not move a running model.</p>
-              <label>Pool API URL<input id="pool-api-url" readonly /></label>
-              <details id="pool-advanced-settings"><summary>Launch settings</summary>
-                <label>Served model name<input id="pool-served-name" /></label>
-                <div class="form-row"><label>Context tokens<input id="pool-context" type="number" min="1" max="1048576" /></label><label>GPU memory utilization<input id="pool-memory" type="number" min="0.01" max="0.99" step="0.01" /></label></div>
-                <div class="form-row"><label>Tensor parallel<input id="pool-tensor" type="number" min="1" max="64" /></label><label>Pipeline parallel<input id="pool-pipeline" type="number" min="1" max="64" /></label></div>
-              </details>
-              <details><summary>Saved configuration</summary><pre id="pool-saved-settings"></pre></details>
-              <p id="pool-settings-error" role="alert" class="pool-error"></p>
-              <button class="primary" id="pool-settings-save" type="submit">Save settings</button>
-            </form>
-          </dialog>
+          <div class="bottom-sheet pool-settings-sheet" id="pool-model-settings" hidden>
+            <button class="bottom-sheet-backdrop" id="pool-settings-backdrop" type="button" tabindex="-1" aria-label="Close model settings"></button>
+            <section class="bottom-sheet-panel pool-settings-panel" role="dialog" aria-modal="true" aria-labelledby="pool-settings-title">
+              <header class="bottom-sheet-header pool-settings-header">
+                <span class="catalog-sheet-handle" aria-hidden="true"></span>
+                <div><p class="eyebrow">MODEL CONFIGURATION</p><h3 id="pool-settings-title">Model settings</h3><p id="pool-settings-model"></p></div>
+                <span class="pool-settings-state" id="pool-settings-state">On demand</span>
+                <button class="catalog-sheet-close" id="pool-settings-close" type="button" aria-label="Close model settings">×</button>
+              </header>
+              <form id="pool-settings-form" class="pool-settings-body">
+                <section class="pool-settings-section pool-retention-section">
+                  <div class="pool-section-heading"><div><span class="pool-section-icon">◇</span><div><h4>Residency</h4><p>Choose how the pool protects GPU resources for this model.</p></div></div></div>
+                  <label class="pool-toggle-card" for="pool-keep-loaded">
+                    <span><b>Keep loaded</b><small>Prevent inactivity unloading and eviction. Other requests use another cluster or wait.</small></span>
+                    <input type="checkbox" id="pool-keep-loaded" /><i aria-hidden="true"></i>
+                  </label>
+                </section>
+                <section class="pool-settings-section">
+                  <div class="pool-section-heading"><div><span class="pool-section-icon">⌁</span><div><h4>Placement</h4><p>Let the pool choose, or require one cluster for the next load.</p></div></div></div>
+                  <label class="pool-field">Run on cluster<select id="pool-cluster"><option value="">Automatic — pool</option></select></label>
+                  <div class="pool-placement-note"><i>✓</i><span id="pool-placement-note">Automatic placement checks residency, availability, memory and runtime compatibility.</span></div>
+                </section>
+                <section class="pool-settings-section pool-endpoint-section">
+                  <div class="pool-section-heading"><div><span class="pool-section-icon">↗</span><div><h4>Pool endpoint</h4><p>This stable route loads and places the model when needed.</p></div></div></div>
+                  <div class="pool-copy-field"><code id="pool-api-url"></code><button class="secondary" id="pool-copy-api" type="button">Copy</button></div>
+                </section>
+                <details class="pool-settings-section pool-disclosure" id="pool-advanced-settings">
+                  <summary><span><span class="pool-section-icon">⚙</span><span><b>Launch settings</b><small>Reuse or adjust the previous successful configuration.</small></span></span><i>⌄</i></summary>
+                  <div class="pool-setting-fields">
+                    <label class="pool-field pool-field-wide">Served model name<input id="pool-served-name" /></label>
+                    <label class="pool-field">Context tokens<input id="pool-context" type="number" min="1" max="1048576" /></label>
+                    <label class="pool-field">GPU memory utilization<input id="pool-memory" type="number" min="0.01" max="0.99" step="0.01" /></label>
+                    <label class="pool-field">Tensor parallel<input id="pool-tensor" type="number" min="1" max="64" /></label>
+                    <label class="pool-field">Pipeline parallel<input id="pool-pipeline" type="number" min="1" max="64" /></label>
+                  </div>
+                </details>
+                <details class="pool-settings-section pool-disclosure pool-saved-disclosure">
+                  <summary><span><span class="pool-section-icon">{ }</span><span><b>Saved configuration</b><small>Exact settings used by Load model.</small></span></span><i>⌄</i></summary>
+                  <pre id="pool-saved-settings"></pre>
+                </details>
+                <p id="pool-settings-error" role="alert" class="action-sheet-error" hidden></p>
+                <footer class="pool-settings-actions"><button class="secondary" id="pool-settings-cancel" type="button">Cancel</button><button class="primary" id="pool-settings-save" type="submit">Save settings</button></footer>
+              </form>
+            </section>
+          </div>
 
           <div class="launch-layout idle" id="launch-layout">
             <form class="launch-form" id="launch-form">
