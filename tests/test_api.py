@@ -273,3 +273,35 @@ def test_model_launch_and_runtime_logs_end_to_end(tmp_path):
         assert job["progress"] == 100
         logs = client.get("/api/v1/logs?pod=control-plane").json()
         assert any("Model is ready to serve" in entry["message"] for entry in logs)
+
+
+def test_pool_mutations_require_admin_and_reads_expose_no_recipes(tmp_path):
+    app = create_app(
+        Settings(
+            mode="demo",
+            model_admin_token="test-admin",
+            setup_state_path=tmp_path / "setup",
+            database_path=tmp_path / "db",
+            model_cache_path=tmp_path / "models",
+        )
+    )
+    with TestClient(app) as client:
+        state = client.get("/api/v1/pool")
+        assert state.status_code == 200
+        assert "container" not in state.text
+        assert "test-admin" not in state.text
+        assert client.get("/api/v1/pool/node/status").status_code == 401
+        assert client.post("/api/v1/pool/load", json={"model_id": "org/model"}).status_code == 401
+        result = client.put(
+            "/api/v1/pool/models/org/model/settings",
+            json={"keep_loaded": True, "cluster_id": None},
+            headers={"Authorization": "Bearer test-admin"},
+        )
+        assert result.status_code == 200
+        assert result.json()["keep_loaded"] is True
+        invalid = client.put(
+            "/api/v1/pool/models/org/model/settings",
+            json={"last_settings": {"model_id": "org/other", "served_model_name": "wrong"}},
+            headers={"Authorization": "Bearer test-admin"},
+        )
+        assert invalid.status_code == 409
