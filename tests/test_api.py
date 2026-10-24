@@ -471,3 +471,5 @@ def test_admin_token_is_origin_scoped_and_requested_in_a_sheet(tmp_path):
     assert "window.adminAuthHeaders = adminAuthHeaders" in script
     assert "window.adminAuthHeaders()" in pool
     assert "window.adminAuthHeaders()" in setup
+    assert "loadSetup(true, false)" in setup
+    assert "promptForAdmin = true" in script
