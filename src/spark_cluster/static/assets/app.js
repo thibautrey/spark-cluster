@@ -259,14 +259,25 @@ function renderEndpoint(endpoint) {
   $('cache-hit-metric').hidden = !runtimeReady;
   $('prefix-reuse-metric').hidden = !runtimeReady;
   if (latestSnapshot) renderOverviewMetrics(latestSnapshot);
-  $('api-endpoint').textContent = endpoint.base_url;
-  $('api-models-route').textContent = endpoint.models_url;
-  $('api-chat-route').textContent = endpoint.chat_completions_url;
-  $('api-status').textContent = endpoint.status === 'ready' ? '● ready' : '○ awaiting runtime';
-  $('api-status').className = `pill ${endpoint.status}`;
-  $('api-routing-mode').textContent = endpoint.controller_required
-    ? 'Controller routed'
-    : 'Direct to cluster runtime · controller independent';
+}
+
+function renderPoolEndpoint(pool) {
+  const availableClusters = pool.clusters.filter(cluster => cluster.available);
+  const availableModels = pool.models.filter(model => model.loadable);
+  const template = `${window.location.origin}/api/v1/pool/serve/{MODEL_KEY}/v1`;
+  $('api-endpoint').textContent = template;
+  $('api-models-route').textContent = `${template}/models`;
+  $('api-chat-route').textContent = `${template}/chat/completions`;
+  $('api-status').textContent = availableClusters.length ? '● pool ready' : '○ pool unavailable';
+  $('api-status').className = `pill ${availableClusters.length ? 'ready' : 'unreachable'}`;
+  $('api-routing-mode').textContent = availableClusters.length
+    ? `${availableClusters.length} cluster${availableClusters.length === 1 ? '' : 's'} · controller routed · loads models on demand`
+    : 'No reachable cluster can accept inference';
+  $('api-pool-model-count').textContent = `${availableModels.length} available`;
+  $('api-model-endpoints').innerHTML = availableModels.map(model => {
+    const url = `${window.location.origin}${model.endpoint_path}`;
+    return `<article><div><b>${escapeHtml(model.id)}</b><small>${model.placements.length ? `Loaded on ${escapeHtml(model.placements.map(item => item.cluster_name).join(', '))}` : 'Loads on first request'}</small></div><code>${escapeHtml(url)}</code><button type="button" data-pool-endpoint="${escapeHtml(url)}">Copy</button></article>`;
+  }).join('') || '<p>No runnable model is currently available in the pool.</p>';
 }
 
 function renderModels(models) {
@@ -873,9 +884,11 @@ async function refreshLibrary() {
       renderDownloads(downloads);
       document.dispatchEvent(new CustomEvent('library-updated', {detail: downloads}));
     }),
-    api('/api/v1/runtime').then(renderEndpoint).catch(() => {
-      $('api-status').textContent = 'runtime unavailable';
+    api('/api/v1/runtime').then(renderEndpoint),
+    api('/api/v1/pool').then(renderPoolEndpoint).catch(() => {
+      $('api-status').textContent = '○ pool unavailable';
       $('api-status').className = 'pill unreachable';
+      $('api-routing-mode').textContent = 'Pool inventory is temporarily unavailable';
     }),
     api('/api/v1/launches').then(renderLaunches),
   ];
@@ -1167,6 +1180,13 @@ $('copy-endpoint').addEventListener('click', async () => {
   await navigator.clipboard.writeText($('api-endpoint').textContent);
   $('copy-endpoint').textContent = 'Copied';
   setTimeout(() => { $('copy-endpoint').textContent = 'Copy'; }, 1200);
+});
+$('api-model-endpoints').addEventListener('click', async event => {
+  const button = event.target.closest('[data-pool-endpoint]');
+  if (!button) return;
+  await navigator.clipboard.writeText(button.dataset.poolEndpoint);
+  button.textContent = 'Copied';
+  setTimeout(() => { button.textContent = 'Copy'; }, 1200);
 });
 $('mcp-endpoint').textContent = `${window.location.origin}/mcp`;
 $('copy-mcp-endpoint').addEventListener('click', async () => {

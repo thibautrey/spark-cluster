@@ -99,9 +99,9 @@
 
         <section class="panel api-panel" id="api" data-route-view="api">
           <article class="api-card">
-            <div class="api-card-head"><div><h2>OpenAI endpoint</h2><small id="api-routing-mode">Direct to cluster runtime · controller independent</small></div><span class="pill" id="api-status">checking</span></div>
-            <div class="endpoint-box"><code id="api-endpoint">Loading endpoint…</code><button id="copy-endpoint" type="button">Copy</button></div>
-            <details class="api-details"><summary>Routes</summary><div class="api-routes"><span><b>Models</b><code id="api-models-route">—</code></span><span><b>Chat completions</b><code id="api-chat-route">—</code></span></div></details>
+            <div class="api-card-head"><div><h2>OpenAI pool endpoint</h2><small id="api-routing-mode">Controller routed · automatic model placement</small></div><span class="pill" id="api-status">checking</span></div>
+            <div class="endpoint-box"><code id="api-endpoint">Loading pool endpoint…</code><button id="copy-endpoint" type="button">Copy</button></div>
+            <details class="api-details"><summary>Routes</summary><div class="api-routes"><span><b>Model key</b><code id="api-model-key-route">Shown in each model’s Settings</code></span><span><b>Models</b><code id="api-models-route">—</code></span><span><b>Chat completions</b><code id="api-chat-route">—</code></span></div></details><details class="api-details"><summary>Available model endpoints <small id="api-pool-model-count"></small></summary><div class="api-model-endpoints" id="api-model-endpoints"></div></details>
           </article>
           <article class="api-card">
             <div class="api-card-head"><div><h2>MCP endpoint</h2><small>AI clients · admin token for changes</small></div></div>
@@ -380,7 +380,7 @@
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=cluster-actions-v1"></script>
+    <script src="/assets/app.js?v=pool-api-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>
