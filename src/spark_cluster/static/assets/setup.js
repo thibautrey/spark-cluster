@@ -8,12 +8,19 @@ let setupJob = null;
 let setupBusy = false;
 let setupPolling = false;
 let hardwareTopology = null;
+let setupDiscoveryState = 'idle';
 const setupAuth = () => $('setup-token').value.trim() ? {Authorization: `Bearer ${$('setup-token').value.trim()}`} : {};
 const setupPayload = () => ({name: $('setup-name').value.trim(), topology: $('setup-topology').value, nodes: [...setupSelection.values()].map(node => ({address: node.address, username: node.username || 'nvidia', fingerprint: node.fingerprint, role: node.role || 'worker', fabric_address: node.fabric_address || null}))});
 
 function setupError(message = '') {
   $('setup-error').hidden = !message;
   $('setup-error').textContent = message;
+}
+function renderSetupDiscoveryState() {
+  const hasMachines = setupCandidates.length > 0 || setupSelection.size > 0;
+  $('discovery-note').hidden = setupDiscoveryState === 'idle';
+  $('setup-nodes').hidden = setupDiscoveryState !== 'complete' && !hasMachines;
+  $('setup-footer').hidden = setupStage === 0 && !hasMachines;
 }
 function setupNavigate(stage) {
   setupStage = stage;
@@ -26,6 +33,7 @@ function setupNavigate(stage) {
   $('setup-next').hidden = stage >= 3;
   $('setup-next').textContent = ['Choose machines →', 'Check readiness →', 'Install cluster →'][stage] || '';
   $('setup-summary').textContent = `${setupSelection.size} machine${setupSelection.size === 1 ? '' : 's'} selected${setupJob ? ` · ${setupJob.status}` : ''}`;
+  renderSetupDiscoveryState();
   setupButtons();
 }
 function setupButtons() {
@@ -52,6 +60,7 @@ function invalidateSetup() {
 }
 function renderSetupCandidates() {
   $('setup-nodes').innerHTML = setupCandidates.length ? setupCandidates.map(node => `<label class="setup-node ${setupSelection.has(node.address) ? 'selected' : ''}"><input type="checkbox" data-select-node="${escapeHtml(node.address)}" ${setupSelection.has(node.address) ? 'checked' : ''} /><span class="setup-node-icon">⬡</span><span><b>${escapeHtml(node.hostname)}</b><small>${escapeHtml(node.address)} · ${escapeHtml(node.source)} · SSH reachable</small><code>${escapeHtml(node.fingerprint)}</code><small>${escapeHtml(node.gpu)}</small></span></label>`).join('') : '<div class="empty-state"><b>No SSH machine found</b><span>Check power, network isolation and SSH. Try an IPv4 address or /24 subnet.</span></div>';
+  renderSetupDiscoveryState();
 }
 function renderSetupRoles() {
   const nodes = [...setupSelection.values()];
@@ -168,13 +177,24 @@ $('setup-attach').addEventListener('click', () => setupAction(async () => {
 }));
 $('setup-discover').addEventListener('click', () => setupAction(async () => {
   if (!setupState) await loadSetup();
+  setupDiscoveryState = 'scanning';
   $('discovery-note').textContent = 'Discovering LAN services and checking SSH…';
-  const result = await api('/api/v1/setup/discover', {method:'POST', headers:setupAuth(), body:JSON.stringify({subnet:$('setup-subnet').value.trim() || null, addresses:$('setup-address').value.trim() ? [$('setup-address').value.trim()] : []})});
+  renderSetupDiscoveryState();
+  let result;
+  try {
+    result = await api('/api/v1/setup/discover', {method:'POST', headers:setupAuth(), body:JSON.stringify({subnet:$('setup-subnet').value.trim() || null, addresses:$('setup-address').value.trim() ? [$('setup-address').value.trim()] : []})});
+  } catch (error) {
+    setupDiscoveryState = 'complete';
+    $('discovery-note').textContent = 'Scan stopped before any machines were found.';
+    renderSetupCandidates();
+    throw error;
+  }
   setupCandidates = result.nodes;
   // Keep selected machines visible through subsequent discovery attempts.
   for (const node of setupSelection.values()) if (!setupCandidates.some(item => item.address === node.address)) setupCandidates.push(node);
-  renderSetupCandidates();
+  setupDiscoveryState = 'complete';
   $('discovery-note').textContent = result.notes.join(' ');
+  renderSetupCandidates();
 }));
 $('setup-nodes').addEventListener('change', event => {
   const address = event.target.dataset.selectNode;
@@ -252,7 +272,7 @@ function reviseSetup() {
   setupNavigate(1);
 }
 $('setup-revise').addEventListener('click', reviseSetup);
-$('setup-new').addEventListener('click', () => { setupJob = null; setupSelection.clear(); setupCandidates = []; invalidateSetup(); renderSetupCandidates(); setupNavigate(0); });
+$('setup-new').addEventListener('click', () => { setupJob = null; setupSelection.clear(); setupCandidates = []; setupDiscoveryState = 'idle'; invalidateSetup(); renderSetupCandidates(); setupNavigate(0); });
 loadSetup(true).catch(error => {
   if (error.message === 'Invalid model administration token') {
     $('setup-mode').textContent = 'ADMIN TOKEN REQUIRED';

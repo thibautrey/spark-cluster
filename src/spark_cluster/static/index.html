@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=fit-details-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=setup-focus-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -48,10 +48,10 @@
             <div class="setup-page" data-setup-page="0">
               <div class="setup-choice-grid">
                 <section class="setup-choice featured"><span class="setup-choice-icon" aria-hidden="true">⌁</span><div><h3>Discover machines</h3><p>Find compatible GPU machines on this LAN.</p></div><button class="primary" id="setup-discover" type="button">Scan network</button><details class="setup-advanced"><summary>Search a specific address</summary><div class="setup-scan-fields"><label>Subnet <span class="optional">optional</span><input id="setup-subnet" placeholder="192.168.1.0/24" /></label><label>Machine IPv4 <span class="optional">optional</span><input id="setup-address" placeholder="192.168.1.42" /></label></div></details></section>
-                <section class="setup-choice"><span class="setup-choice-icon" aria-hidden="true">↗</span><div><h3>Connect an existing cluster</h3><p>Attach a cluster that already runs the Spark Cluster bridge.</p></div><div class="setup-existing-fields"><label>Head IPv4<input id="setup-existing-address" placeholder="192.168.1.42" /></label><button class="secondary" id="setup-attach" type="button">Connect</button></div><details class="setup-advanced"><summary>Advanced connection</summary><label>Bridge port<input id="setup-existing-port" type="number" min="1024" max="65535" value="30080" /></label></details></section>
+                <details class="setup-existing-disclosure"><summary><span class="setup-choice-icon" aria-hidden="true">↗</span><span><b>Connect existing cluster</b><small>Already running the Spark Cluster bridge</small></span></summary><div class="setup-existing-content"><div class="setup-existing-fields"><label>Head IPv4<input id="setup-existing-address" placeholder="192.168.1.42" /></label><button class="secondary" id="setup-attach" type="button">Connect</button></div><details class="setup-advanced"><summary>Advanced connection</summary><label>Bridge port<input id="setup-existing-port" type="number" min="1024" max="65535" value="30080" /></label></details></div></details>
               </div>
-              <p class="setup-note discovery-status" id="discovery-note">Power on the machines and connect them to the same LAN.</p>
-              <div class="setup-nodes" id="setup-nodes"><div class="empty-state">Discovered machines will appear here.</div></div>
+              <p class="setup-note discovery-status" id="discovery-note" hidden></p>
+              <div class="setup-nodes" id="setup-nodes" hidden></div>
             </div>
           <div class="setup-page" data-setup-page="1" hidden>
             <h3>Choose roles and connect the fabric</h3><p class="setup-note">Select one head. For multiple Sparks, run NVIDIA Sync → Settings → Cluster Assistant, then leave fabric IPv4 blank for automatic detection, or enter it from Sync if several links are active. Four Sparks support either a physical ring or a 200G switch.</p>
@@ -84,7 +84,7 @@
             <div class="setup-recovery" id="setup-recovery" hidden><p id="setup-job-error"></p><button class="primary" id="setup-resume" type="button">Retry / resume setup</button><button class="secondary" id="setup-revise" type="button">Revise plan</button></div>
           </div>
           <div class="setup-page setup-ready" data-setup-page="4" hidden><span class="setup-success">✓</span><h3>Your cluster services are ready</h3><p>Nodes, GPU scheduling, dashboard, telemetry and shared model storage passed verification.</p><p class="setup-note">Next, add a model and launch it to verify inference and collective GPU communication under load.</p><a class="primary setup-link" id="setup-open" href="#models">Open cluster dashboard →</a><button class="secondary" id="setup-new" type="button">Configure another cluster</button></div>
-          <div class="setup-footer"><span id="setup-summary">Select the machines to configure.</span><div><button class="secondary" id="setup-back" type="button" hidden>Back</button><button class="primary" id="setup-next" type="button">Choose machines →</button></div></div>
+          <div class="setup-footer" id="setup-footer" hidden><span id="setup-summary">Select the machines to configure.</span><div><button class="secondary" id="setup-back" type="button" hidden>Back</button><button class="primary" id="setup-next" type="button">Choose machines →</button></div></div>
               </div>
             </section>
           </div>
@@ -334,6 +334,6 @@
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>
     <script src="/assets/catalog.js?v=sheet-titles-v1"></script>
-    <script src="/assets/setup.js?v=setup-sheet-v1"></script>
+    <script src="/assets/setup.js?v=setup-focus-v1"></script>
   </body>
 </html>
