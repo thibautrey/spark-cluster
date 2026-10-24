@@ -508,7 +508,15 @@ class ClusterSetupService:
                 "System clock is synchronized",
                 "Enable NTP and correct the system clock.",
             )
-            if len(request.nodes) > 1 and kind == "dgx-spark":
+        self.last_machine_facts = facts
+        distributed_dgx = (
+            len(request.nodes) > 1
+            and len(facts) == len(request.nodes)
+            and all(data.get("machine_kind") == "dgx-spark" for data in facts.values())
+        )
+        for node in request.nodes:
+            data = facts.get(node.address, {})
+            if distributed_dgx:
                 if not node.fabric_address:
                     addresses = [
                         address
@@ -534,13 +542,8 @@ class ClusterSetupService:
                     "Run NVIDIA Sync > Settings > Cluster Assistant, "
                     "connect supported QSFP cables, "
                     "then enter each node's configured fabric IPv4 address.",
+                    address=node.address,
                 )
-        self.last_machine_facts = facts
-        distributed_dgx = (
-            len(request.nodes) > 1
-            and len(facts) == len(request.nodes)
-            and all(data.get("machine_kind") == "dgx-spark" for data in facts.values())
-        )
         hostnames = [data["hostname"] for data in facts.values()]
         if len(hostnames) != len(set(hostnames)):
             checks.append(
@@ -553,7 +556,7 @@ class ClusterSetupService:
                 )
             )
         releases = {data["dgx_release"] for data in facts.values() if data.get("dgx_release")}
-        if len(releases) > 1:
+        if distributed_dgx and len(releases) > 1:
             checks.append(
                 SetupCheck(
                     node="cluster",
@@ -564,7 +567,7 @@ class ClusterSetupService:
                 )
             )
         drivers = {data["driver"] for data in facts.values()}
-        if len(drivers) > 1:
+        if distributed_dgx and len(drivers) > 1:
             checks.append(
                 SetupCheck(
                     node="cluster",
