@@ -174,11 +174,14 @@ body.bottom-sheet-open{overflow:hidden}
 .action-sheet-actions button{min-height:40px;border-radius:7px;border:1px solid #2b3747;font:600 10px Manrope;cursor:pointer}
 .action-sheet-actions .danger{border-color:#75404a;background:#7e3341;color:#fff}
 .action-sheet-actions button:disabled{cursor:wait;opacity:.6}
-.model-card-actions{display:grid;justify-items:end;gap:8px}
+.model-card-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px}
 .model-delete,.download-control{border:1px solid #334136;border-radius:6px;background:#121d18;color:#9db0a6;padding:6px 8px;font:8px DM Mono;cursor:pointer}
 .model-delete:hover,.download-control:hover{border-color:var(--green);color:var(--green)}
 .model-delete.danger,.download-control.danger{border-color:#5d3941;background:#24151a;color:#ff9bab}
 .model-delete:disabled{cursor:not-allowed;opacity:.45}
+.catalog-secondary .model-card{grid-template-columns:minmax(0,1fr) auto;min-height:48px;padding:9px 10px}
+.catalog-secondary .model-card h3{margin-bottom:3px}
+.catalog-secondary .model-delete{display:grid;place-items:center;width:30px;height:30px;padding:0;font-size:14px}
 .active-download-actions{display:flex;justify-content:flex-end;gap:8px;border-top:1px solid #1c3026;padding-top:10px}
 .active-download-card.paused .active-download-icon{color:var(--amber);border-color:#65552d;background:#2a2110}
 .active-download-card.paused .active-download-progress i{background:var(--amber);box-shadow:none}

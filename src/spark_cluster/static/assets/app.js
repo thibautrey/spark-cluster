@@ -242,9 +242,8 @@ function renderModels(models) {
   }
   $('local-models').innerHTML = models.map(model => `
     <article class="model-card">
-      <span class="model-glyph">M</span>
-      <div><h3>${escapeHtml(model.id)}</h3><p>${escapeHtml(model.source)} · ${formatBytes(model.size_bytes)}${model.revision ? ` · ${escapeHtml(model.revision)}` : ''}</p></div>
-      <div class="model-card-actions"><span class="model-state ${model.loaded ? 'loaded' : ''}">${model.loaded ? '● loaded' : '○ local'}</span>${model.source === 'managed' ? `<button class="model-delete danger" type="button" data-model-action="delete" data-repo-id="${escapeHtml(model.id)}" ${model.loaded ? 'disabled title="Stop the runtime before deleting this model"' : ''}>Delete</button>` : ''}</div>
+      <div><h3>${escapeHtml(model.id)}</h3><p>${formatBytes(model.size_bytes)}</p></div>
+      <div class="model-card-actions">${model.loaded ? '<span class="model-state loaded">● In use</span>' : ''}${model.source === 'managed' ? `<button class="model-delete danger" type="button" data-model-action="delete" data-repo-id="${escapeHtml(model.id)}" aria-label="Delete ${escapeHtml(model.id)}" title="${model.loaded ? 'Stop the runtime before deleting this model' : 'Delete model'}" ${model.loaded ? 'disabled' : ''}><span aria-hidden="true">⌫</span></button>` : ''}</div>
     </article>`).join('');
 }
 
