@@ -400,7 +400,7 @@ def test_demo_wizard_end_to_end_without_network_or_ssh(tmp_path, monkeypatch):
         page = client.get("/").text
         assert "Compute pools" in page
         assert "Discover machines" in page
-        assert "Connect an existing cluster" in page
+        assert "Connect an existing compute pool" in page
         assert 'id="setup-open-sheet"' in page
         assert 'id="setup-sheet" hidden' in page
         tree = SectionTree()
@@ -501,3 +501,15 @@ async def test_native_platform_blocks_bootstrap_without_dgx_checks(tmp_path):
     assert result["topology"] is None
     assert not remote.uploaded
     store.close()
+
+
+def test_adaptive_onboarding_hides_dgx_controls_initially():
+    from pathlib import Path
+    static = Path(__file__).parents[1] / "src/spark_cluster/static"
+    page = (static / "index.html").read_text()
+    script = (static / "assets/setup.js").read_text()
+    assert 'id="hardware-assistant" hidden' in page
+    assert 'id="setup-sync-guide" hidden' in page
+    assert "function requiresDgxFabric()" in script
+    assert "metal-agent" in script and "windows-agent" in script
+    assert "setup-check-machine-summary" in page

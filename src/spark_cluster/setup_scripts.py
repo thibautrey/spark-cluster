@@ -265,7 +265,7 @@ sudo -n install -d -o 10001 -g 10001 -m 0770 /var/lib/spark-cluster/models
             f"""
 helmdir=$(mktemp -d)
 trap 'rm -rf "$helmdir"' EXIT
-case "$(uname -m)" in aarch64) arch=arm64;; *) exit 1;; esac
+case "$(uname -m)" in aarch64|arm64) arch=arm64;; x86_64|amd64) arch=amd64;; *) exit 1;; esac
 helm_url=https://get.helm.sh/helm-{HELM_VERSION}-linux-$arch.tar.gz
 curl -fsSL --connect-timeout 10 --max-time 180 "$helm_url" -o "$helmdir/helm.tar.gz"
 curl -fsSL --connect-timeout 10 --max-time 60 "$helm_url.sha256sum" -o "$helmdir/helm.sha256"

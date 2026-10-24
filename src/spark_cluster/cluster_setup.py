@@ -246,7 +246,7 @@ class ClusterSetupService:
             "jobs": self.store.list_setup_jobs(),
             "connected_cluster": current_connection(self.settings),
             "requirements": [
-                "Run this bootstrap dashboard on the same LAN as the Sparks.",
+                "Run this bootstrap dashboard on the same LAN as the machines.",
                 "Verify SSH fingerprints, configure SSH key access and noninteractive sudo.",
                 "Use NVIDIA Sync Cluster Assistant to configure cabled ConnectX-7 networking.",
                 "Four nodes can use a switchless ring or a 200G switch. Internet access is "
@@ -339,7 +339,7 @@ class ClusterSetupService:
             "nodes": [node for node in nodes if node],
             "notes": notes
             + [
-                "SSH discovery does not prove GB10 compatibility. "
+                "SSH discovery does not determine accelerator or platform compatibility. "
                 "Verify fingerprints on the devices."
             ],
         }
@@ -571,7 +571,7 @@ class ClusterSetupService:
                     code="driver",
                     status="error",
                     message="NVIDIA drivers differ",
-                    remedy="Update all nodes to the same DGX OS / driver release "
+                    remedy="Update NVIDIA nodes to a compatible driver release "
                     "using the appropriate vendor tools.",
                 )
             )
