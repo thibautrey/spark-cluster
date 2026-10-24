@@ -190,6 +190,16 @@ class PoolNode:
         return next((c for c in self.registry.list() if c.kind == "local-docker"), None)
 
     async def inventory(self) -> dict:
+        active_profile = self.demand.active
+        if active_profile:
+            await self.capture_runtime_metadata(
+                active_profile.model_id or active_profile.model, active_profile.upstream
+            )
+        elif self.native.get("model_id"):
+            await self.capture_runtime_metadata(
+                self.native["model_id"],
+                self.settings.direct_runtime_base_url.removesuffix("/v1"),
+            )
         models = {
             m.id: {
                 "id": m.id,

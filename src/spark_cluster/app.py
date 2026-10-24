@@ -1048,7 +1048,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/v1/models")
     async def global_openai_models():
-        inventory = await model_pool.inventory()
+        inventory = await model_pool.inventory(force=True)
         data = []
         for model in inventory["models"]:
             if not model["loadable"]:
