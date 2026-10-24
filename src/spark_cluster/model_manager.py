@@ -726,6 +726,9 @@ class ModelManager:
         self._active_processes: dict[str, asyncio.subprocess.Process] = {}
         self._inventory_cache: list[LocalModel] | None = None
         self._inventory_cached_at = 0.0
+        self._inventory_guard = threading.Lock()
+        self._inventory_generation = 0
+        self._inventory_refresh_thread: threading.Thread | None = None
         self._runtime_cache: RuntimeEndpoint | None = None
         self._runtime_cached_at = 0.0
         self._runtime_lock = asyncio.Lock()
@@ -1017,7 +1020,7 @@ class ModelManager:
         await asyncio.to_thread(self._remove_job_files, job)
         if self.relay:
             await asyncio.to_thread(self.relay.remove_manifest, job.id)
-        self._inventory_cache = None
+        self._invalidate_inventory()
         return job
 
     async def delete_model(self, repo_id: str) -> ModelMutationResult:
@@ -1051,7 +1054,7 @@ class ModelManager:
                 await asyncio.to_thread(self.store.save_download, job)
                 if self.relay:
                     await asyncio.to_thread(self.relay.remove_manifest, job.id)
-        self._inventory_cache = None
+        self._invalidate_inventory()
         return ModelMutationResult(
             repo_id=repo_id,
             status="deleted",
@@ -1135,15 +1138,23 @@ class ModelManager:
     async def local_models(self) -> list[LocalModel]:
         endpoint = await self.runtime_endpoint()
         loaded = set(endpoint.loaded_model_ids)
-        if self._inventory_cache is None or time.monotonic() - self._inventory_cached_at > 10:
-            models = await asyncio.to_thread(self._scan_managed_models, set())
-            known = {model.id for model in models}
-            models.extend(await asyncio.to_thread(self._scan_huggingface_cache, set(), known))
-            self._inventory_cache = models
-            self._inventory_cached_at = time.monotonic()
+        seeded = False
+        with self._inventory_guard:
+            needs_seed = self._inventory_cache is None
+        if needs_seed:
+            downloads = await asyncio.to_thread(self.store.list_downloads)
+            seed = self._seed_inventory(downloads)
+            with self._inventory_guard:
+                if self._inventory_cache is None:
+                    self._inventory_cache = seed
+                    self._inventory_cached_at = time.monotonic()
+                    seeded = True
+        self._start_inventory_refresh(force=seeded)
+        with self._inventory_guard:
+            inventory = list(self._inventory_cache or ())
         models = [
             model.model_copy(update={"loaded": model.id in loaded})
-            for model in self._inventory_cache
+            for model in inventory
         ]
         known = {model.id for model in models}
         models.extend(
@@ -1151,6 +1162,66 @@ class ModelManager:
             for model_id in sorted(loaded - known)
         )
         return sorted(models, key=lambda model: (not model.loaded, model.id.lower()))
+
+    @staticmethod
+    def _seed_inventory(downloads: list[DownloadJob]) -> list[LocalModel]:
+        models: dict[str, LocalModel] = {}
+        for job in downloads:
+            if job.status != "completed":
+                continue
+            models[job.repo_id] = LocalModel(
+                id=job.repo_id,
+                revision=job.revision,
+                source="managed",
+                path=job.target_path,
+                size_bytes=job.total_bytes or job.downloaded_bytes,
+                downloaded_at=job.updated_at,
+            )
+        return list(models.values())
+
+    def _invalidate_inventory(self) -> None:
+        with self._inventory_guard:
+            self._inventory_cache = None
+            self._inventory_cached_at = 0.0
+            self._inventory_generation += 1
+            # A blocked network-filesystem scan is daemonized and may finish later. Detach it so
+            # its stale result cannot replace the inventory after a model mutation.
+            self._inventory_refresh_thread = None
+
+    def _start_inventory_refresh(self, force: bool = False) -> None:
+        with self._inventory_guard:
+            stale = time.monotonic() - self._inventory_cached_at > 10
+            if not force and not stale:
+                return
+            if self._inventory_refresh_thread and self._inventory_refresh_thread.is_alive():
+                return
+            generation = self._inventory_generation
+            thread = threading.Thread(
+                target=self._refresh_inventory,
+                args=(generation,),
+                daemon=True,
+                name="spark-model-inventory",
+            )
+            self._inventory_refresh_thread = thread
+        thread.start()
+
+    def _refresh_inventory(self, generation: int) -> None:
+        try:
+            models = self._scan_managed_models(set())
+            known = {model.id for model in models}
+            models.extend(self._scan_huggingface_cache(set(), known))
+        except (OSError, RuntimeError, ValueError):
+            models = None
+        with self._inventory_guard:
+            if generation != self._inventory_generation:
+                return
+            if models is not None:
+                merged = {model.id: model for model in self._inventory_cache or ()}
+                merged.update({model.id: model for model in models})
+                self._inventory_cache = list(merged.values())
+                self._inventory_cached_at = time.monotonic()
+            if self._inventory_refresh_thread is threading.current_thread():
+                self._inventory_refresh_thread = None
 
     def _scan_managed_models(self, loaded: set[str]) -> list[LocalModel]:
         models: list[LocalModel] = []
@@ -1401,7 +1472,7 @@ class ModelManager:
             if target.exists():
                 raise FileExistsError(f"Target model directory already exists: {target}")
             staging.replace(target)
-            self._inventory_cache = None
+            self._invalidate_inventory()
             await self._finish_or_distribute(job, target)
         except (OSError, ValueError) as error:
             job.status = "failed"
@@ -1444,6 +1515,7 @@ class ModelManager:
         job.status = "completed"
         job.updated_at = datetime.now(UTC)
         await asyncio.to_thread(self.store.save_download, job)
+        self._invalidate_inventory()
 
     @staticmethod
     def _staging_progress(staging: Path) -> int:

@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,7 +14,7 @@ from spark_cluster.model_manager import (
     build_fit_plan,
     safe_repo_parts,
 )
-from spark_cluster.models import DownloadJob, ModelDownloadRequest, ModelFitRequest
+from spark_cluster.models import DownloadJob, ModelDownloadRequest, ModelFitRequest, RuntimeEndpoint
 from spark_cluster.simulator import ClusterSimulator
 from spark_cluster.store import SnapshotStore
 
@@ -535,6 +537,65 @@ def test_managed_inventory_only_scans_valid_repository_depth(tmp_path):
     )
     assert [model.id for model in manager._scan_managed_models(set())] == ["acme/model"]
     manager.store.close()
+
+
+@pytest.mark.asyncio
+async def test_inventory_serves_completed_jobs_while_storage_scan_runs(
+    tmp_path, monkeypatch
+):
+    settings = Settings(model_cache_path=tmp_path / "models")
+    store = SnapshotStore(tmp_path / "inventory-fast.db")
+    runtime = SimpleNamespace(latest=ClusterSimulator("test").snapshot())
+    manager = ModelManager(settings, store, runtime)
+    fit = build_fit_plan(
+        ModelFitRequest(repo_id="acme/model"),
+        metadata(),
+        runtime.latest,
+        settings,
+    )
+    store.save_download(
+        DownloadJob(
+            id="completed-job",
+            repo_id="acme/model",
+            revision="main",
+            status="completed",
+            total_bytes=123,
+            target_path=str(settings.model_cache_path / "acme" / "model"),
+            staging_path=str(settings.model_cache_path / ".partial" / "completed-job"),
+            fit=fit,
+        )
+    )
+
+    async def runtime_endpoint():
+        return RuntimeEndpoint(
+            base_url="http://runtime/v1",
+            models_url="http://runtime/v1/models",
+            chat_completions_url="http://runtime/v1/chat/completions",
+            status="unreachable",
+        )
+
+    scan_started = threading.Event()
+    release_scan = threading.Event()
+
+    def blocked_scan(_loaded):
+        scan_started.set()
+        release_scan.wait(5)
+        return []
+
+    monkeypatch.setattr(manager, "runtime_endpoint", runtime_endpoint)
+    monkeypatch.setattr(manager, "_scan_managed_models", blocked_scan)
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf-home"))
+    try:
+        started_at = time.monotonic()
+        models = await manager.local_models()
+        assert time.monotonic() - started_at < 0.5
+        assert [(model.id, model.size_bytes) for model in models] == [("acme/model", 123)]
+        assert scan_started.wait(1)
+    finally:
+        release_scan.set()
+        if manager._inventory_refresh_thread:
+            manager._inventory_refresh_thread.join(1)
+        store.close()
 
 
 def test_nvfp4_download_is_allowed_but_launch_is_blocked_on_ampere(tmp_path):
