@@ -1,10 +1,13 @@
 import asyncio
+import json
+
+import httpx
 from types import SimpleNamespace
 
 import pytest
 
 from spark_cluster.config import Settings
-from spark_cluster.model_pool import ModelPool, ModelPreferences, PoolLoadRequest
+from spark_cluster.model_pool import ModelPool, ModelPreferences, PoolLoadRequest, PoolNode
 from spark_cluster.models import ModelLaunchRequest
 
 
@@ -311,9 +314,6 @@ def test_execution_runtime_reports_automatic_engine_evidence():
 
 @pytest.mark.asyncio
 async def test_runtime_model_metadata_is_persisted_verbatim(tmp_path, monkeypatch):
-    import httpx
-    from spark_cluster.model_pool import PoolNode
-
     payload = {
         "object": "list",
         "data": [
@@ -346,9 +346,6 @@ async def test_runtime_model_metadata_is_persisted_verbatim(tmp_path, monkeypatc
 
 @pytest.mark.asyncio
 async def test_invalid_runtime_model_metadata_is_not_cached(tmp_path, monkeypatch):
-    import httpx
-    from spark_cluster.model_pool import PoolNode
-
     transport = httpx.MockTransport(
         lambda request: httpx.Response(200, json={"object": "list", "data": ["invalid"]})
     )
