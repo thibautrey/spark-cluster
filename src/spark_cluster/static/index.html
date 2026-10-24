@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=runtime-library-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=downloaded-models-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -181,6 +181,16 @@
             <p id="hf-token-saved" role="status" hidden></p>
             <div class="active-download-list" id="active-download-list"></div>
           </section>
+          <div class="catalog-secondary-sections">
+            <details class="catalog-secondary" id="local-models-section">
+              <summary><span>Downloaded models</span><small id="local-model-count">…</small></summary>
+              <div class="local-models-body">
+                <label class="local-model-search"><span aria-hidden="true">⌕</span><input id="local-model-query" type="search" aria-label="Search downloaded models" placeholder="Search downloaded models…" autocomplete="off" /></label>
+                <div class="model-inventory" id="local-models"><div class="empty-state"><b>Loading inventory…</b><span>Open this section to view downloaded models.</span></div></div>
+              </div>
+            </details>
+            <details class="catalog-secondary" id="download-history-section"><summary><span>History</span><small id="download-history-count">0</small></summary><div class="download-list" id="download-list"><div class="empty-downloads">No downloads yet.</div></div></details>
+          </div>
           <div class="catalog-toolbar">
             <label class="catalog-search"><span>⌕</span><input id="catalog-query" type="search" aria-label="Search Hugging Face models" placeholder="Search models or paste a repository ID…" autocomplete="off" /></label>
             <label class="catalog-sort"><span class="sr-only">Sort models</span><select id="catalog-sort" aria-label="Sort models"><option value="spark">Recommended</option><option value="trendingScore">Trending</option><option value="downloads">Most downloaded</option><option value="likes">Most liked</option><option value="lastModified">Recently updated</option></select></label>
@@ -247,10 +257,6 @@
                 <div class="action-sheet-actions"><button class="secondary" id="action-sheet-cancel" type="button">Keep current state</button><button class="primary" id="action-sheet-confirm" type="button">Confirm</button></div>
               </div>
             </section>
-          </div>
-          <div class="catalog-secondary-sections">
-            <details class="catalog-secondary" id="local-models-section"><summary><span>Downloaded models</span><small id="local-model-count">…</small></summary><div class="model-inventory" id="local-models"><div class="empty-state"><b>Loading inventory…</b><span>Open this section to view downloaded models.</span></div></div></details>
-            <details class="catalog-secondary" id="download-history-section"><summary><span>History</span><small id="download-history-count">0</small></summary><div class="download-list" id="download-list"><div class="empty-downloads">No downloads yet.</div></div></details>
           </div>
         </section>
 
@@ -413,11 +419,11 @@
       </section>
     </div>
     <script src="/assets/navigation.js?v=runtime-library-v1"></script>
-    <script src="/assets/app.js?v=adaptive-pools-v1"></script>
+    <script src="/assets/app.js?v=downloaded-models-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=adaptive-pools-v1"></script>
-    <script src="/assets/catalog.js?v=adaptive-pools-v1"></script>
+    <script src="/assets/catalog.js?v=downloaded-models-v1"></script>
     <script src="/assets/setup.js?v=adaptive-pools-v1"></script>
     <script src="/assets/pool.js?v=adaptive-pools-v1" defer></script>
     <script src="/assets/runtimes.js?v=runtime-library-v1" defer></script>

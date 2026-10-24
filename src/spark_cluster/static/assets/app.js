@@ -3,6 +3,7 @@ const throughputHistory = [];
 let currentFit = null;
 let fitRequestVersion = 0;
 let localModels = [];
+let localModelQuery = '';
 let launchFit = null;
 let launchPerformance = null;
 let launchFitRequest = 0;
@@ -419,19 +420,43 @@ function renderPoolEndpoint(pool) {
 }
 
 
+function localModelAvatar(model) {
+  if (window.catalogAvatarForRepo) return window.catalogAvatarForRepo(model.id);
+  const name = model.id.split('/').pop() || model.id;
+  const monogram = name.replace(/[^A-Za-z0-9]+/g, ' ').trim().split(/\s+/)
+    .slice(0, 2).map(part => part[0]).join('').toUpperCase() || 'HF';
+  return `<span class="catalog-avatar"><span aria-hidden="true">${escapeHtml(monogram)}</span></span>`;
+}
+
+function renderLocalModelCards() {
+  const query = localModelQuery.trim().toLocaleLowerCase();
+  const models = query
+    ? localModels.filter(model => model.id.toLocaleLowerCase().includes(query))
+    : localModels;
+  if (!localModels.length) {
+    $('local-models').innerHTML = '<div class="empty-state"><b>No local model found</b><span>Add one from Hugging Face.</span></div>';
+    return;
+  }
+  if (!models.length) {
+    $('local-models').innerHTML = `<div class="empty-state"><b>No downloaded model found</b><span>Nothing matches “${escapeHtml(localModelQuery.trim())}”.</span></div>`;
+    return;
+  }
+  $('local-models').innerHTML = models.map(model => `
+    <article class="model-card local-model-card">
+      <button class="local-model-open" type="button" data-model-repo="${escapeHtml(model.id)}" data-model-revision="${escapeHtml(model.revision || 'main')}" aria-label="Open details for ${escapeHtml(model.id)}">
+        ${localModelAvatar(model)}
+        <span><h3>${escapeHtml(model.id)}</h3><p>${formatBytes(model.size_bytes)}</p></span>
+      </button>
+      <div class="model-card-actions">${model.loaded ? '<span class="model-state loaded">● In use</span>' : ''}${model.source === 'managed' ? `<button class="model-delete danger" type="button" data-model-action="delete" data-repo-id="${escapeHtml(model.id)}" aria-label="Delete ${escapeHtml(model.id)}" title="${model.loaded ? 'Stop the runtime before deleting this model' : 'Delete model'}" ${model.loaded ? 'disabled' : ''}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v5M14 11v5" /></svg></button>` : ''}</div>
+    </article>`).join('');
+  window.activateCatalogAvatars?.($('local-models'));
+}
+
 function renderModels(models) {
   localModels = models;
   $('local-model-count').textContent = models.length;
   updateLaunchModelOptions(models);
-  if (!models.length) {
-    $('local-models').innerHTML = '<div class="empty-state"><b>No local model found</b><span>Add one from Hugging Face.</span></div>';
-    return;
-  }
-  $('local-models').innerHTML = models.map(model => `
-    <article class="model-card">
-      <div><h3>${escapeHtml(model.id)}</h3><p>${formatBytes(model.size_bytes)}</p></div>
-      <div class="model-card-actions">${model.loaded ? '<span class="model-state loaded">● In use</span>' : ''}${model.source === 'managed' ? `<button class="model-delete danger" type="button" data-model-action="delete" data-repo-id="${escapeHtml(model.id)}" aria-label="Delete ${escapeHtml(model.id)}" title="${model.loaded ? 'Stop the runtime before deleting this model' : 'Delete model'}" ${model.loaded ? 'disabled' : ''}><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v5M14 11v5" /></svg></button>` : ''}</div>
-    </article>`).join('');
+  renderLocalModelCards();
 }
 
 function updateLaunchModelOptions(models) {
@@ -1399,8 +1424,20 @@ $('active-download-list').addEventListener('click', event => {
 });
 $('local-models').addEventListener('click', event => {
   const button = event.target.closest('[data-model-action="delete"]');
-  if (!button || button.disabled) return;
-  openModelActionSheet('delete', {repoId: button.dataset.repoId}, button);
+  if (button) {
+    if (!button.disabled) openModelActionSheet('delete', {repoId: button.dataset.repoId}, button);
+    return;
+  }
+  const model = event.target.closest('[data-model-repo]');
+  if (model) window.inspectCatalogModel?.(
+    model.dataset.modelRepo,
+    model.dataset.modelRevision || 'main',
+    model,
+  );
+});
+$('local-model-query').addEventListener('input', event => {
+  localModelQuery = event.currentTarget.value;
+  renderLocalModelCards();
 });
 $('action-sheet-confirm').addEventListener('click', confirmModelAction);
 $('action-sheet-cancel').addEventListener('click', closeModelActionSheet);

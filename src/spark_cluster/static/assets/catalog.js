@@ -110,6 +110,15 @@ function activateCatalogAvatars(root) {
   }));
 }
 
+function catalogAvatarForRepo(repo) {
+  const known = catalogModels.find(model => model.id === repo);
+  const author = repo.includes('/') ? repo.split('/')[0] : 'huggingface';
+  return catalogAvatar(known || {id: repo, author, icon_url: null});
+}
+
+window.catalogAvatarForRepo = catalogAvatarForRepo;
+window.activateCatalogAvatars = activateCatalogAvatars;
+
 function catalogImage(model, detail = false) {
   return `<span class="catalog-media ${detail ? 'catalog-detail-media' : ''}">
     <span class="catalog-image-fallback" aria-hidden="true"><i>${escapeHtml(catalogMonogram(model))}</i><small>Hugging Face model</small></span>
@@ -275,6 +284,7 @@ async function loadCatalog(append = false) {
     if (request !== catalogRequest) return;
     const existing = new Set(catalogModels.map(model => model.id));
     catalogModels.push(...page.models.filter(model => !existing.has(model.id)));
+    if (localModels.length) renderLocalModelCards();
     catalogCursor = page.cursor;
     catalogBaseStatus = `${catalogModels.length} model${catalogModels.length === 1 ? '' : 's'}${catalogCursor ? ' · more available' : ''}`;
     if (selectedCapacity()) await applyCapacityFilter();
@@ -338,6 +348,8 @@ async function inspectCatalogModel(repo, revision = 'main', opener = null) {
     $('catalog-detail-retry').addEventListener('click', () => inspectCatalogModel(repo, revision));
   }
 }
+
+window.inspectCatalogModel = inspectCatalogModel;
 
 $('catalog-grid').addEventListener('click', event => {
   const button = event.target.closest('[data-repo]');
