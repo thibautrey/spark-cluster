@@ -184,8 +184,12 @@ class DockerEngineClient:
                     if event.get("error") or event.get("errorDetail"):
                         raise ValueError("Docker rejected the runtime archive")
         installed = await self.request("GET", f"/images/{quote(image, safe='')}/json")
-        if installed.json().get("Id") != config_digest:
-            raise ValueError("Docker image identity does not match the downloaded runtime")
+        value = installed.json()
+        architecture = {"x86_64": "amd64", "aarch64": "arm64"}.get(
+            value.get("Architecture"), value.get("Architecture")
+        )
+        if f"{value.get('Os')}/{architecture}" != platform:
+            raise ValueError("Docker imported an image for a different architecture")
 
     async def ping(self) -> bool:
         try:

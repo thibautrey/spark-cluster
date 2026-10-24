@@ -74,14 +74,17 @@ Every selected SSH machine must report the artifact's Linux architecture before
 the first import. The archive is streamed over trusted SSH to a private temporary
 file, verified with `sha256sum`, and imported into k3s/containerd's **k8s.io**
 namespace or Docker. Containerd's exact image reference must be present after
-import; Docker's image configuration ID must match the downloaded configuration.
+import. The controller archive checksum and its config blob digest bind the downloaded
+configuration; Docker must expose the imported tag with the selected platform. Docker's
+containerd image store can give its imported manifest a different local ID, so Spark does
+not compare that transformed ID to the remote registry config digest.
 Temporary files are removed, including a best-effort cleanup after disconnects.
 CRI-only machines without an accessible containerd or Docker import command are
 unsupported. Container storage and `/var/tmp` need sufficient disk capacity.
 
 For a local Docker pool, the controller streams the archive through Docker Engine's
 image-load API, checks error events even when HTTP status is 200, and verifies
-the resulting image configuration ID. It checks the daemon architecture before
+the resulting tag and image platform. It checks the daemon architecture before
 loading. The archive never needs to be buffered fully in controller memory.
 
 Imports are serialized. Each SSH node has an independent outcome, so a failure

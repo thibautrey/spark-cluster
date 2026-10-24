@@ -289,7 +289,14 @@ async def test_docker_archive_stream_checks_host_identity_and_embedded_errors(tm
                 text=json.dumps({"error": "bad archive"} if error else {"stream": "Loaded image"})
                 + "\n",
             )
-        return httpx.Response(200, json={"Id": "sha256:" + "a" * 64})
+        return httpx.Response(
+            200,
+            json={
+                "Id": "sha256:" + "a" * 64,
+                "Os": "linux",
+                "Architecture": architecture,
+            },
+        )
 
     docker.transport = httpx.MockTransport(handle)
     await docker.load_runtime_archive(archive, "linux/arm64", "a/b:v1", "sha256:" + "a" * 64)
