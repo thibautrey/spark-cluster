@@ -20,11 +20,27 @@ started, stopped, or reconfigured by an installation.
 | [Xinference](https://github.com/xorbitsai/inference) | Multi-engine serving | `docker.io/xprobe/xinference` |
 | [LocalAI](https://github.com/mudler/LocalAI) | Local OpenAI-compatible APIs | `docker.io/localai/localai` |
 
-These are widely used projects, not a popularity ranking. MLX / MLX-LM is also
-an important inference family on Apple Silicon; its native macOS package lifecycle
-is outside this Linux container installer. Ray Serve, BentoML and KServe are
+These are widely used projects, not a popularity ranking. Ray Serve, BentoML and KServe are
 serving/orchestration layers; ONNX Runtime, OpenVINO and PyTorch are lower-level
 execution frameworks. They are not interchangeable container launch contracts.
+
+## Operating-system support
+
+Spark distinguishes an OCI image from a native runtime package. It never treats a
+Linux image tag as proof that the same version is installable on another OS.
+
+| Runtime | Linux AMD64/ARM64 | macOS Apple/Intel | Windows x64/ARM64 |
+| --- | --- | --- | --- |
+| vLLM, SGLang, TensorRT-LLM, Triton, TGI, LMDeploy, Xinference | OCI, when the selected tag publishes that architecture | — | — |
+| llama.cpp | OCI | Native upstream archive | Native upstream CPU archive |
+| Ollama | OCI | Native upstream archive | Native upstream archive |
+| LocalAI | OCI | Native Apple Silicon binary | — |
+
+The matrix is returned by the catalogue API and drives the platform selector.
+Unsupported combinations are rejected before a job is queued. llama.cpp uses the
+portable CPU archive on Windows so installation does not assume CUDA, ROCm, Vulkan,
+OpenVINO or SYCL. An optimized accelerator build can be added later as an explicit
+package variant; Spark never silently substitutes one.
 
 Versions are **published distribution tags**, including stable releases, backend
 variants, and rolling/nightly tags. Tags are discovered live, never inferred from
@@ -47,13 +63,22 @@ model-storage volume rather than the small state/database volume. Override with
 `SPARK_CLUSTER_RUNTIME_CACHE_PATH` if needed. Persist that directory and the
 controller database together. The cache directory is ignored by model inventory.
 
-Choose `linux/arm64` for DGX Spark or `linux/amd64` for x86 servers. Spark verifies
+Choose `linux/arm64` for DGX Spark or `linux/amd64` for x86 servers. Choose
+`darwin/arm64`, `darwin/amd64`, `windows/amd64`, or `windows/arm64` only when the
+selected runtime publishes a managed native package. Spark verifies
 the registry manifest, its image configuration, and the selected platform, then
 pins the **platform-specific SHA256 manifest digest** before invoking skopeo.
 The controller produces a Docker image archive with its original repository/tag,
 records its checksum and size, and publishes it only after a successful copy.
 It reserves a conservative disk-space allowance; layer expansion can still exceed
 this estimate and will fail the job without publishing an incomplete artifact.
+
+Native versions come from the runtime project's GitHub Releases API. Spark selects
+one exact curated asset name, requires GitHub's `sha256:` release digest, restricts
+redirects to GitHub release-asset hosts, checks the published byte length while
+streaming, and verifies the SHA256 before publishing the controller artifact.
+Arbitrary URLs, installer scripts, MSI/EXE execution and package-manager commands
+are not accepted.
 
 Downloads are serialized, duplicate in-flight requests reuse a job, and an
 existing artifact is reused only after checksum verification. A moved upstream
@@ -82,6 +107,25 @@ Temporary files are removed, including a best-effort cleanup after disconnects.
 CRI-only machines without an accessible containerd or Docker import command are
 unsupported. Container storage and `/var/tmp` need sufficient disk capacity.
 
+macOS and Windows machines are registered separately under **Native macOS & Windows
+hosts**. Registration accepts a private LAN address, SSH username and an Ed25519
+host-key fingerprint. Spark verifies and pins that fingerprint before its first SSH
+command, then detects the actual OS and architecture. The controller must already
+have an SSH identity authorized for that user; no password or private key is sent
+through the browser.
+
+Native packages install without administrator privileges:
+
+- macOS: `~/Library/Application Support/Spark Cluster/runtimes/<runtime>/<version>`
+- Windows: `%LOCALAPPDATA%\SparkCluster\runtimes\<runtime>\<version>`
+
+The package streams over pinned SSH, is verified again on the destination, expands
+through `tar`/`ditto` on macOS or `Expand-Archive` on Windows, and is moved into its
+version directory only after success. A checksum marker makes retries idempotent.
+Spark records the current version inside the runtime directory but does not alter
+the user's global `PATH`, install a service, execute an upstream installer, request
+elevation, or launch the runtime automatically.
+
 For a local Docker pool, the controller streams the archive through Docker Engine's
 image-load API, checks error events even when HTTP status is 200, and verifies
 the resulting tag and image platform. It checks the daemon architecture before
@@ -109,6 +153,8 @@ All paths below are controller-local, including when a remote pool is active.
 | `POST /api/v1/runtime-library/resolve` | Resolve a runtime/version/platform to immutable image metadata |
 | `POST /api/v1/runtime-library/downloads` | Queue controller download; returns HTTP 202 and durable job |
 | `POST /api/v1/runtime-library/installs` | Queue cached image import; returns HTTP 202 and durable job |
+| `POST /api/v1/runtime-library/hosts` | Verify and register a native macOS/Windows SSH host |
+| `DELETE /api/v1/runtime-library/hosts/{id}` | Remove native-host registration without changing the machine |
 | `GET /api/v1/runtime-library/jobs/{id}` | Inspect phase, progress, artifact ID and per-node outcomes |
 
 Download/resolve JSON: `{"runtime_id":"vllm","version":"v0.9.2","platform":"linux/arm64"}`.
@@ -119,6 +165,12 @@ Omit `addresses` to import on every SSH-managed node in that pool, or for a Dock
 pool to import once on its host. Runtimes and source repositories are curated in
 `runtime_catalog.py`; arbitrary external image URLs and shell commands are not
 accepted by these endpoints.
+
+For a native host, send
+`{"artifact_id":"<32 hex characters>","host_id":"host-<12 hex characters>"}`.
+Host registration JSON contains `name`, private-LAN `address`, `username`, and the
+displayed `SHA256:` Ed25519 fingerprint. Exactly one of `cluster_id` and `host_id`
+is accepted for an installation.
 
 The separation between runtime definitions, versions and launch contracts is
 inspired by [GPUStack's inference backend catalogue](https://github.com/gpustack/gpustack/blob/main/gpustack/schemas/inference_backend.py).

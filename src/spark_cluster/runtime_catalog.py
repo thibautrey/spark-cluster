@@ -16,6 +16,14 @@ import httpx
 
 TAG = r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}"
 DIGEST = r"sha256:[a-f0-9]{64}"
+SUPPORTED_PLATFORMS = (
+    "linux/amd64",
+    "linux/arm64",
+    "darwin/arm64",
+    "darwin/amd64",
+    "windows/amd64",
+    "windows/arm64",
+)
 ACCEPT = ", ".join(
     [
         "application/vnd.oci.image.index.v1+json",
@@ -34,6 +42,8 @@ class CatalogRuntime:
     project_url: str
     description: str
     hardware: str
+    platforms: tuple[str, ...] = ("linux/amd64", "linux/arm64")
+    native_repository: str | None = None
     launch_adapter: bool = False
     note: str = "Installation prepares an image; no Spark launch adapter is enabled."
 
@@ -48,8 +58,8 @@ CATALOG = {
             "https://github.com/vllm-project/vllm",
             "High-throughput LLM serving",
             "NVIDIA / AMD, depending on image",
-            True,
-            "Launch adapter exists. Upstream images still need GPU/kernel validation.",
+            launch_adapter=True,
+            note="Launch adapter exists. Upstream images still need GPU/kernel validation.",
         ),
         CatalogRuntime(
             "sglang",
@@ -58,8 +68,8 @@ CATALOG = {
             "https://github.com/sgl-project/sglang",
             "LLM and multimodal serving",
             "NVIDIA / AMD / Ascend, depending on image",
-            True,
-            "Single-node launch adapter exists; distributed bootstrap is not validated.",
+            launch_adapter=True,
+            note="Single-node launch adapter exists; distributed bootstrap is not validated.",
         ),
         CatalogRuntime(
             "llama-cpp",
@@ -68,6 +78,8 @@ CATALOG = {
             "https://github.com/ggml-org/llama.cpp",
             "Portable GGUF inference server",
             "CPU / CUDA / Vulkan, depending on image",
+            SUPPORTED_PLATFORMS,
+            "ggml-org/llama.cpp",
         ),
         CatalogRuntime(
             "ollama",
@@ -76,6 +88,8 @@ CATALOG = {
             "https://github.com/ollama/ollama",
             "Local model management and serving",
             "CPU / NVIDIA / AMD, depending on image",
+            SUPPORTED_PLATFORMS,
+            "ollama/ollama",
         ),
         CatalogRuntime(
             "tensorrt-llm",
@@ -124,6 +138,8 @@ CATALOG = {
             "https://github.com/mudler/LocalAI",
             "Local OpenAI-compatible model APIs",
             "CPU / NVIDIA / AMD / Vulkan, depending on image",
+            ("linux/amd64", "linux/arm64", "darwin/arm64"),
+            "mudler/LocalAI",
         ),
     ]
 }
@@ -131,6 +147,30 @@ CATALOG = {
 
 class RegistryError(ValueError):
     pass
+
+
+def native_asset_name(runtime_id: str, version: str, platform: str) -> str | None:
+    """Return the one conservative upstream package selected for a native host."""
+    values = {
+        ("llama-cpp", "darwin/arm64"): f"llama-{version}-bin-macos-arm64.tar.gz",
+        ("llama-cpp", "darwin/amd64"): f"llama-{version}-bin-macos-x64.tar.gz",
+        ("llama-cpp", "windows/amd64"): f"llama-{version}-bin-win-cpu-x64.zip",
+        ("llama-cpp", "windows/arm64"): f"llama-{version}-bin-win-cpu-arm64.zip",
+        ("ollama", "darwin/arm64"): "ollama-darwin.tgz",
+        ("ollama", "darwin/amd64"): "ollama-darwin.tgz",
+        ("ollama", "windows/amd64"): "ollama-windows-amd64.zip",
+        ("ollama", "windows/arm64"): "ollama-windows-arm64.zip",
+        ("localai", "darwin/arm64"): f"local-ai-{version}-darwin-arm64",
+    }
+    return values.get((runtime_id, platform))
+
+
+def archive_format(name: str) -> str:
+    if name.endswith(".zip"):
+        return "zip"
+    if name.endswith((".tar.gz", ".tgz")):
+        return "tar.gz"
+    return "binary"
 
 
 def runtime_entry(runtime_id: str) -> CatalogRuntime:
@@ -182,11 +222,17 @@ class RuntimeRegistry:
         response.raise_for_status()
         return response
 
-    async def versions(self, runtime_id: str, cursor: str = "", limit: int = 50) -> dict:
+    async def versions(
+        self, runtime_id: str, cursor: str = "", limit: int = 50, platform: str = "linux/amd64"
+    ) -> dict:
         runtime = runtime_entry(runtime_id)
+        if platform not in runtime.platforms:
+            raise RegistryError(f"{runtime.name} is not distributed for {platform}")
         if cursor and not re.fullmatch(TAG, cursor):
             raise RegistryError("Invalid version cursor")
-        key = (runtime_id, cursor, limit)
+        if platform.startswith(("darwin/", "windows/")):
+            return await self._native_versions(runtime, cursor, limit, platform)
+        key = (runtime_id, cursor, limit, platform)
         async with self.locks.setdefault(runtime_id, asyncio.Lock()):
             cached = self.cache.get(key)
             if cached and time.monotonic() - cached[0] < 300:
@@ -270,12 +316,73 @@ class RuntimeRegistry:
                     "Registry unavailable or access/rate limited; retry later"
                 ) from error
 
+    async def _native_versions(
+        self, runtime: CatalogRuntime, cursor: str, limit: int, platform: str
+    ) -> dict:
+        if not runtime.native_repository or not native_asset_name(runtime.id, "VERSION", platform):
+            raise RegistryError(f"{runtime.name} has no managed native package for {platform}")
+        if cursor and not cursor.isdecimal():
+            raise RegistryError("Invalid GitHub release page")
+        key = (runtime.id, cursor, limit, platform)
+        async with self.locks.setdefault(f"{runtime.id}:{platform}", asyncio.Lock()):
+            cached = self.cache.get(key)
+            if cached and time.monotonic() - cached[0] < 300:
+                return {**cached[1], "cached": True}
+            try:
+                async with httpx.AsyncClient(transport=self.transport, timeout=30) as client:
+                    response = await client.get(
+                        f"https://api.github.com/repos/{runtime.native_repository}/releases",
+                        params={"per_page": limit, "page": cursor or "1"},
+                        headers={"Accept": "application/vnd.github+json"},
+                    )
+                    response.raise_for_status()
+                    releases = response.json()
+                versions = []
+                for release in releases:
+                    version = str(release.get("tag_name", ""))
+                    expected = native_asset_name(runtime.id, version, platform)
+                    if expected and any(
+                        asset.get("name") == expected for asset in release.get("assets", [])
+                    ):
+                        versions.append(
+                            {
+                                "version": version,
+                                "updated_at": release.get("published_at"),
+                                "platforms": [platform],
+                            }
+                        )
+                next_cursor = str(int(cursor or "1") + 1) if len(releases) == limit else None
+                result = {
+                    "runtime_id": runtime.id,
+                    "repository": runtime.native_repository,
+                    "versions": versions,
+                    "next_cursor": next_cursor,
+                    "cached": False,
+                    "stale": False,
+                    "ordering": "recent GitHub releases",
+                }
+                self.cache[key] = (time.monotonic(), result)
+                while len(self.cache) > 100:
+                    self.cache.pop(next(iter(self.cache)))
+                return result
+            except (httpx.HTTPError, KeyError, TypeError, ValueError) as error:
+                if cached:
+                    return {
+                        **cached[1],
+                        "cached": True,
+                        "stale": True,
+                        "warning": "GitHub unavailable; showing cached releases",
+                    }
+                raise RegistryError("GitHub releases are unavailable or rate limited") from error
+
     async def resolve(self, runtime_id: str, version: str, platform: str) -> dict:
         runtime = runtime_entry(runtime_id)
         if not re.fullmatch(TAG, version):
-            raise RegistryError("Invalid image tag")
-        if platform not in {"linux/amd64", "linux/arm64"}:
-            raise RegistryError("Choose linux/amd64 or linux/arm64")
+            raise RegistryError("Invalid runtime version")
+        if platform not in runtime.platforms:
+            raise RegistryError(f"{runtime.name} is not distributed for {platform}")
+        if platform.startswith(("darwin/", "windows/")):
+            return await self._resolve_native(runtime, version, platform)
         try:
             async with httpx.AsyncClient(transport=self.transport, timeout=30) as client:
 
@@ -332,3 +439,46 @@ class RuntimeRegistry:
             raise RegistryError(
                 "Image metadata unavailable; check the tag and registry access"
             ) from error
+
+    async def _resolve_native(self, runtime: CatalogRuntime, version: str, platform: str) -> dict:
+        expected_name = native_asset_name(runtime.id, version, platform)
+        if not runtime.native_repository or not expected_name:
+            raise RegistryError(f"{runtime.name} has no managed native package for {platform}")
+        try:
+            async with httpx.AsyncClient(transport=self.transport, timeout=30) as client:
+                response = await client.get(
+                    f"https://api.github.com/repos/{runtime.native_repository}/releases/tags/{version}",
+                    headers={"Accept": "application/vnd.github+json"},
+                )
+                response.raise_for_status()
+                release = response.json()
+            asset = next(
+                item for item in release.get("assets", []) if item.get("name") == expected_name
+            )
+            digest = str(asset.get("digest") or "")
+            url = str(asset.get("browser_download_url") or "")
+            parsed = urlparse(url)
+            if (
+                not re.fullmatch(DIGEST, digest)
+                or parsed.scheme != "https"
+                or parsed.hostname != "github.com"
+            ):
+                raise RegistryError("Native package has no trusted SHA256 release identity")
+            return {
+                "runtime_id": runtime.id,
+                "version": version,
+                "platform": platform,
+                "artifact_kind": "native",
+                "repository": runtime.native_repository,
+                "asset_name": expected_name,
+                "archive_format": archive_format(expected_name),
+                "download_url": url,
+                "digest": digest,
+                "size_bytes": int(asset.get("size") or 0),
+            }
+        except StopIteration as error:
+            raise RegistryError(f"Release {version} has no {platform} package") from error
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as error:
+            if isinstance(error, RegistryError):
+                raise
+            raise RegistryError("Native release metadata is unavailable") from error

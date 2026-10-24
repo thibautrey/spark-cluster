@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 from pathlib import Path
@@ -14,6 +15,8 @@ from spark_cluster.config import Settings
 from spark_cluster.local_docker import DockerEngineClient
 from spark_cluster.runtime_library import (
     RuntimeDownloadRequest,
+    RuntimeHost,
+    RuntimeHostRequest,
     RuntimeImportRequest,
     RuntimeLibrary,
 )
@@ -55,6 +58,29 @@ async def add_artifact(library, content=b"test-archive"):
         "archive_bytes": len(content),
     }
     (library.root / f"{artifact['id']}.tar").write_bytes(content)
+    await library._save("artifact", artifact)
+    return artifact
+
+
+async def add_native_artifact(
+    library, platform="darwin/arm64", content=b"native-package", runtime_id="llama-cpp"
+):
+    artifact = {
+        "id": "b" * 32,
+        "runtime_id": runtime_id,
+        "version": "b1234",
+        "platform": platform,
+        "artifact_kind": "native",
+        "archive_format": "zip" if platform.startswith("windows/") else "tar.gz",
+        "asset_name": "runtime-package.zip",
+        "repository": "example/runtime",
+        "digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+        "sha256": hashlib.sha256(content).hexdigest(),
+        "archive_bytes": len(content),
+        "filename": "b" * 32 + ".package",
+    }
+    (library.root / artifact["filename"]).parent.mkdir(exist_ok=True)
+    (library.root / artifact["filename"]).write_bytes(content)
     await library._save("artifact", artifact)
     return artifact
 
@@ -156,11 +182,59 @@ async def test_download_failure_cleans_partial_and_persists_error(library, monke
 
 
 @pytest.mark.asyncio
+async def test_native_download_uses_release_digest_without_skopeo(library, monkeypatch):
+    content = b"verified-native-package"
+    checksum = hashlib.sha256(content).hexdigest()
+    monkeypatch.setattr("spark_cluster.runtime_library.shutil.which", lambda name: None)
+    library.remote.resolve = AsyncMock(
+        return_value={
+            "runtime_id": "ollama",
+            "version": "v1.2.3",
+            "platform": "darwin/arm64",
+            "artifact_kind": "native",
+            "repository": "ollama/ollama",
+            "asset_name": "ollama-darwin.tgz",
+            "archive_format": "tar.gz",
+            "download_url": "https://github.com/ollama/ollama/releases/download/v1.2.3/x",
+            "digest": "sha256:" + checksum,
+            "size_bytes": len(content),
+        }
+    )
+    library.native_transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, content=content)
+    )
+    job = await library.download(
+        RuntimeDownloadRequest(runtime_id="ollama", version="v1.2.3", platform="darwin/arm64")
+    )
+    await library.tasks[job["id"]]
+    result = await library.job(job["id"])
+    artifact = await library.get_artifact(result["artifact_id"])
+    assert result["status"] == "completed"
+    assert artifact["artifact_kind"] == "native"
+    assert (library.root / artifact["filename"]).read_bytes() == content
+
+
+@pytest.mark.asyncio
+async def test_native_download_rejects_untrusted_redirect(library, tmp_path):
+    def handle(request):
+        if request.url.host == "github.com":
+            return httpx.Response(302, headers={"location": "https://evil.example/package"})
+        return httpx.Response(200, content=b"x")
+
+    library.native_transport = httpx.MockTransport(handle)
+    with pytest.raises(ValueError, match="unsupported download host"):
+        await library._download_native(
+            {"download_url": "https://github.com/x/y", "size_bytes": 1},
+            tmp_path / "package",
+        )
+
+
+@pytest.mark.asyncio
 async def test_install_freezes_pool_and_reports_each_node(library):
     artifact = await add_artifact(library)
     pool = add_pool(library)
     transport = library.prerequisites.setup.transport
-    transport.run = AsyncMock(return_value="Linux\naarch64\n")
+    transport.run_command = AsyncMock(return_value="Linux\naarch64\n")
     imported = []
 
     async def import_node(node, path, metadata, job_id):
@@ -190,7 +264,7 @@ async def test_install_freezes_pool_and_reports_each_node(library):
 async def test_install_subset_checks_architecture_and_archive_before_any_import(library):
     artifact = await add_artifact(library)
     pool = add_pool(library)
-    library.prerequisites.setup.transport.run = AsyncMock(return_value="Linux\nx86_64\n")
+    library.prerequisites.setup.transport.run_command = AsyncMock(return_value="Linux\nx86_64\n")
     library._import_node = AsyncMock()
     request = RuntimeImportRequest(
         artifact_id=artifact["id"], cluster_id=pool.id, addresses=["192.168.50.11"]
@@ -199,7 +273,7 @@ async def test_install_subset_checks_architecture_and_archive_before_any_import(
     await library.tasks[job["id"]]
     assert "Architecture mismatch" in (await library.job(job["id"]))["message"]
     library._import_node.assert_not_awaited()
-    library.prerequisites.setup.transport.run.return_value = "Linux\naarch64\n"
+    library.prerequisites.setup.transport.run_command.return_value = "Linux\naarch64\n"
     job = await library.install(request)
     await library.tasks[job["id"]]
     assert (await library.job(job["id"]))["status"] == "completed"
@@ -227,6 +301,109 @@ async def test_rejects_unmanaged_pool_and_cross_pool_addresses(library):
         await library.install(
             RuntimeImportRequest(artifact_id=artifact["id"], cluster_id=unmanaged.id)
         )
+
+
+@pytest.mark.asyncio
+async def test_registers_fingerprint_pinned_native_host_and_detects_macos(library):
+    class NativeTransport:
+        def __init__(self):
+            self.trusted = []
+
+        async def trust(self, nodes):
+            self.trusted.extend(nodes)
+
+        async def run_command(self, node, command, timeout=60):
+            return "Darwin\narm64\n"
+
+    transport = NativeTransport()
+    library.prerequisites.setup.transport = transport
+    host = await library.register_host(
+        RuntimeHostRequest(
+            name="Studio Mac",
+            address="192.168.50.30",
+            username="thibaut",
+            fingerprint="SHA256:" + "A" * 43,
+        )
+    )
+    assert host["platform"] == "darwin/arm64"
+    assert transport.trusted[0].fingerprint == "SHA256:" + "A" * 43
+    assert (await library.state())["hosts"][0]["id"] == host["id"]
+    await library.remove_host(host["id"])
+    assert (await library.state())["hosts"] == []
+
+
+@pytest.mark.asyncio
+async def test_native_install_requires_matching_registered_host(library):
+    artifact = await add_native_artifact(library)
+    host = RuntimeHost(
+        id="host-" + "c" * 12,
+        name="Studio Mac",
+        address="192.168.50.30",
+        username="thibaut",
+        fingerprint="SHA256:" + "A" * 43,
+        platform="darwin/arm64",
+        created_at="2026-10-24T12:00:00+00:00",
+    )
+    library.store.save_runtime_object("host", host.model_dump())
+    library._import_macos = AsyncMock()
+    job = await library.install(RuntimeImportRequest(artifact_id=artifact["id"], host_id=host.id))
+    await library.tasks[job["id"]]
+    assert (await library.job(job["id"]))["status"] == "completed"
+    library._import_macos.assert_awaited_once()
+
+    host.platform = "windows/amd64"
+    library.store.save_runtime_object("host", host.model_dump())
+    with pytest.raises(ValueError, match="Package targets"):
+        await library.install(RuntimeImportRequest(artifact_id=artifact["id"], host_id=host.id))
+
+
+@pytest.mark.asyncio
+async def test_macos_and_windows_installers_are_user_scoped_and_checksum_verified(library):
+    mac_artifact = await add_native_artifact(library)
+    mac = RuntimeHost(
+        id="host-" + "d" * 12,
+        name="Mac",
+        address="192.168.50.31",
+        username="user",
+        fingerprint="SHA256:" + "A" * 43,
+        platform="darwin/arm64",
+        created_at="2026-10-24T12:00:00+00:00",
+    )
+    commands = []
+
+    class CaptureTransport:
+        def command(self, node, remote):
+            commands.append(remote[0])
+            return ["ssh"]
+
+        async def run_command(self, node, remote, timeout=60):
+            return ""
+
+    library.prerequisites.setup.transport = CaptureTransport()
+    library._command = AsyncMock()
+    await library._import_macos(
+        mac, library.root / mac_artifact["filename"], mac_artifact, "e" * 32
+    )
+    assert "shasum -a 256" in commands[0]
+    assert "Library/Application Support/Spark Cluster/runtimes" in commands[0]
+    assert "tar -xzf" in commands[0]
+
+    windows_artifact = await add_native_artifact(
+        library, platform="windows/amd64", runtime_id="ollama"
+    )
+    windows = mac.model_copy(update={"platform": "windows/amd64"})
+    library._command.reset_mock()
+    await library._import_windows(
+        windows,
+        library.root / windows_artifact["filename"],
+        windows_artifact,
+        "f" * 32,
+    )
+    encoded = commands[-1].rsplit(" ", 1)[-1]
+    powershell = base64.b64decode(encoded).decode("utf-16-le")
+    assert "Get-FileHash -Algorithm SHA256" in powershell
+    assert "Expand-Archive" in powershell
+    assert "$env:LOCALAPPDATA" in powershell
 
 
 @pytest.mark.asyncio
@@ -324,6 +501,12 @@ def test_runtime_api_authorization_validation_and_controller_routing(tmp_path):
         assert client.get("/api/v1/runtime-library").status_code == 401
         response = client.get("/api/v1/runtime-library", headers=headers)
         assert response.status_code == 200 and len(response.json()["runtimes"]) == 10
+        llama = next(item for item in response.json()["runtimes"] if item["id"] == "llama-cpp")
+        assert "darwin/arm64" in llama["platforms"]
+        assert "windows/amd64" in llama["platforms"]
+        page = client.get("/").text
+        assert 'id="runtime-host-form"' in page
+        assert "Native macOS &amp; Windows hosts" in page
         assert (
             client.get("/api/v1/runtime-library/jobs/missing", headers=headers).status_code == 404
         )
@@ -347,3 +530,20 @@ def test_runtime_api_authorization_validation_and_controller_routing(tmp_path):
         assert client.get(
             "/api/v1/runtime-library/runtimes/vllm/versions", headers=headers
         ).json() == {"versions": []}
+        app.state.runtime_library.register_host = AsyncMock(
+            return_value={"id": "host-" + "a" * 12, "platform": "darwin/arm64"}
+        )
+        registered = client.post(
+            "/api/v1/runtime-library/hosts",
+            headers=headers,
+            json={
+                "name": "Studio Mac",
+                "address": "192.168.50.30",
+                "username": "thibaut",
+                "fingerprint": "SHA256:" + "A" * 43,
+            },
+        )
+        assert registered.status_code == 201
+        app.state.runtime_library.remove_host = AsyncMock()
+        removed = client.delete("/api/v1/runtime-library/hosts/host-" + "a" * 12, headers=headers)
+        assert removed.status_code == 204

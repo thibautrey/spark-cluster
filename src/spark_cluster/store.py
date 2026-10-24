@@ -84,6 +84,13 @@ class SnapshotStore:
             ).fetchall()
         return [json.loads(row[0]) for row in rows]
 
+    def delete_runtime_object(self, kind: str, object_id: str) -> None:
+        with self._lock:
+            self._connection.execute(
+                "DELETE FROM runtime_library_objects WHERE kind=? AND id=?", (kind, object_id)
+            )
+            self._connection.commit()
+
     def save_setup_job(self, job: SetupJob) -> None:
         with self._lock:
             self._connection.execute(

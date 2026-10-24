@@ -45,7 +45,7 @@ async def test_docker_hub_pagination_cache_and_stale_fallback():
     assert first["versions"][0]["platforms"] == ["linux/arm64"]
     assert (await registry.versions("vllm", limit=2))["cached"]
     assert len(calls) == 1
-    key = ("vllm", "", 2)
+    key = ("vllm", "", 2, "linux/amd64")
     registry.cache[key] = (0, first)
     offline = True
     result = await registry.versions("vllm", limit=2)
@@ -153,3 +153,64 @@ async def test_catalog_is_curated_and_never_interprets_tag_or_cursor_as_url():
         await registry.versions("vllm", "../../etc/passwd")
     with pytest.raises(RegistryError):
         await registry.resolve("vllm", "latest", "darwin/arm64")
+
+
+@pytest.mark.asyncio
+async def test_native_release_versions_and_sha256_asset_resolution():
+    digest = "sha256:" + "a" * 64
+
+    def handle(request):
+        if request.url.path.endswith("/releases"):
+            assert request.url.params["page"] == "1"
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "tag_name": "b1234",
+                        "published_at": "2026-10-24T12:00:00Z",
+                        "assets": [{"name": "llama-b1234-bin-macos-arm64.tar.gz"}],
+                    },
+                    {"tag_name": "v0.7.0", "assets": [{"name": "nightly-tag.txt"}]},
+                ],
+            )
+        if request.url.path.endswith("/releases/tags/b1234"):
+            return httpx.Response(
+                200,
+                json={
+                    "assets": [
+                        {
+                            "name": "llama-b1234-bin-macos-arm64.tar.gz",
+                            "size": 42,
+                            "digest": digest,
+                            "browser_download_url": (
+                                "https://github.com/ggml-org/llama.cpp/releases/download/"
+                                "b1234/llama-b1234-bin-macos-arm64.tar.gz"
+                            ),
+                        }
+                    ]
+                },
+            )
+        raise AssertionError(request.url)
+
+    registry = RuntimeRegistry(httpx.MockTransport(handle))
+    versions = await registry.versions("llama-cpp", limit=10, platform="darwin/arm64")
+    assert [item["version"] for item in versions["versions"]] == ["b1234"]
+    assert versions["ordering"] == "recent GitHub releases"
+    package = await registry.resolve("llama-cpp", "b1234", "darwin/arm64")
+    assert package["artifact_kind"] == "native"
+    assert package["archive_format"] == "tar.gz"
+    assert package["digest"] == digest
+
+
+@pytest.mark.asyncio
+async def test_runtime_platform_matrix_refuses_unpublished_native_packages():
+    registry = RuntimeRegistry(
+        httpx.MockTransport(lambda request: pytest.fail("Unexpected network"))
+    )
+    assert "windows/arm64" in CATALOG["ollama"].platforms
+    assert "darwin/arm64" in CATALOG["localai"].platforms
+    assert CATALOG["vllm"].platforms == ("linux/amd64", "linux/arm64")
+    with pytest.raises(RegistryError, match="not distributed"):
+        await registry.versions("vllm", platform="windows/amd64")
+    with pytest.raises(RegistryError, match="not distributed"):
+        await registry.resolve("localai", "v4.12.1", "windows/amd64")

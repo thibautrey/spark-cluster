@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=automated-ssh-bootstrap-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=runtime-multios-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -46,11 +46,25 @@
               <form id="runtime-library-download">
                 <label>Version / image tag<input id="runtime-library-version" list="runtime-library-versions" placeholder="Choose a tag or enter an exact version" required pattern="[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" maxlength="128" /><datalist id="runtime-library-versions"></datalist></label>
                 <div class="runtime-version-toolbar"><small id="runtime-library-page"></small><button class="secondary" id="runtime-library-more" type="button" hidden>Next versions</button></div>
-                <label>Target architecture<select id="runtime-library-platform"><option value="linux/arm64">Linux ARM64 · DGX Spark</option><option value="linux/amd64">Linux x86-64 · NVIDIA servers</option></select></label>
+                <label>Target platform<select id="runtime-library-platform"></select></label>
                 <button class="primary" id="runtime-library-download-button" type="submit">Download to controller</button>
               </form>
             </div>
           </div>
+          <details class="runtime-native-hosts">
+            <summary>Native macOS &amp; Windows hosts <span id="runtime-host-count">0</span></summary>
+            <div class="runtime-host-content">
+              <p>Hosts use trusted SSH with a verified Ed25519 fingerprint. Packages install in the current user's managed Spark Cluster directory.</p>
+              <form id="runtime-host-form">
+                <label>Name<input id="runtime-host-name" required maxlength="80" placeholder="Studio Mac" /></label>
+                <label>LAN address<input id="runtime-host-address" required placeholder="192.168.1.42" /></label>
+                <label>SSH user<input id="runtime-host-username" required maxlength="64" placeholder="thibaut" /></label>
+                <label>Ed25519 fingerprint<input id="runtime-host-fingerprint" required pattern="SHA256:[A-Za-z0-9+/]{43}" placeholder="SHA256:…" /></label>
+                <button class="secondary" id="runtime-host-add" type="submit">Verify &amp; add host</button>
+              </form>
+              <div id="runtime-host-list"></div>
+            </div>
+          </details>
           <div class="runtime-library-cache"><h3>Controller cache</h3><p>Choose a compute pool to import a cached image on its managed machines.</p><label>Install destination<select id="runtime-library-target"><option value="">Choose a compute pool</option></select></label><div id="runtime-library-artifacts"></div></div>
           <div class="runtime-library-activity"><h3>Activity</h3><div id="runtime-library-jobs"></div></div>
         </section>
@@ -426,6 +440,6 @@
     <script src="/assets/catalog.js?v=downloaded-models-v1"></script>
     <script src="/assets/setup.js?v=automated-ssh-bootstrap-v1"></script>
     <script src="/assets/pool.js?v=adaptive-pools-v1" defer></script>
-    <script src="/assets/runtimes.js?v=runtime-library-v1" defer></script>
+    <script src="/assets/runtimes.js?v=runtime-multios-v1" defer></script>
 </body>
 </html>

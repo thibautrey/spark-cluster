@@ -212,6 +212,12 @@ class SSHTransport:
         args = self.command(node)
         return (await process(args, script.encode(), timeout)).decode()
 
+    async def run_command(
+        self, node: SetupNode, remote: list[str], timeout: float = 60
+    ) -> str:
+        """Run a bounded command without assuming the remote host has a POSIX shell."""
+        return (await process(self.command(node, remote), timeout=timeout)).decode()
+
     async def probe(self, node: SetupNode, source: str) -> str:
         # A single quoted Python expression works with POSIX, PowerShell and cmd.exe.
         # Bootstrap scripts remain POSIX-only and are gated by detected platform.

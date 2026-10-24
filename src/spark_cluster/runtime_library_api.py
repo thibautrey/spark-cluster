@@ -2,8 +2,9 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from .cluster_setup import SetupFailure
 from .runtime_catalog import RegistryError
-from .runtime_library import RuntimeDownloadRequest, RuntimeImportRequest
+from .runtime_library import RuntimeDownloadRequest, RuntimeHostRequest, RuntimeImportRequest
 
 
 def register_runtime_library(app, library, require_model_token, settings):
@@ -20,9 +21,14 @@ def register_runtime_library(app, library, require_model_token, settings):
         return await library.state()
 
     @router.get("/runtimes/{runtime_id}/versions")
-    async def versions(runtime_id: str, cursor: str = "", limit: int = Query(50, ge=1, le=100)):
+    async def versions(
+        runtime_id: str,
+        cursor: str = "",
+        limit: int = Query(50, ge=1, le=100),
+        platform: str = "linux/amd64",
+    ):
         try:
-            return await library.remote.versions(runtime_id, cursor, limit)
+            return await library.remote.versions(runtime_id, cursor, limit, platform)
         except KeyError as error:
             raise HTTPException(404, "Runtime not found") from error
         except RegistryError as error:
@@ -54,6 +60,22 @@ def register_runtime_library(app, library, require_model_token, settings):
             raise HTTPException(404, "Artifact or compute pool not found") from error
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
+
+    @router.post("/hosts", status_code=201, dependencies=[Depends(require_admin_configured)])
+    async def register_host(request: RuntimeHostRequest):
+        try:
+            return await library.register_host(request)
+        except (ValueError, SetupFailure) as error:
+            raise HTTPException(409, str(error)) from error
+
+    @router.delete(
+        "/hosts/{host_id}", status_code=204, dependencies=[Depends(require_admin_configured)]
+    )
+    async def remove_host(host_id: str):
+        try:
+            await library.remove_host(host_id)
+        except KeyError as error:
+            raise HTTPException(404, "Native host not found") from error
 
     @router.get("/jobs/{job_id}")
     async def job(job_id: str):
