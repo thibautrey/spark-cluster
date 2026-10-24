@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from spark_cluster.app import create_app
 from spark_cluster.config import Settings
+from spark_cluster.store import SnapshotStore
 
 
 def make_client(tmp_path):
@@ -82,6 +83,32 @@ def test_history_metrics_and_capacity(tmp_path):
         assert performance.status_code == 200
         assert performance.json()["kv_cache_dtype"] == "fp8_e4m3"
         assert performance.json()["tensor_parallel"] == 4
+
+
+def test_local_gpu_performance_plan_skips_spark_setup_history(tmp_path, monkeypatch):
+    app = create_app(
+        Settings(
+            mode="demo",
+            database_path=tmp_path / "local-plan.db",
+            model_cache_path=tmp_path / "models",
+            active_hardware="nvidia-gpu",
+            active_compute_capability=8.6,
+        )
+    )
+
+    def fail_setup_history(*_args, **_kwargs):
+        raise AssertionError("Local PCIe planning must not read Spark setup history")
+
+    monkeypatch.setattr(SnapshotStore, "list_setup_jobs", fail_setup_history)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/performance/plan",
+            json={"model_id": "Qwen/Qwen2.5-Coder-3B-Instruct-AWQ"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["collective_backend"] == "NCCL over local PCIe"
 
 
 def test_controller_refuses_to_proxy_inference_and_advertises_direct_runtime(tmp_path):

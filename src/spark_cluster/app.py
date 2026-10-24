@@ -611,7 +611,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if runtime.latest and runtime.latest.nodes
             else settings.fallback_node_count
         )
-        if request.topology == "auto":
+        if request.topology == "auto" and settings.active_hardware == "dgx-spark":
             setup_jobs = await asyncio.to_thread(runtime.store.list_setup_jobs)
             configured = next((job for job in setup_jobs if job.status == "ready"), None)
             if configured:
