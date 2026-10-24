@@ -540,7 +540,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "mode": settings.mode,
             "logs_mode": log_service.mode,
             "runtime_control_mode": deployment_service.mode,
-            "on_demand": on_demand.status(),
             "has_snapshot": runtime.latest is not None,
         }
 
@@ -979,7 +978,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "launches": launches_value,
             "logs_mode": log_service.mode,
             "runtime_control_mode": deployment_service.mode,
-            "on_demand": on_demand.status(),
         }
 
     @app.post(
