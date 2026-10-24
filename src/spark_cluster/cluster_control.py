@@ -319,6 +319,8 @@ class RuntimeDeploymentService:
         return "demo" if self.settings.mode == "demo" else "unavailable"
 
     async def start(self) -> None:
+        if self.mode == "docker" and self.settings.on_demand_profiles_path:
+            return
         for job in await asyncio.to_thread(self.store.recover_launches):
             await self.queue.put(job.id)
         self.worker = asyncio.create_task(self._worker())
@@ -332,6 +334,10 @@ class RuntimeDeploymentService:
                 pass
 
     async def launch(self, request: ModelLaunchRequest) -> ModelLaunchJob:
+        if self.mode == "docker" and self.settings.on_demand_profiles_path:
+            raise EngineNotExecutable("manual Docker runtime", [
+                "On-demand inference owns the GPU pool; use its configured inference endpoints"
+            ])
         local = await self.models.managed_model(request.model_id)
         if local is None or local.path is None:
             raise ModelNotManaged(request.model_id)
@@ -371,6 +377,10 @@ class RuntimeDeploymentService:
         return await asyncio.to_thread(self.store.list_launches)
 
     async def retry(self, job_id: str) -> ModelLaunchJob:
+        if self.mode == "docker" and self.settings.on_demand_profiles_path:
+            raise EngineNotExecutable("manual Docker runtime", [
+                "On-demand inference owns the GPU pool"
+            ])
         job = await asyncio.to_thread(self.store.get_launch, job_id)
         if job is None:
             raise KeyError(job_id)

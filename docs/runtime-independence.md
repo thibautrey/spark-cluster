@@ -58,3 +58,32 @@ Older installations may have a single `spark-cluster` Helm release owning both w
 that release during a planned maintenance window before relying on independent upgrades. New guided
 installations use split ownership automatically. Never import the same Kubernetes object into both
 releases.
+
+## Opt-in on-demand Docker inference
+
+For a local GPU pool, set `SPARK_CLUSTER_ON_DEMAND_PROFILES_PATH` to a private (0600)
+JSON recipe file. This explicitly selects a different lifecycle: the controller owns stable
+HTTP listeners, creates temporary Docker runtimes when inference arrives, serializes requests
+across the GPU pool, streams responses, and removes runtimes after `idle_seconds` (default 120).
+An in-flight response holds the lease until its last byte. Switching models removes the previous
+runtime first. Cold starts can take several minutes; callers must allow sufficient request timeouts.
+Health and model-list probes do not load models or reset inactivity. A model-list result advertises
+availability through the orchestrator, not residency in GPU memory.
+
+Each recipe specifies `id`, `model`, `listen_host`, `listen_port`, `upstream_port`,
+`readiness_path`, `idle_seconds`, `startup_seconds`, and a trusted Docker create specification
+in `container`. Bind the runtime upstream to loopback on a different port. Keep credentials in
+this private file or mounted secrets; never commit recipes containing deployment credentials.
+The proxy preserves upstream authentication and does not log request bodies or credentials.
+Recipe files can create Docker containers and must be managed only by trusted administrators.
+
+Public listeners can preserve legacy service ports. Clients on private Docker DNS networks must
+instead use a reachable host listener. `/api/v1/inference/status` reports profiles and residency
+without exposing Docker recipes. Unrelated application containers are never stopped. Manual local
+Docker launches are blocked while this mode owns the GPU pool. Disable legacy restart policies,
+Unraid autostart, and external supervisors before enabling the corresponding listeners.
+
+Unlike direct-runtime mode above, this mode depends on the controller for inference. Controller
+shutdown drains requests and removes its temporary runtime; crash recovery reclaims only containers
+labelled with the matching `spark-cluster.on-demand` profile. Docker runtimes have no restart policy.
+The ordinary direct-runtime path and remote clusters are unchanged when no recipes are configured.

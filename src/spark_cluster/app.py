@@ -90,6 +90,7 @@ from .models import (
     RuntimeTerminalRequest,
     RuntimeTerminalTicket,
 )
+from .on_demand import OnDemandInference, load_profiles
 from .optimization_lab import OptimizationLab
 from .performance import PerformancePlan, PerformancePlanRequest, build_performance_plan
 from .prometheus import render_metrics
@@ -163,6 +164,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         log_service,
         registry=cluster_registry,
         docker=docker_engine,
+    )
+    on_demand = OnDemandInference(
+        docker_engine,
+        load_profiles(settings.on_demand_profiles_path) if settings.on_demand_profiles_path else [],
     )
     setup_service = ClusterSetupService(settings, runtime.store)
     runtime_prerequisites = RuntimePrerequisiteService(
@@ -268,7 +273,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await telemetry_service.start()
         await deployment_service.start()
         await setup_service.start()
-        yield
+        await on_demand.start()
+        try:
+            yield
+        finally:
+            await on_demand.stop()
         if local_monitor:
             local_monitor.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -297,6 +306,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.cluster_connector = cluster_connector
     app.state.cluster_registry = cluster_registry
     app.state.docker_engine = docker_engine
+    app.state.on_demand = on_demand
     mcp_server = SparkClusterMCP(
         browser=browser,
         runtime=runtime,
@@ -944,6 +954,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/launches", response_model=list[ModelLaunchJob])
     async def launches() -> list[ModelLaunchJob]:
         return await deployment_service.launches()
+
+    @app.get("/api/v1/inference/status")
+    async def inference_status() -> dict:
+        return on_demand.status()
 
     @app.get("/api/v1/control")
     async def control_state() -> dict:

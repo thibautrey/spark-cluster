@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     docker_host_model_path: Path = Path("/models")
     docker_runtime_host: str = "127.0.0.1"
     docker_runtime_port_start: int = 30000
+    on_demand_profiles_path: Path | None = None
     active_hardware: str = "dgx-spark"
     active_compute_capability: float | None = None
 
