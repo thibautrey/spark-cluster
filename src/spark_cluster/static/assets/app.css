@@ -380,3 +380,6 @@ body[data-route="models"] main>header>div:first-child{display:none}
 
 /* Keep performance recommendations concise until their rationale is requested. */
 .performance-plan-details{margin-top:8px;border-top:1px solid #294238;padding-top:7px}.performance-plan-details summary{cursor:pointer;list-style:none;color:#799084;font:8px DM Mono}.performance-plan-details summary::-webkit-details-marker{display:none}.performance-plan-details summary::before{content:'＋';margin-right:6px;color:#547467}.performance-plan-details[open] summary::before{content:'−'}
+
+/* Preserve room for both selectors; the status dot carries the mobile live state. */
+@media(max-width:700px){.header-actions .live{display:grid;place-items:center;width:32px;height:32px;padding:0;font-size:0}.header-actions .live i{width:7px;height:7px;margin:0}}
