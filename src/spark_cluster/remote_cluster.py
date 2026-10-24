@@ -228,6 +228,7 @@ class RemoteClusterProxyMiddleware:
         controller_local = (
             path.startswith("/api/v1/controller/")
             or path.startswith("/api/v1/clusters")
+            or path == "/api/v1/pool"
             or path.startswith("/api/v1/pool/")
             or path.startswith("/api/v1/catalog/")
             or path.startswith("/api/v1/model-management/")

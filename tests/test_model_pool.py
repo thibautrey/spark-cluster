@@ -199,3 +199,42 @@ async def test_interrupted_load_is_never_replayed_after_restart(tmp_path):
     restarted = FakePool(tmp_path)
     assert restarted.jobs[0]["status"] == "failed"
     assert not restarted.tasks
+
+
+@pytest.mark.asyncio
+async def test_remote_node_calls_are_signed_and_never_select_a_cluster(tmp_path):
+    import httpx
+    from spark_cluster.remote_cluster import valid_controller_signature
+
+    pool = FakePool(tmp_path)
+    pool.settings.model_admin_token = "test-shared-key"
+    member = SimpleNamespace(
+        id="remote", kind="remote-bridge", endpoint="http://192.168.1.42:30080"
+    )
+
+    def remote(request):
+        assert valid_controller_signature(
+            "test-shared-key",
+            request.method,
+            request.url.raw_path.decode(),
+            request.headers.get("x-spark-timestamp"),
+            request.headers.get("x-spark-signature"),
+            request.content,
+        )
+        return httpx.Response(200, json={"compatible": True})
+
+    pool.transport = httpx.MockTransport(remote)
+    result = await ModelPool.call(pool, member, "plan", {"model_id": "org/model"})
+    assert result["compatible"]
+    assert pool.registry.selected == "first"
+
+
+def test_pool_routes_stay_local_when_another_cluster_is_selected():
+    from spark_cluster.remote_cluster import RemoteClusterProxyMiddleware
+
+    middleware = RemoteClusterProxyMiddleware(
+        None, Settings(remote_cluster_url="http://192.168.1.42:30080")
+    )
+    assert not middleware.should_forward({"type": "http", "path": "/api/v1/pool"})
+    assert not middleware.should_forward({"type": "http", "path": "/api/v1/pool/load"})
+    assert not middleware.should_forward({"type": "http", "path": "/api/v1/pool/node/status"})

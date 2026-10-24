@@ -114,6 +114,10 @@ class PoolNode:
             for m in await self.models.local_models()
             if m.source == "managed"
         }
+        for job in await self.deployments.launches():
+            if job.status == "ready" and job.request.model_id in models:
+                entry = models[job.request.model_id]
+                entry.setdefault("last_settings", job.request.model_dump())
         for p in self.demand.profiles:
             key = p.model_id or p.model
             models[key] = {
@@ -284,6 +288,7 @@ class PoolNode:
                 else:
                     self.demand.register(profile)
                 await self.demand.ensure(profile)
+                self.demand.last_used = time.monotonic()
                 self.demand.retain(profile, request.keep_loaded)
                 return {
                     "model_id": request.model_id,
@@ -483,6 +488,7 @@ class ModelPool:
         for m in models.values():
             prefs = self.preferences.get(m["id"], ModelPreferences())
             m["key"] = hashlib.sha256(m["id"].encode()).hexdigest()[:16]
+            m["endpoint_path"] = "/api/v1/pool/serve/" + m["key"] + "/v1"
             m["preferences"] = prefs.model_dump(mode="json")
             m["last_settings"] = (
                 prefs.last_settings.model_dump() if prefs.last_settings else m["last_settings"]
@@ -584,7 +590,7 @@ class ModelPool:
                             "No reachable cluster has a runnable copy of this model"
                             + (" on the required cluster" if prefs.cluster_id else "")
                         )
-                    # Prefer an existing residency, then empty resources, then eviction of an unpinned model.
+                    # Reuse residency, then idle resources, then evict an unretained model.
                     candidates.sort(
                         key=lambda n: (
                             n["active_model"] != request.model_id,
