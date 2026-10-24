@@ -2,11 +2,13 @@ import asyncio
 import contextlib
 import hmac
 import json
+import re
 import shutil
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
+from urllib.parse import parse_qs
 
 import httpx
 from fastapi import (
@@ -1051,6 +1053,78 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         async def handler(scope, receive, send):
             await model_pool.infer(model["id"], path, scope, receive, send)
+
+        return PoolResponse(handler)
+
+    @app.get("/v1/models")
+    async def global_openai_models():
+        inventory = await model_pool.inventory()
+        return {
+            "object": "list",
+            "data": [
+                {
+                    "id": model["id"],
+                    "object": "model",
+                    "owned_by": "spark-cluster",
+                    "ready": bool(model["placements"]),
+                }
+                for model in inventory["models"]
+                if model["loadable"]
+            ],
+        }
+
+    @app.api_route(
+        "/v1/{path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    )
+    async def global_openai_inference(request: Request, path: str):
+        body = await request.body()
+        content_type = request.headers.get("content-type", "")
+        reference = request.headers.get("x-spark-model") or request.query_params.get("model")
+        json_body = None
+        if not reference and "application/json" in content_type and body:
+            try:
+                json_body = json.loads(body)
+                if isinstance(json_body, dict):
+                    reference = json_body.get("model")
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                raise HTTPException(status_code=400, detail="Invalid JSON request body") from None
+        if not reference and "application/x-www-form-urlencoded" in content_type:
+            reference = parse_qs(body.decode(errors="replace")).get("model", [None])[0]
+        if not reference and "multipart/form-data" in content_type:
+            match = re.search(
+                rb'name="model"[^\r\n]*\r\n(?:[^\r\n]*\r\n)?\r\n([^\r\n]+)',
+                body,
+            )
+            if match:
+                reference = match.group(1).decode(errors="replace")
+        if not reference and path.startswith("models/"):
+            reference = path.removeprefix("models/").split("/", 1)[0]
+        if not isinstance(reference, str) or not reference.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Specify model in the request body, query, or X-Spark-Model header",
+            )
+        try:
+            model = await model_pool.resolve_model(reference)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        forwarded = body
+        if json_body is not None:
+            served_name = model.get("served_model_name") or model["id"]
+            json_body["model"] = served_name
+            forwarded = json.dumps(json_body, separators=(",", ":")).encode()
+        delivered = False
+
+        async def replay_receive():
+            nonlocal delivered
+            if delivered:
+                return {"type": "http.disconnect"}
+            delivered = True
+            return {"type": "http.request", "body": forwarded, "more_body": False}
+
+        async def handler(scope, _, send):
+            await model_pool.infer(model["id"], f"v1/{path}", scope, replay_receive, send)
 
         return PoolResponse(handler)
 

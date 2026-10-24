@@ -310,3 +310,117 @@ def test_pool_mutations_require_admin_and_reads_expose_no_recipes(tmp_path):
             headers={"Authorization": "Bearer test-admin"},
         )
         assert invalid.status_code == 409
+
+
+def test_global_openai_models_and_json_inference_route_through_pool(tmp_path, monkeypatch):
+    app = create_app(
+        Settings(
+            mode="demo",
+            setup_state_path=tmp_path / "setup",
+            database_path=tmp_path / "db",
+            model_cache_path=tmp_path / "models",
+        )
+    )
+    model = {
+        "id": "org/model",
+        "object": "model",
+        "loadable": True,
+        "placements": [],
+        "aliases": ["org/model", "friendly"],
+        "served_model_name": "runtime-alias",
+    }
+
+    async def inventory(force=False):
+        return {"clusters": [], "models": [model], "jobs": []}
+
+    async def resolve(reference):
+        if reference not in model["aliases"]:
+            raise ValueError("not found")
+        return model
+
+    captured = {}
+
+    async def infer(model_id, path, scope, receive, send):
+        captured["model_id"] = model_id
+        captured["path"] = path
+        captured["body"] = (await receive())["body"]
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b'{"ok":true}'})
+
+    monkeypatch.setattr(app.state.model_pool, "inventory", inventory)
+    monkeypatch.setattr(app.state.model_pool, "resolve_model", resolve)
+    monkeypatch.setattr(app.state.model_pool, "infer", infer)
+    with TestClient(app) as client:
+        models = client.get("/v1/models")
+        assert models.status_code == 200
+        assert models.json()["data"][0]["id"] == "org/model"
+        assert captured == {}
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "friendly", "messages": [{"role": "user", "content": "Hi"}]},
+        )
+        assert response.status_code == 200
+        assert response.json() == {"ok": True}
+    assert captured["model_id"] == "org/model"
+    assert captured["path"] == "v1/chat/completions"
+    assert json.loads(captured["body"])["model"] == "runtime-alias"
+
+
+def test_global_v1_supports_header_query_and_multipart_model_selection(tmp_path, monkeypatch):
+    app = create_app(
+        Settings(
+            mode="demo",
+            setup_state_path=tmp_path / "setup",
+            database_path=tmp_path / "db",
+            model_cache_path=tmp_path / "models",
+        )
+    )
+    model = {
+        "id": "org/model",
+        "loadable": True,
+        "placements": [],
+        "aliases": ["org/model"],
+        "served_model_name": "org/model",
+    }
+
+    async def resolve(reference):
+        assert reference == "org/model"
+        return model
+
+    calls = []
+
+    async def infer(model_id, path, scope, receive, send):
+        body = (await receive())["body"]
+        calls.append((model_id, path, body))
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    monkeypatch.setattr(app.state.model_pool, "resolve_model", resolve)
+    monkeypatch.setattr(app.state.model_pool, "infer", infer)
+    with TestClient(app) as client:
+        assert client.post("/v1/embeddings?model=org/model", content=b"raw").status_code == 204
+        assert (
+            client.post(
+                "/v1/responses", content=b"raw", headers={"X-Spark-Model": "org/model"}
+            ).status_code
+            == 204
+        )
+        audio = client.post(
+            "/v1/audio/transcriptions",
+            files={"file": ("test.wav", b"RIFFtest", "audio/wav")},
+            data={"model": "org/model"},
+        )
+        assert audio.status_code == 204
+        assert client.post("/v1/chat/completions", json={"messages": []}).status_code == 400
+    assert [call[1] for call in calls] == [
+        "v1/embeddings",
+        "v1/responses",
+        "v1/audio/transcriptions",
+    ]
+    assert b"RIFFtest" in calls[2][2]

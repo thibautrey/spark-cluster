@@ -110,6 +110,8 @@ class PoolNode:
                 "loaded": False,
                 "keep_loaded": False,
                 "editable_settings": True,
+                "aliases": [m.id],
+                "served_model_name": None,
             }
             for m in await self.models.local_models()
             if m.source == "managed"
@@ -131,6 +133,8 @@ class PoolNode:
                 "endpoint": f"http://{self.settings.docker_runtime_host}:{p.listen_port}"
                 if p.id not in self.demand.dynamic
                 else None,
+                "aliases": sorted({p.id, p.model, key}),
+                "served_model_name": p.model,
             }
         active = self.demand.active
         active_id = active.model_id or active.model if active else self.native.get("model_id")
@@ -477,7 +481,13 @@ class ModelPool:
                         "loadable": False,
                         "last_settings": m.get("last_settings"),
                         "editable_settings": m.get("editable_settings", True),
+                        "aliases": list(m.get("aliases", [m["id"]])),
+                        "served_model_name": m.get("served_model_name"),
                     },
+                )
+                entry["aliases"] = sorted(set(entry["aliases"] + m.get("aliases", [])))
+                entry["served_model_name"] = m.get("served_model_name") or entry.get(
+                    "served_model_name"
                 )
                 if m["loadable"]:
                     entry["loadable"] = True
@@ -498,6 +508,11 @@ class ModelPool:
             m["last_settings"] = (
                 prefs.last_settings.model_dump() if prefs.last_settings else m["last_settings"]
             )
+            if m["last_settings"]:
+                served = m["last_settings"].get("served_model_name")
+                if served:
+                    m["served_model_name"] = served
+                    m["aliases"] = sorted(set(m["aliases"] + [served]))
         result = {"clusters": nodes, "models": list(models.values()), "jobs": self.jobs[-20:]}
         self.cache = result
         self.cache_time = time.monotonic()
@@ -507,6 +522,25 @@ class ModelPool:
         if cluster_id == "self" and not self.registry.list():
             return SimpleNamespace(id="self", kind="local-docker")
         return self.registry.get(cluster_id)
+
+    async def resolve_model(self, reference: str) -> dict:
+        reference = reference.strip()
+        if not reference:
+            raise ValueError("A model is required")
+        inventory = await self.inventory()
+        matches = [
+            model
+            for model in inventory["models"]
+            if reference == model["id"] or reference in model.get("aliases", [])
+        ]
+        if not matches:
+            raise ValueError(f"Model {reference} is not available in the pool")
+        if len(matches) > 1:
+            exact = [model for model in matches if model["id"] == reference]
+            if len(exact) == 1:
+                return exact[0]
+            raise ValueError(f"Model name {reference} is ambiguous; use its full model id")
+        return matches[0]
 
     async def update_preferences(self, model_id, preferences):
         if preferences.cluster_id:

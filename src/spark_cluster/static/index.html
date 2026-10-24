@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=pool-api-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=global-v1-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -101,7 +101,7 @@
           <article class="api-card">
             <div class="api-card-head"><div><h2>OpenAI pool endpoint</h2><small id="api-routing-mode">Controller routed · automatic model placement</small></div><span class="pill" id="api-status">checking</span></div>
             <div class="endpoint-box"><code id="api-endpoint">Loading pool endpoint…</code><button id="copy-endpoint" type="button">Copy</button></div>
-            <details class="api-details"><summary>Routes</summary><div class="api-routes"><span><b>Model key</b><code id="api-model-key-route">Shown in each model’s Settings</code></span><span><b>Models</b><code id="api-models-route">—</code></span><span><b>Chat completions</b><code id="api-chat-route">—</code></span></div></details><details class="api-details"><summary>Available model endpoints <small id="api-pool-model-count"></small></summary><div class="api-model-endpoints" id="api-model-endpoints"></div></details>
+            <details class="api-details"><summary>Routes</summary><div class="api-routes"><span><b>Models</b><code id="api-models-route">—</code></span><span><b>Chat completions</b><code id="api-chat-route">—</code></span><span><b>Embeddings</b><code id="api-embeddings-route">—</code></span><span><b>Other endpoints</b><code>Any /v1 route · select with model</code></span></div></details>
           </article>
           <article class="api-card">
             <div class="api-card-head"><div><h2>MCP endpoint</h2><small>AI clients · admin token for changes</small></div></div>
@@ -380,12 +380,12 @@
       </main>
     </div>
     <script src="/assets/navigation.js"></script>
-    <script src="/assets/app.js?v=pool-api-v1"></script>
+    <script src="/assets/app.js?v=global-v1-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=2"></script>
     <script src="/assets/catalog.js?v=sheet-titles-v1"></script>
     <script src="/assets/setup.js?v=setup-focus-v1"></script>
-    <script src="/assets/pool.js?v=pool-sheet-v2" defer></script>
+    <script src="/assets/pool.js?v=global-v1-v1" defer></script>
 </body>
 </html>

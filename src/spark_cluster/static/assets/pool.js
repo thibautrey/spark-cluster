@@ -52,7 +52,7 @@
       field('pool-cluster').add(new Option('Unavailable saved cluster', model.preferences.cluster_id));
     }
     field('pool-cluster').value = model.preferences.cluster_id || '';
-    field('pool-api-url').textContent = location.origin + model.endpoint_path;
+    field('pool-api-url').textContent = `${location.origin}/v1`;
     field('pool-settings-state').textContent = model.placements.length ? (model.preferences.keep_loaded ? 'Kept loaded' : 'Loaded') : 'On demand';
     field('pool-placement-note').textContent = model.preferences.cluster_id ? 'This cluster is required on the next load. Changing placement does not move a running model.' : 'Automatic placement checks residency, availability, memory and runtime compatibility.';
     const settings = model.last_settings;
