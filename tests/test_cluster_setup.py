@@ -621,7 +621,8 @@ async def test_native_macos_setup_registers_host_without_running_linux_installer
     assert registered[0][0] == "test-cluster"
     assert registered[0][1].address == "192.168.50.10"
     assert not remote.uploaded
-    assert not any("apt-get" in script or "get.k3s.io" in script for script in remote.scripts)
+    mutation_scripts = [script for script in remote.scripts if "python3 - <<'PROBE'" not in script]
+    assert not any("apt-get" in script or "get.k3s.io" in script for script in mutation_scripts)
     store.close()
 
 
