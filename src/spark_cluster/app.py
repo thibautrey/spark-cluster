@@ -184,8 +184,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     model_relay = ModelRelay(settings, runtime.store)
     model_manager = ModelManager(settings, runtime.store, runtime, model_relay)
     browser = ModelBrowser(settings)
-    log_service = RuntimeLogService(settings, runtime.store)
     docker_engine = DockerEngineClient(settings)
+    log_service = RuntimeLogService(settings, runtime.store, docker_engine)
     deployment_service = RuntimeDeploymentService(
         settings,
         runtime.store,

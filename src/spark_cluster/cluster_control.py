@@ -1,10 +1,12 @@
 import asyncio
 import hashlib
+import json
 import math
 import os
 import random
 import re
 import ssl
+import time
 from collections import deque
 from datetime import UTC, datetime
 from typing import Any
@@ -133,10 +135,16 @@ class RuntimeLogService:
         ("debug", "Ray heartbeat received; worker latency=1.8ms"),
     )
 
-    def __init__(self, settings: Settings, store: SnapshotStore):
+    def __init__(
+        self,
+        settings: Settings,
+        store: SnapshotStore,
+        docker: DockerEngineClient | None = None,
+    ):
         self.settings = settings
         self.store = store
         self.kubernetes = KubernetesClient(settings)
+        self.docker = docker or DockerEngineClient(settings)
         configured = settings.runtime_logs_mode
         self.mode = configured if configured != "auto" else self._auto_mode()
         self.task: asyncio.Task | None = None
@@ -144,10 +152,14 @@ class RuntimeLogService:
         self._seen: set[str] = set()
         self._seen_order: deque[str] = deque(maxlen=5000)
         self._demo_index = 0
+        self._docker_initial = True
+        self._emitted_since_prune = 0
 
     def _auto_mode(self) -> str:
         if self.kubernetes.available:
             return "kubernetes"
+        if self.docker.available:
+            return "docker"
         return "demo" if self.settings.mode == "demo" else "unavailable"
 
     async def start(self) -> None:
@@ -155,6 +167,8 @@ class RuntimeLogService:
             self.task = asyncio.create_task(self._demo_loop())
         elif self.mode == "kubernetes":
             self.task = asyncio.create_task(self._kubernetes_loop())
+        elif self.mode == "docker":
+            self.task = asyncio.create_task(self._docker_loop())
 
     async def stop(self) -> None:
         if self.task:
@@ -203,6 +217,11 @@ class RuntimeLogService:
                     item["metadata"]["name"] for item in await self.kubernetes.runtime_pods()
                 )
             except (httpx.HTTPError, KeyError, TypeError):
+                pass
+        if self.mode == "docker":
+            try:
+                return sorted(item["name"] for item in await self._docker_containers())
+            except (httpx.HTTPError, KeyError, TypeError, RuntimeError, ValueError):
                 pass
         return sorted({entry.pod for entry in await self.history(limit=2000)})
 
@@ -260,6 +279,91 @@ class RuntimeLogService:
                     "control-plane", "log-collector", "error", f"Log collection failed: {error}"
                 )
             await asyncio.sleep(self.settings.runtime_log_poll_seconds)
+
+    async def _docker_containers(self) -> list[dict[str, str]]:
+        filters = json.dumps({"label": ["spark-cluster.managed=true"]})
+        response = await self.docker.request(
+            "GET", "/containers/json", params={"filters": filters}, timeout=10
+        )
+        containers = []
+        for item in response.json():
+            labels = item.get("Labels") or {}
+            # Runtime containers carry a model or engine label. This excludes
+            # unrelated managed helpers if more controller services are added.
+            if not (labels.get("spark-cluster.model-id") or labels.get("spark-cluster.engine")):
+                continue
+            names = item.get("Names") or []
+            containers.append(
+                {
+                    "id": str(item["Id"]),
+                    "name": str(names[0]).lstrip("/") if names else str(item["Id"])[:12],
+                    "container": str(labels.get("spark-cluster.engine") or "runtime"),
+                }
+            )
+        return containers
+
+    async def _docker_loop(self) -> None:
+        overlap = max(2, math.ceil(self.settings.runtime_log_poll_seconds * 2))
+        while True:
+            try:
+                containers = await self._docker_containers()
+                for container in containers:
+                    params = {
+                        "stdout": "true",
+                        "stderr": "true",
+                        "timestamps": "true",
+                        "tail": 300 if self._docker_initial else 1000,
+                    }
+                    if not self._docker_initial:
+                        params["since"] = max(0, int(time.time()) - overlap)
+                    response = await self.docker.request(
+                        "GET",
+                        f"/containers/{container['id']}/logs",
+                        params=params,
+                        timeout=15,
+                    )
+                    for line in self._decode_docker_logs(response.content).splitlines():
+                        if not line:
+                            continue
+                        timestamp, message = self._parse_line(line)
+                        await self.emit(
+                            container["name"],
+                            container["container"],
+                            self._infer_level(message),
+                            message,
+                            timestamp,
+                        )
+                        self._emitted_since_prune += 1
+                self._docker_initial = False
+                if self._emitted_since_prune >= 100:
+                    await asyncio.to_thread(
+                        self.store.prune_runtime_logs, self.settings.runtime_log_retention
+                    )
+                    self._emitted_since_prune = 0
+            except (httpx.HTTPError, KeyError, TypeError, RuntimeError, ValueError) as error:
+                await self.emit(
+                    "control-plane",
+                    "docker-log-collector",
+                    "error",
+                    f"Log collection failed: {error}",
+                )
+            await asyncio.sleep(self.settings.runtime_log_poll_seconds)
+
+    @staticmethod
+    def _decode_docker_logs(content: bytes) -> str:
+        """Decode Docker's multiplexed stream, with a plain-text fallback for TTY containers."""
+        offset = 0
+        chunks = []
+        while offset + 8 <= len(content) and content[offset] in {0, 1, 2, 3}:
+            length = int.from_bytes(content[offset + 4 : offset + 8], "big")
+            end = offset + 8 + length
+            if end > len(content):
+                break
+            chunks.append(content[offset + 8 : end])
+            offset = end
+        if chunks and offset == len(content):
+            return b"".join(chunks).decode(errors="replace")
+        return content.decode(errors="replace")
 
     @staticmethod
     def _parse_line(line: str) -> tuple[datetime, str]:
