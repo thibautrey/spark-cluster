@@ -390,6 +390,7 @@ Point any Streamable HTTP MCP client at that URL. Read-only tools require no cre
 | `search_model_catalog` | Search the live Hugging Face shortlist with the evidence-based Spark ranking or an explicit Hub sort. |
 | `inspect_model` | Read exact repository metadata, recommendation evidence, license, files and README. Repository content is returned with an explicit untrusted-content notice. |
 | `check_model_fit` | Compare memory, storage, runtime and placement feasibility for up to 12 models on 1–16 Sparks. |
+| `get_performance_plan` | Read runtime settings, exact recipe pins, external measurement conditions and launch prerequisites, including MIA DeepSeek TP3/TP4. |
 | `get_cluster_status` | Read the latest cluster, node, memory, cache and runtime snapshot. |
 | `list_installed_models` | Inspect models available to the controller or cluster runtime. |
 | `list_model_activity` | Follow download and launch jobs. |

@@ -45,6 +45,7 @@ controller cannot establish that each node has sufficient local NVMe from contro
   the official checkpoint. `recipe` contains the source pin, launcher, env-file name,
   reviewed settings, prerequisites and measurement conditions. Supply `revision` to bind
   the plan to the reviewed checkpoint.
+- The read-only MCP tool `get_performance_plan` returns the same plan for AI clients.
 - The dashboard's Plan details shows these requirements and settings. Merge settings into
   the **complete** pinned upstream profile, preserving its gated production adapters and
   site-specific fabric configuration.

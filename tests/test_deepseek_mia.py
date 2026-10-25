@@ -212,3 +212,22 @@ def test_http_plan_exposes_reviewed_recipe_without_enabling_launch(tmp_path):
         assert plan["recipe"]["launcher"] == "./start.sh"
         assert plan["recipe"]["environment"]["CONTEXT_LENGTH"] == "32768"
         assert plan["blockers"] and not plan["engine_executable"]
+        response = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "get_performance_plan",
+                    "arguments": {
+                        "model_id": MODEL_ID,
+                        "revision": MODEL_REVISION,
+                        "node_count": 3,
+                    },
+                },
+            },
+        )
+        result = response.json()["result"]
+        assert result["structuredContent"]["recipe"] == plan["recipe"]
+        assert result["structuredContent"]["blockers"] == plan["blockers"]

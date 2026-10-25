@@ -224,7 +224,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cluster_available = await cluster_connector.model_storage_available()
         available_gib = min(plan.storage_available_gib, cluster_available / 2**30)
         storage_fits = plan.storage_fits and plan.repository_bytes <= cluster_available
-        runtime_storage_bytes = plan.repository_bytes + plan.additional_artifacts_bytes
+        runtime_storage_bytes = max(
+            plan.repository_bytes + plan.additional_artifacts_bytes,
+            int(plan.runtime_storage_required_gib * 2**30),
+        )
         runtime_storage_fits = (
             plan.runtime_storage_fits and runtime_storage_bytes <= cluster_available
         )
@@ -243,6 +246,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "notes": notes,
             }
         )
+
+    async def model_performance_plan(request: PerformancePlanRequest) -> PerformancePlan:
+        available_nodes = (
+            sum(node.status != "offline" for node in runtime.latest.nodes)
+            if runtime.latest and runtime.latest.nodes
+            else settings.fallback_node_count
+        )
+        if request.topology == "auto" and settings.active_hardware == "dgx-spark":
+            setup_jobs = await asyncio.to_thread(runtime.store.list_setup_jobs)
+            configured = next((job for job in setup_jobs if job.status == "ready"), None)
+            if configured:
+                request = request.model_copy(update={"topology": configured.request.topology})
+        return build_performance_plan(request, available_nodes, settings)
 
     async def enqueue_model_download(
         request: ModelDownloadRequest, request_base_url: str
@@ -350,6 +366,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         model_manager=model_manager,
         deployment_service=deployment_service,
         model_fit_plan=model_fit_plan,
+        performance_plan=model_performance_plan,
         download_model=enqueue_model_download,
         cluster_registry=cluster_registry,
     )
@@ -679,17 +696,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/v1/performance/plan", response_model=PerformancePlan)
     async def performance_plan(request: PerformancePlanRequest) -> PerformancePlan:
-        available_nodes = (
-            len(runtime.latest.nodes)
-            if runtime.latest and runtime.latest.nodes
-            else settings.fallback_node_count
-        )
-        if request.topology == "auto" and settings.active_hardware == "dgx-spark":
-            setup_jobs = await asyncio.to_thread(runtime.store.list_setup_jobs)
-            configured = next((job for job in setup_jobs if job.status == "ready"), None)
-            if configured:
-                request = request.model_copy(update={"topology": configured.request.topology})
-        return build_performance_plan(request, available_nodes, settings)
+        return await model_performance_plan(request)
 
     @app.get("/api/v1/telemetry", response_model=InferenceTelemetry)
     async def inference_telemetry() -> InferenceTelemetry:

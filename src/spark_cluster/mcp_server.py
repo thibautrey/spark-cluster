@@ -12,6 +12,7 @@ from .catalog import (
     ModelBrowser,
 )
 from .models import ModelDownloadRequest, ModelLaunchRequest
+from .performance import PerformancePlanRequest
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 SERVER_VERSION = "0.1.0"
@@ -25,6 +26,22 @@ def _schema(properties: dict, required: list[str] | None = None) -> dict:
 
 
 READ_TOOLS = [
+    {
+        "name": "get_performance_plan",
+        "title": "Plan a model runtime",
+        "description": (
+            "Get evidence-backed runtime settings, pinned recipe requirements and launch "
+            "blockers for a model and workload. Includes MIA DeepSeek TP3/TP4 profiles. "
+            "This is planning only: use check_model_fit for capacity and do not treat "
+            "external measurements as local benchmarks."
+        ),
+        "inputSchema": {
+            **PerformancePlanRequest.model_json_schema(),
+            "additionalProperties": False,
+        },
+        "outputSchema": {"type": "object", "additionalProperties": True},
+        "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    },
     {
         "name": "search_model_catalog",
         "title": "Search the model catalog",
@@ -275,6 +292,7 @@ class SparkClusterMCP:
         model_manager: Any,
         deployment_service: Any,
         model_fit_plan: Callable[[Any], Awaitable[Any]],
+        performance_plan: Callable[[PerformancePlanRequest], Awaitable[Any]],
         download_model: Callable[[ModelDownloadRequest, str], Awaitable[Any]],
         cluster_registry: Any = None,
     ) -> None:
@@ -283,6 +301,7 @@ class SparkClusterMCP:
         self.model_manager = model_manager
         self.deployment_service = deployment_service
         self.model_fit_plan = model_fit_plan
+        self.performance_plan = performance_plan
         self.download_model = download_model
         self.cluster_registry = cluster_registry
 
@@ -306,6 +325,9 @@ class SparkClusterMCP:
                 "This tool requires the controller model administration bearer token."
             )
         try:
+            if name == "get_performance_plan":
+                result = await self.performance_plan(PerformancePlanRequest(**arguments))
+                return self._result(result.model_dump(mode="json"))
             if name == "search_model_catalog":
                 sort = arguments.get("sort", "spark")
                 if sort not in {"spark", "trendingScore", "downloads", "likes", "lastModified"}:
