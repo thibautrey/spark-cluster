@@ -466,6 +466,7 @@ class RuntimeDeploymentService:
             cluster=cluster,
             image=plan.image,
             model_path=job.model_path,
+            model_id=job.request.model_id,
             served_model_name=job.request.served_model_name,
             context_length=job.request.context_length,
             tensor_parallel=job.request.tensor_parallel,

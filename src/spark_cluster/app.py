@@ -373,8 +373,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         active = cluster_registry.active()
                         if active and active.kind == "local-docker":
                             try:
+                                loaded_models = await docker_engine.loaded_models_by_gpu(active)
                                 snapshot = await asyncio.to_thread(
-                                    local_gpu_snapshot, active, settings
+                                    local_gpu_snapshot, active, settings, loaded_models
                                 )
                                 snapshot.runtime.model = (
                                     (
@@ -574,7 +575,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Cluster not found") from error
         if cluster.kind == "local-docker":
-            runtime.latest = await asyncio.to_thread(local_gpu_snapshot, cluster, settings)
+            loaded_models = await docker_engine.loaded_models_by_gpu(cluster)
+            runtime.latest = await asyncio.to_thread(
+                local_gpu_snapshot, cluster, settings, loaded_models
+            )
         else:
             runtime.latest = None
             with contextlib.suppress(RemoteClusterUnavailable):
