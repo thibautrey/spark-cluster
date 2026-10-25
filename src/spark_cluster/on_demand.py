@@ -672,8 +672,7 @@ class OnDemandInference:
                             )
                             if not loaded.is_success:
                                 raise RuntimeError(
-                                    "Runtime model preload failed "
-                                    f"(HTTP {loaded.status_code})"
+                                    f"Runtime model preload failed (HTTP {loaded.status_code})"
                                 )
                         self.last_error = None
                         return
