@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 
@@ -359,6 +360,11 @@ def test_global_openai_models_and_json_inference_route_through_pool(tmp_path, mo
         captured["path"] = path
         captured["body"] = (await receive())["body"]
         captured["headers"] = dict(scope["headers"])
+        disconnect = asyncio.create_task(receive())
+        await asyncio.sleep(0)
+        captured["premature_disconnect"] = disconnect.done()
+        disconnect.cancel()
+        await asyncio.gather(disconnect, return_exceptions=True)
         await send(
             {
                 "type": "http.response.start",
@@ -390,6 +396,7 @@ def test_global_openai_models_and_json_inference_route_through_pool(tmp_path, mo
     assert captured["path"] == "v1/chat/completions"
     assert json.loads(captured["body"])["model"] == "runtime-alias"
     assert b"content-length" not in captured["headers"]
+    assert captured["premature_disconnect"] is False
 
 
 def test_global_v1_supports_header_query_and_multipart_model_selection(tmp_path, monkeypatch):
