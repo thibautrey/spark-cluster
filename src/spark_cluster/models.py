@@ -469,9 +469,7 @@ class CachePrefixRecord(BaseModel):
 
 RuntimeEngineId = Literal["vllm", "sglang", "llama-cpp", "tensorfold", "deepinfer"]
 RuntimeNodeStatus = Literal["ready", "missing", "outdated", "unreachable", "installing", "failed"]
-RuntimeReadinessState = Literal[
-    "ready", "needs_preparation", "partial", "unreachable", "blocked"
-]
+RuntimeReadinessState = Literal["ready", "needs_preparation", "partial", "unreachable", "blocked"]
 
 
 class RuntimeNodeState(BaseModel):

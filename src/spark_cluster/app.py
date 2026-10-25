@@ -1369,7 +1369,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             return await runtime_prerequisites.prepare(request.cluster_id, request.engine_id)
         except KeyError as error:
-            raise HTTPException(status_code=404, detail="Compute pool or engine not found") from error
+            raise HTTPException(
+                status_code=404, detail="Compute pool or engine not found"
+            ) from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 

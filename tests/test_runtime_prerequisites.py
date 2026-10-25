@@ -174,10 +174,10 @@ async def test_local_docker_engine_overview_and_prepare(tmp_path):
         model_storage_path=str(tmp_path / "models"),
     )
     docker = FakeDocker()
-    setup = ClusterSetupService(settings, store, transport=RuntimeTransport(settings.runtime_vllm_image))
-    service = RuntimePrerequisiteService(
-        settings, store, setup, registry=registry, docker=docker
+    setup = ClusterSetupService(
+        settings, store, transport=RuntimeTransport(settings.runtime_vllm_image)
     )
+    service = RuntimePrerequisiteService(settings, store, setup, registry=registry, docker=docker)
 
     overview = await service.inspect_engines(pool.id)
     vllm = next(engine for engine in overview.engines if engine.id == "vllm")
@@ -186,9 +186,14 @@ async def test_local_docker_engine_overview_and_prepare(tmp_path):
     job = await service.prepare(pool.id, "vllm")
     await service.tasks[job.id]
     assert (await service.get_install(job.id)).status == "completed"
-    assert next(
-        engine for engine in (await service.inspect_engines(pool.id)).engines if engine.id == "vllm"
-    ).state == "ready"
+    assert (
+        next(
+            engine
+            for engine in (await service.inspect_engines(pool.id)).engines
+            if engine.id == "vllm"
+        ).state
+        == "ready"
+    )
     store.close()
 
 

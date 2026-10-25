@@ -555,9 +555,10 @@ def test_runtime_api_authorization_validation_and_controller_routing(tmp_path):
         assert "Runtime readiness" in page
         assert "Standalone macOS &amp; Windows hosts" in page
         cluster_id = client.get("/api/v1/clusters").json()["clusters"][0]["id"]
-        assert client.get(
-            f"/api/v1/runtime-management/engines?cluster_id={cluster_id}"
-        ).status_code == 401
+        assert (
+            client.get(f"/api/v1/runtime-management/engines?cluster_id={cluster_id}").status_code
+            == 401
+        )
         engines = client.get(
             f"/api/v1/runtime-management/engines?cluster_id={cluster_id}", headers=headers
         )
@@ -570,11 +571,14 @@ def test_runtime_api_authorization_validation_and_controller_routing(tmp_path):
             "tensorfold",
             "deepinfer",
         }
-        assert client.post(
-            "/api/v1/runtime-management/prepare",
-            headers=headers,
-            json={"cluster_id": cluster_id, "engine_id": "vllm"},
-        ).status_code == 409
+        assert (
+            client.post(
+                "/api/v1/runtime-management/prepare",
+                headers=headers,
+                json={"cluster_id": cluster_id, "engine_id": "vllm"},
+            ).status_code
+            == 409
+        )
         assert (
             client.get("/api/v1/runtime-library/jobs/missing", headers=headers).status_code == 404
         )

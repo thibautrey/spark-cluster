@@ -186,7 +186,10 @@ class RuntimeLibrary:
             if not exact_reference and not exact_digest:
                 continue
             path = artifact_path(self.root, artifact)
-            if not path.is_file() or await asyncio.to_thread(file_sha256, path) != artifact["sha256"]:
+            valid = path.is_file() and (
+                await asyncio.to_thread(file_sha256, path) == artifact["sha256"]
+            )
+            if not valid:
                 continue
             if exact_digest:
                 return artifact

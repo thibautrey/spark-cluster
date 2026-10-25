@@ -152,7 +152,8 @@ class RuntimePrerequisiteService:
         )
         jobs = await asyncio.to_thread(self.store.list_runtime_installs)
         engines = [
-            self._engine_status(spec, report, target, jobs) for spec, report in zip(specs, reports)
+            self._engine_status(spec, report, target, jobs)
+            for spec, report in zip(specs, reports, strict=True)
         ]
         platform = await self._target_platform(target)
         return RuntimeEngineCollection(
@@ -197,7 +198,9 @@ class RuntimePrerequisiteService:
             state = "blocked"
         elif report.ready:
             state = "ready"
-        elif target.status == "offline" or (statuses and all(item == "unreachable" for item in statuses)):
+        elif target.status == "offline" or (
+            statuses and all(item == "unreachable" for item in statuses)
+        ):
             state = "unreachable"
         elif not statuses:
             state = "blocked"
@@ -246,7 +249,9 @@ class RuntimePrerequisiteService:
                 image=spec.image,
                 ready=False,
                 install_supported=False,
-                message=spec.blockers[0] if spec.blockers else "No managed launch adapter is available",
+                message=(
+                    spec.blockers[0] if spec.blockers else "No managed launch adapter is available"
+                ),
             )
         if target and target.kind == "local-docker":
             reachable = self.docker.available
@@ -628,9 +633,7 @@ class RuntimePrerequisiteService:
         return job
 
     def issue_terminal_ticket(self, address: str) -> RuntimeTerminalTicket:
-        node = next(
-            (node for node in self.nodes(self.target()) if node.address == address), None
-        )
+        node = next((node for node in self.nodes(self.target()) if node.address == address), None)
         if not node:
             raise KeyError(address)
         ticket = secrets.token_urlsafe(32)
