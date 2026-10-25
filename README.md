@@ -27,6 +27,11 @@ Flash checkpoint has [MIA TP3/TP4 recipe planning](docs/research/mia-deepseek-20
 with NVMe Engram and compressed KV estimates; its patched multi-node SGLang runtime requires
 separate preparation before it can serve.
 
+The exact LibertAI EXL3 2.9 and 3.5 bpw revisions also expose
+[Tech2wild TensorFold TP2/TP4 plans](docs/research/tonyd2wild-deepseek-2026-10-25.md),
+including measured memory envelopes, shared position-pool limits, per-rank NVMe preparation,
+engine and kernel-kit pins, external benchmarks and managed-launch blockers.
+
 ## Why Spark Cluster
 
 | Capability | What it changes for the operator |
@@ -113,7 +118,7 @@ tokens, chooses FP8 KV for validated long-context profiles, keeps CUDA graphs en
 onto RoCEv2 without pinning the reboot-volatile GID index. DeepSeek V4.1 Flash and GLM 5.3 Flash plans
 also show their specialized engine, weight-layout, speculative-decoding, license, and storage guidance.
 These recommendations cite the [official NVIDIA scaling results](https://developer.nvidia.com/blog/running-frontier-class-ai-models-across-8-nvidia-dgx-spark-nodes/),
-the [measured DeepSeek V4.1 Spark recipes](https://github.com/tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark),
+the [measured DeepSeek V4.1 Spark recipes](https://github.com/tonyd2wild/DeepSeek-V4.1-Flash-TP2-and-TP4-DGX-Sparks),
 and the [GLM 5.3 Flash optimization campaign](https://github.com/chishiki37/glm-5.3-flash-nvfp4-dgx-spark).
 
 The download fit check treats storage, physical placement, and launcher support as separate gates.
@@ -390,7 +395,7 @@ Point any Streamable HTTP MCP client at that URL. Read-only tools require no cre
 | `search_model_catalog` | Search the live Hugging Face shortlist with the evidence-based Spark ranking or an explicit Hub sort. |
 | `inspect_model` | Read exact repository metadata, recommendation evidence, license, files and README. Repository content is returned with an explicit untrusted-content notice. |
 | `check_model_fit` | Compare memory, storage, runtime and placement feasibility for up to 12 models on 1–16 Sparks. |
-| `get_performance_plan` | Read runtime settings, exact recipe pins, external measurement conditions and launch prerequisites, including MIA DeepSeek TP3/TP4. |
+| `get_performance_plan` | Read runtime settings, exact recipe pins, external measurement conditions and launch prerequisites, including MIA SGLang TP3/TP4 and Tech2wild TensorFold TP2/TP4. |
 | `get_cluster_status` | Read the latest cluster, node, memory, cache and runtime snapshot. |
 | `list_installed_models` | Inspect models available to the controller or cluster runtime. |
 | `list_model_activity` | Follow download and launch jobs. |

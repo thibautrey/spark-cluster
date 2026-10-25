@@ -29,6 +29,10 @@ from .deepseek_mia import (
 from .deepseek_mia import (
     MODEL_ID as MIA_MODEL_ID,
 )
+from .deepseek_tonyd2wild import (
+    MANAGED_LAUNCH_BLOCKER as TONY_MANAGED_LAUNCH_BLOCKER,
+)
+from .deepseek_tonyd2wild import build_tony_recipe, is_reviewed_profile, profile_for_model
 from .model_relay import ModelRelay
 from .models import (
     ClusterSnapshot,
@@ -485,6 +489,7 @@ def build_fit_plan(
     headroom = full_headroom
     performance_impact = "none"
     mia_recipe = None
+    tony_recipe = None
     requirements: list[str] = []
     tradeoffs: list[str] = []
 
@@ -670,6 +675,89 @@ def build_fit_plan(
                 "before applying its compressed-KV and resident-memory estimates."
             )
 
+    tony_profile = profile_for_model(metadata.repo_id)
+    if tony_profile:
+        launch_supported = False
+        runtime_fits = False
+        engine = f"Tech2wild native TensorFold TP{tony_profile.nodes} lane"
+        requirements.append(TONY_MANAGED_LAUNCH_BLOCKER)
+        checkpoint_commit = metadata.commit or metadata.revision
+        if (
+            is_reviewed_profile(metadata.repo_id, checkpoint_commit)
+            and engram_bytes
+            and settings.active_hardware == "dgx-spark"
+        ):
+            physical = (
+                sorted((node.memory.total_gib for node in available_nodes), reverse=True)
+                if available_nodes
+                else [settings.fallback_node_memory_gib] * len(node_capacities)
+            )
+            tony_recipe = build_tony_recipe(
+                metadata.repo_id,
+                request.context_length,
+                request.concurrent_sequences,
+                revision=checkpoint_commit,
+            )
+            minimum_nodes = tony_profile.nodes
+            selected = physical[:minimum_nodes]
+            request_supported = (
+                request.context_length <= tony_recipe.max_context_length
+                and request.concurrent_sequences <= tony_profile.streams
+                and request.context_length * request.concurrent_sequences
+                <= tony_profile.pool_positions
+            )
+            runtime_fits = (
+                len(selected) == minimum_nodes
+                and all(
+                    capacity >= tony_profile.runtime_required_gib_per_rank for capacity in selected
+                )
+                and request_supported
+            )
+            node_capacities = physical
+            resident_weights = tony_profile.model_memory_gib_per_rank * minimum_nodes
+            resident_kv = 0.0
+            kv_cache_gib = 0.0
+            runtime_overhead = (
+                tony_profile.runtime_required_gib_per_rank - tony_profile.model_memory_gib_per_rank
+            ) * minimum_nodes
+            total_required = tony_profile.runtime_required_gib_per_rank * minimum_nodes
+            headroom = sum(selected) - total_required
+            placement = "engram-nvme"
+            offloaded_weights = engram_gib
+            ssd_per_node = tony_profile.local_nvme_gib_per_rank
+            detected_format = f"EXL3 {tony_profile.bits_per_weight:g} bpw (Tech2wild TensorFold)"
+            detected_bits = tony_profile.bits_per_weight
+            kv_dtype = "tensorfold-native"
+            confidence = "architecture"
+            performance_impact = "low"
+            requirements = [item for item in requirements if "pinned TensorFold/EXL3" not in item]
+            requirements.extend(tony_recipe.prerequisites)
+            requirements.extend(tony_recipe.blockers[1:])
+            notes.extend(
+                [
+                    f"The pinned TP{minimum_nodes} profile uses the measured engine footprint "
+                    f"of {tony_profile.model_memory_gib_per_rank:.2f} GiB per rank and a "
+                    f"conservative {tony_profile.runtime_required_gib_per_rank:.1f} GiB "
+                    "per-rank serving envelope. These are external run measurements, not "
+                    "controller telemetry.",
+                    f"TensorFold exposes a shared {tony_profile.pool_positions:,}-position "
+                    "native KV pool. Its GiB split is not reported independently from the "
+                    "measured serving footprint, so generic KV precision does not rescale it.",
+                    "Local NVMe planning includes about "
+                    f"{tony_profile.rank_cache_gib_per_rank:.1f} "
+                    "GiB of generated rank cache plus a local copy of both base Engram shards.",
+                ]
+            )
+            tradeoffs.append(
+                "The reported throughput depends on the exact TensorFold fork, kernel kit, "
+                "rank cache, clocks, prompt set, stream count and RoCE rails."
+            )
+        else:
+            requirements.append(
+                "Resolve the reviewed Tech2wild weight revision, base Engram shards and DGX "
+                "Spark hardware before applying its measured TensorFold capacity envelope."
+            )
+
     if not runtime_fits and launch_supported and placement == "full-memory" and kv_cache_gib:
         weights_fit = _minimum_nodes(node_capacities, complete_weights_gib, 0)[0]
         if weights_fit <= len(node_capacities):
@@ -716,7 +804,7 @@ def build_fit_plan(
     repository_storage_gib = metadata.repository_bytes / GIB
     runtime_storage_required_gib = (
         metadata.repository_bytes + metadata.external_artifacts_bytes
-    ) / GIB + (ssd_per_node if mia_recipe else 0)
+    ) / GIB + (ssd_per_node if mia_recipe or tony_recipe else 0)
     storage_fits = repository_storage_gib <= storage_available_gib
     runtime_storage_fits = runtime_storage_required_gib <= storage_available_gib
     download_fits = storage_fits
@@ -795,8 +883,10 @@ def build_fit_plan(
         revision=request.revision,
         checkpoint_commit=metadata.commit
         or (metadata.revision if re.fullmatch(r"[0-9a-f]{40}", metadata.revision) else None),
-        recipe_id=mia_recipe.id if mia_recipe else None,
-        recipe_source_url=mia_recipe.recipe_url if mia_recipe else None,
+        recipe_id=(mia_recipe or tony_recipe).id if mia_recipe or tony_recipe else None,
+        recipe_source_url=(
+            (mia_recipe or tony_recipe).recipe_url if mia_recipe or tony_recipe else None
+        ),
         architecture=metadata.architecture,
         parameter_count=metadata.parameter_count,
         repository_bytes=metadata.repository_bytes,

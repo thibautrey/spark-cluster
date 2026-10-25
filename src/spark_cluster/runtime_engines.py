@@ -5,6 +5,10 @@ from dataclasses import dataclass
 
 from .config import Settings
 from .deepseek_mia import MANAGED_LAUNCH_BLOCKER, MODEL_ID
+from .deepseek_tonyd2wild import (
+    MANAGED_LAUNCH_BLOCKER as TONY_MANAGED_LAUNCH_BLOCKER,
+)
+from .deepseek_tonyd2wild import profile_for_model
 from .models import ModelLaunchRequest, RuntimeExecutionPlan
 
 
@@ -58,7 +62,7 @@ def capabilities(settings: Settings) -> dict[str, EngineCapability]:
             image=settings.runtime_tensorfold_image,
             executable=False,
             supports_multi_node=True,
-            speculative_methods=("off",),
+            speculative_methods=("off", "auto", "dspark"),
             supports_expert_parallel=False,
             supports_lmcache=False,
             blockers=(
@@ -88,6 +92,8 @@ def recommended_engine(model_id: str, settings: Settings) -> tuple[str, list[str
     notes: list[str] = []
     if model_id == MODEL_ID and settings.active_hardware == "dgx-spark":
         return "sglang", [MANAGED_LAUNCH_BLOCKER]
+    if profile_for_model(model_id) and settings.active_hardware == "dgx-spark":
+        return "tensorfold", [TONY_MANAGED_LAUNCH_BLOCKER]
     if "deepseek-v4.1" in model or "deepseek_v4.1" in model:
         notes.append(
             "TensorFold is a specialized measured option, but this installation has no "
@@ -113,6 +119,13 @@ def build_execution_plan(
     blockers = list(engine.blockers)
     if request.model_id == MODEL_ID:
         blockers.append(MANAGED_LAUNCH_BLOCKER)
+    if profile_for_model(request.model_id):
+        blockers.append(TONY_MANAGED_LAUNCH_BLOCKER)
+        if engine_id != "tensorfold":
+            blockers.append(
+                "The reviewed EXL3 pack requires the pinned native TensorFold lane; the "
+                f"managed {engine.name} adapter is not an equivalent fallback."
+            )
     ranks = request.tensor_parallel * request.pipeline_parallel
     if not engine.image:
         blockers.append(f"No pinned {engine.name} image is configured.")

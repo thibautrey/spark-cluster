@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from spark_cluster.catalog import summary
 from spark_cluster.catalog_recommendation import REPORTS, ranking_key, recommend
@@ -9,18 +9,19 @@ def test_revision_and_expiry_bound_community_evidence():
     repo, report = next(iter(REPORTS.items()))
     data = {"id": repo, "sha": report["commit"]}
     spark = classify_spark(data)
-    current = recommend(data, spark, date(2026, 10, 23))
+    reviewed = report.get("reviewed", date(2026, 10, 23))
+    current = recommend(data, spark, reviewed)
     assert current.priority == 2
     assert current.reported_nodes == [2]
     assert current.sources
     assert "Community" in " ".join(current.caveats)
-    assert recommend(data, spark, date(2026, 11, 24)).priority < 2
-    assert recommend({**data, "sha": "new"}, spark, date(2026, 10, 23)).priority < 2
+    assert recommend(data, spark, reviewed + timedelta(days=31)).priority < 2
+    assert recommend({**data, "sha": "new"}, spark, reviewed).priority < 2
     assert (
         recommend(
             {**data, "siblings": [{"rfilename": "README.md"}]},
             classify_spark({**data, "siblings": [{"rfilename": "README.md"}]}),
-            date(2026, 10, 23),
+            reviewed,
         ).priority
         == -1
     )

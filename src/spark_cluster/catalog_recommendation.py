@@ -14,20 +14,29 @@ from .deepseek_mia import (
 from .deepseek_mia import (
     REVIEWED as MIA_REVIEWED,
 )
+from .deepseek_tonyd2wild import (
+    RECIPE_SOURCE as TONY_RECIPE_SOURCE,
+)
+from .deepseek_tonyd2wild import (
+    REVIEWED as TONY_REVIEWED,
+)
+from .deepseek_tonyd2wild import TP2_MODEL_ID, TP2_MODEL_REVISION, TP4_MODEL_ID, TP4_MODEL_REVISION
 from .spark_optimization import SparkOptimization
 
-RECOMMENDATION_VERSION = "evidence-v2-mia"
+RECOMMENDATION_VERSION = "evidence-v3-mia-tonyd2wild"
 # Exact model revisions inspected on the review date. These are community reports,
 # not certifications. A changed revision never inherits an old recipe's priority.
 REPORTS = {
-    "LibertAIDAI/DeepSeek-V4.1-Flash-1017-EXL3-2.9bpw": {
-        "commit": "0be63c3337efbb2a0061d5b8bb4006fa186d433f",
+    TP2_MODEL_ID: {
+        "commit": TP2_MODEL_REVISION,
         "nodes": [2],
-        "runtime": "TensorFold DeepSeek V4.1 TP2 fork",
-        "source": "https://forums.developer.nvidia.com/t/386125",
-        "note": "TP2 community measurements: 56.8 tok/s prose, 92.2 code in one report; "
-        "not comparable to unrelated prompt sets. Requires official 1017 Engram shards. "
-        "OOM reports exist; do not assume 1M context is safe for every workload.",
+        "runtime": "Tech2wild native TensorFold TP2 lane",
+        "source": TONY_RECIPE_SOURCE,
+        "reviewed": TONY_REVIEWED,
+        "note": "Pinned TP2 run: EXL3 2.9 bpw, 4 streams, shared 1,048,576-position "
+        "pool, both RoCE rails and local Engram. Reported 73.1 tok/s C1, 135.8 C4, "
+        "1M needle pass and external 69-scenario score 97.1. Requires the engine fork, "
+        "kernel kit, rank caches and base 1017 Engram shards; managed launch is unavailable.",
     },
     "HeNryous/DeepSeek-V4.1-Flash-1017-EXL3-2.75bpw-DGX-Spark": {
         "commit": "f53132cb17e18a5a9ddd7f213965912a575f0dd5",
@@ -45,13 +54,16 @@ REPORTS = {
         "note": "Publisher documents compatibility with the TensorFold TP2 recipe; "
         "not a separate independent benchmark. Requires official 1017 Engram shards.",
     },
-    "LibertAIDAI/DeepSeek-V4.1-Flash-1017-EXL3-3.5bpw": {
-        "commit": "04a492fc3b4d25ddbab8f2d2f07f235ec77c9010",
+    TP4_MODEL_ID: {
+        "commit": TP4_MODEL_REVISION,
         "nodes": [4],
-        "runtime": "TensorFold DeepSeek V4.1 TP4 fork",
-        "source": "https://github.com/tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark",
-        "note": "Four-Spark recipe reported; does not fit two Sparks. Requires official "
-        "1017 Engram shards. Published throughput depends on prompt, concurrency and RoCE rails.",
+        "runtime": "Tech2wild native TensorFold TP4 lane",
+        "source": TONY_RECIPE_SOURCE,
+        "reviewed": TONY_REVIEWED,
+        "note": "Pinned TP4 run: EXL3 3.5 bpw, 16 streams, shared 2,097,152-position "
+        "pool, both RoCE rails and local Engram. Reported 93.6 tok/s C1 and 270.8 C16; "
+        "needles verified through 500K while 1M remained configured. Requires exact engine, "
+        "kit, patches, rank caches and base shards; managed launch is unavailable.",
     },
     MODEL_ID: {
         "commit": MODEL_REVISION,

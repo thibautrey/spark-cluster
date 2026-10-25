@@ -171,7 +171,7 @@ def summary(data: dict) -> CatalogModel:
 
 
 class ModelBrowser:
-    planner_version = "catalog-fit-v3-mia"
+    planner_version = "catalog-fit-v4-mia-tonyd2wild"
 
     def __init__(self, settings: Settings):
         self.settings = settings

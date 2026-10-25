@@ -2,28 +2,28 @@ from spark_cluster.config import Settings
 from spark_cluster.performance import PerformancePlanRequest, build_performance_plan
 
 
-def test_deepseek_v41_plan_uses_tensorfold_dual_rail_findings():
+def test_deepseek_v41_exl3_plan_uses_pinned_tensorfold_dual_rail_findings():
     plan = build_performance_plan(
         PerformancePlanRequest(
             model_id="LibertAIDAI/DeepSeek-V4.1-Flash-1017-EXL3-3.5bpw",
+            revision="04a492fc3b4d25ddbab8f2d2f07f235ec77c9010",
             node_count=4,
             topology="ring",
             context_length=262_144,
         ),
         available_nodes=4,
     )
-    assert plan.engine_id == "vllm"
-    assert plan.engine_executable is True
-    assert "TensorFold available" in plan.engine
+    assert plan.engine_id == "tensorfold"
+    assert plan.engine_executable is False
+    assert "TensorFold native" in plan.engine
     assert plan.tensor_parallel == 4
     assert plan.context_length == 262_144
     assert 1_048_576 in plan.context_options
     assert plan.max_num_seqs == 16
-    assert plan.speculative_method == "mtp"
-    assert any("DSpark" in warning for warning in plan.warnings)
-    assert plan.collective_backend == "NCCL ring over RoCEv2"
-    assert any("both RoCE rails" in item.finding for item in plan.evidence)
-    assert any("Engram" in warning for warning in plan.warnings)
+    assert plan.speculative_method == "dspark"
+    assert plan.collective_backend == "Dual-rail RoCE four-rank fabric"
+    assert any("both rails" in item.finding.casefold() for item in plan.evidence)
+    assert plan.recipe.environment["TF_DS_WINDOW"] == "2097152"
 
 
 def test_glm53_plan_uses_fp8_kv_mtp_evidence_and_no_fixed_gid():

@@ -6,6 +6,14 @@ from pydantic import BaseModel, Field
 
 from .config import Settings
 from .deepseek_mia import MODEL_ID, MiaRecipePlan, build_mia_recipe
+from .deepseek_tonyd2wild import (
+    RECIPE_SOURCE as TONY_RECIPE_SOURCE,
+)
+from .deepseek_tonyd2wild import (
+    TonyRecipePlan,
+    build_tony_recipe,
+    profile_for_model,
+)
 from .runtime_engines import capabilities, recommended_engine
 
 
@@ -53,12 +61,12 @@ class PerformancePlan(BaseModel):
     cache_cpu_gib: int = 32
     cache_disk_gib: int = 1536
     context_options: list[int] = Field(default_factory=list)
-    recipe: MiaRecipePlan | None = None
+    recipe: MiaRecipePlan | TonyRecipePlan | None = None
     blockers: list[str] = Field(default_factory=list)
 
 
 NVIDIA_SCALE = "https://developer.nvidia.com/blog/running-frontier-class-ai-models-across-8-nvidia-dgx-spark-nodes/"
-DEEPSEEK_RECIPE = "https://github.com/tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark"
+DEEPSEEK_RECIPE = TONY_RECIPE_SOURCE
 GLM_RECIPE = "https://github.com/chishiki37/glm-5.3-flash-nvfp4-dgx-spark"
 
 
@@ -109,6 +117,8 @@ def build_performance_plan(
     is_spark = settings.active_hardware == "dgx-spark"
     if is_spark and request.model_id == MODEL_ID:
         return _mia_performance_plan(request, nodes)
+    if is_spark and profile_for_model(request.model_id):
+        return _tony_performance_plan(request, nodes)
     collective, topology_guidance = _topology(nodes, request.topology, settings.active_hardware)
     evidence = (
         [
@@ -382,6 +392,93 @@ def _mia_performance_plan(request: PerformancePlanRequest, available_nodes: int)
         cache_disk_gib=0,
         context_options=[16_384, 32_768, 65_536, 131_072, 262_144]
         + ([524_288, 1_048_576] if nodes == 4 else []),
+        recipe=recipe,
+        blockers=recipe.blockers,
+    )
+
+
+def _tony_performance_plan(
+    request: PerformancePlanRequest, available_nodes: int
+) -> PerformancePlan:
+    profile = profile_for_model(request.model_id)
+    if not profile:  # Kept explicit for type narrowing and direct unit calls.
+        raise ValueError("No reviewed Tech2wild profile exists for this model")
+    context = min(request.context_length, 1_048_576)
+    recipe = build_tony_recipe(
+        request.model_id,
+        context,
+        request.concurrent_sequences,
+        request.topology,
+        request.revision,
+    )
+    if available_nodes < profile.nodes:
+        recipe.blockers.append(
+            f"The reviewed TP{profile.nodes} lane needs {profile.nodes} DGX Sparks; "
+            f"only {available_nodes} are selected."
+        )
+    warnings = [
+        "Tech2wild's results are external measurements for one pinned TensorFold, weight, "
+        "kernel-kit and fabric combination; they are not controller benchmarks.",
+        "The TensorFold position pool is shared by active streams. The 1M context window "
+        "does not mean every configured stream can simultaneously hold 1M tokens.",
+        "TensorFold owns DSpark draft length and its native KV layout; generic vLLM KV and "
+        "speculative-token controls do not translate to this lane.",
+        "The dashboard scheduler token field is not a TensorFold setting and is ignored by "
+        "the external launcher.",
+        "Verify clocks and decode-shaped memory bandwidth before comparing throughput; the "
+        "external fleet observed a hidden GB10 slow state not visible in nvidia-smi.",
+        "The external server documents reference mismatches for double-encoded tool argument "
+        "strings and text-only content arrays; include them in client compatibility tests.",
+    ]
+    if context != request.context_length:
+        warnings.append(f"The profile reduces the requested context to {context:,} tokens.")
+    if profile.nodes == 2:
+        topology = "Dual-rail RoCE TP2"
+        topology_guidance = (
+            "Use both ConnectX-7 rails after probing routable addresses, HCA names and the "
+            "RoCE v2 GID on both ranks."
+        )
+    else:
+        topology = "Dual-rail RoCE four-rank fabric"
+        topology_guidance = (
+            "Keep the recorded rank order, verify every rail and confirm balanced traffic. "
+            "Do not copy the author's interface names or GID index."
+        )
+    return PerformancePlan(
+        model_family=request.model_id,
+        profile=f"DeepSeek V4.1 Flash · Tech2wild TensorFold TP{profile.nodes}",
+        engine=f"TensorFold native Zig · EXL3 {profile.bits_per_weight:g} bpw",
+        engine_id="tensorfold",
+        engine_executable=False,
+        recommended_nodes=profile.nodes,
+        tensor_parallel=profile.nodes,
+        context_length=context,
+        gpu_memory_utilization=round(profile.runtime_required_gib_per_rank / 121.7, 3),
+        kv_cache_dtype="auto",
+        max_num_seqs=profile.streams,
+        max_num_batched_tokens=8192,
+        collective_backend=topology,
+        topology_guidance=topology_guidance,
+        engine_guidance=(
+            "Prepare the pinned native TensorFold lane and its generated per-rank inputs. "
+            "The managed controller cannot launch it from a generic image or model folder."
+        ),
+        automatic_settings=recipe.prerequisites,
+        warnings=warnings,
+        evidence=[
+            PerformanceEvidence(
+                title=f"Tech2wild TP{profile.nodes} measurements",
+                finding=finding,
+                source_url=recipe.recipe_url,
+            )
+            for finding in recipe.measurements
+        ],
+        speculative_method="dspark",
+        speculative_tokens=0,
+        expert_parallel=False,
+        cache_cpu_gib=0,
+        cache_disk_gib=0,
+        context_options=[16_384, 32_768, 65_536, 131_072, 262_144, 524_288, 1_048_576],
         recipe=recipe,
         blockers=recipe.blockers,
     )

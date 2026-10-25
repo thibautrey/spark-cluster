@@ -31,7 +31,8 @@ READ_TOOLS = [
         "title": "Plan a model runtime",
         "description": (
             "Get evidence-backed runtime settings, pinned recipe requirements and launch "
-            "blockers for a model and workload. Includes MIA DeepSeek TP3/TP4 profiles. "
+            "blockers for a model and workload. Includes MIA SGLang TP3/TP4 and Tech2wild "
+            "TensorFold TP2/TP4 DeepSeek profiles. "
             "This is planning only: use check_model_fit for capacity and do not treat "
             "external measurements as local benchmarks."
         ),
