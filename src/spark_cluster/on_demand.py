@@ -23,7 +23,13 @@ from starlette.responses import JSONResponse, StreamingResponse
 
 from .inference_tracking import mark_dispatch, request_stream_usage
 from .local_docker import DockerEngineClient
-from .pool_memory import MemoryPlan, RuntimeResources, imported_resources, plan_memory
+from .pool_memory import (
+    MemoryPlan,
+    RuntimeResources,
+    gpu_availability,
+    imported_resources,
+    plan_memory,
+)
 
 logger = logging.getLogger(__name__)
 HOP_HEADERS = {
@@ -226,7 +232,15 @@ class OnDemandInference:
             gpus = await self.gpu_memory()
         resident = self.residents.get(profile.id)
         if resident and resident.status == "ready":
-            return MemoryPlan(resident.gpu_ids, resident.budget_gib, resident.fraction)
+            availability = gpu_availability(gpus, self.residents, self.usable_fraction)
+            return MemoryPlan(
+                resident.gpu_ids,
+                resident.budget_gib,
+                resident.fraction,
+                available_gib=sum(
+                    g["available_gib"] for g in availability if g["id"] in resident.gpu_ids
+                ),
+            )
         return plan_memory(
             self.resources_for(profile, gpus),
             gpus,
@@ -292,6 +306,8 @@ class OnDemandInference:
 
     async def _remove(self, profile: InferenceProfile, force=False) -> None:
         resident = self.residents.get(profile.id)
+        if resident and resident.status == "starting" and not force:
+            raise RuntimeError("Wait for runtime startup before unloading this model")
         if resident and resident.active_requests and not force:
             raise RuntimeError("Wait for active requests before unloading this model")
         name = quote(profile.name, safe="")
@@ -352,6 +368,8 @@ class OnDemandInference:
                 )
                 resources = imported_resources(actual, gpus)
                 allocation = json.loads(labels.get("spark-cluster.reservation", "null") or "null")
+                if not allocation and not gpus:
+                    raise RuntimeError("GPU telemetry is required to adopt a legacy runtime safely")
                 if allocation:
                     budgets = allocation["budget_gib"]
                     if not all(
@@ -485,6 +503,8 @@ class OnDemandInference:
             try:
                 await self._start_runtime(profile, resident)
                 async with self.lock:
+                    if self.residents.get(profile.id) is not resident:
+                        raise RuntimeError("Runtime residency changed during startup")
                     resident.status = "ready"
                     resident.last_used = time.monotonic()
                     if keep_loaded is not None:
