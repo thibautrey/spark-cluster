@@ -268,6 +268,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 name=c["name"],
                 available=c["available"],
                 active_model=c.get("active_model"),
+                resident_models=c.get("resident_models", []),
                 busy=c.get("busy", False),
                 machines=c.get("machines", []),
                 age_seconds=round(max(0, time.monotonic() - model_pool.cache_time), 1),
@@ -277,8 +278,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def metrics_target():
         # The physical engine owns counters, not the legacy listener or fixed default port.
-        if on_demand.active:
-            return on_demand.active.upstream + "/metrics"
+        ready = [r for r in on_demand.residents.values() if r.status == "ready"]
+        if ready:
+            return {r.profile.id: r.profile.upstream + "/metrics" for r in ready}
         if pool_node.native.get("model_id"):
             return settings.direct_runtime_base_url.removesuffix("/v1") + "/metrics"
         return (
@@ -402,9 +404,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 )
                                 snapshot.runtime.model = (
                                     (
-                                        on_demand.active.model
-                                        if on_demand.active
-                                        else "No model loaded"
+                                        ", ".join(r.profile.model for r in on_demand.residents.values()
+                                                  if r.status == "ready") or "No model loaded"
                                     )
                                     if on_demand.profiles
                                     else settings.runtime_model

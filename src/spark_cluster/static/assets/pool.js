@@ -16,19 +16,19 @@
   function capacityContext(model) {
     const selected = window.selectedClusterContext?.() || 'all';
     const capacities = (model.cluster_capacity || []).filter(item => item.available);
-    const fitting = capacities.filter(item => item.fits);
+    const fitting = capacities.filter(item => item.fits || item.can_load);
     if (selected === 'all') {
       if (fitting.length) {
         const best = fitting.sort((a, b) => b.available_gib - a.available_gib)[0];
         return {fits: true, selected, capacity: best, alternatives: fitting};
       }
-      const closest = capacities.filter(item => item.missing_gib !== null)
+      const closest = capacities.filter(item => item.reason || item.missing_gib !== null)
         .sort((a, b) => a.missing_gib - b.missing_gib)[0];
       return {fits: false, selected, capacity: closest || null, alternatives: []};
     }
     const capacity = capacities.find(item => item.cluster_id === selected) || null;
     return {
-      fits: capacity ? capacity.fits : false,
+      fits: capacity ? (capacity.fits || capacity.can_load) : false,
       selected,
       capacity,
       alternatives: fitting.filter(item => item.cluster_id !== selected),
@@ -36,13 +36,17 @@
   }
   function capacityMarkup(context) {
     const capacity = context.capacity;
+    if (capacity?.reason) {
+      const state = capacity.waiting ? 'Waiting for memory' : capacity.evict?.length ? 'Fits after freeing idle models' : context.fits ? 'Memory ready' : 'Insufficient GPU capacity';
+      return `<div class="pool-model-capacity ${context.fits ? 'fits' : 'missing'}"><span>${escapeHtml(state)}</span><small>${escapeHtml(capacity.reason)}</small></div>`;
+    }
     if (!capacity || (!context.fits && capacity.missing_gib == null)) {
       const alternative = context.alternatives[0];
       return `<div class="pool-model-capacity unknown"><span>Memory preflight unavailable for this compute pool</span>${alternative ? `<small>Fits on ${escapeHtml(alternative.cluster_name)} · switch pool or choose All</small>` : ''}</div>`;
     }
     if (context.fits) {
       const location = context.selected === 'all' ? `Fits on ${escapeHtml(capacity.cluster_name)}` : `Fits in ${escapeHtml(capacity.cluster_name)}`;
-      return `<div class="pool-model-capacity fits"><span>✓ ${location}</span><small>${capacity.required_gib.toFixed(1)} GiB required · ${capacity.available_gib.toFixed(1)} GiB available</small></div>`;
+      return `<div class="pool-model-capacity fits"><span>✓ ${location}</span><small>${capacity.required_gib.toFixed(1)} GiB budget · ${capacity.available_gib.toFixed(1)} GiB available</small></div>`;
     }
     const alternative = context.alternatives[0];
     return `<div class="pool-model-capacity missing"><span>Needs ${capacity.missing_gib.toFixed(1)} GiB more on ${escapeHtml(capacity.cluster_name)}</span>${alternative ? `<small>Fits on ${escapeHtml(alternative.cluster_name)} · switch pool or choose All</small>` : '<small>No compatible compute pool currently has enough memory</small>'}</div>`;
@@ -95,7 +99,7 @@
           : `${capacity.capacity.missing_gib.toFixed(1)} GiB additional memory required`;
       return `<article class="pool-model-card" data-pool-model="${escapeHtml(model.id)}">
         <div class="pool-model-heading"><h3>${escapeHtml(model.id)}</h3><span class="pill ${loaded ? 'ready' : ''}">${retained && loaded ? 'Kept loaded' : retained ? 'Retention enabled' : loaded ? 'Loaded' : 'On demand'}</span></div>
-        <p>${loaded ? model.placements.map(p => escapeHtml(p.cluster_name)).join(', ') : model.preferences.cluster_id ? `Required compute pool: ${escapeHtml(state.clusters.find(c => c.id === model.preferences.cluster_id)?.name || 'unavailable')}` : 'Automatic placement in the pool'}</p>
+        <p>${loaded ? model.placements.map(p => escapeHtml(p.cluster_name) + (p.gpu_ids?.length ? ` · ${p.gpu_ids.length} GPU · ${Object.values(p.budget_gib || {}).reduce((sum, value) => sum + value, 0).toFixed(1)} GiB` : '')).join(', ') : model.preferences.cluster_id ? `Required compute pool: ${escapeHtml(state.clusters.find(c => c.id === model.preferences.cluster_id)?.name || 'unavailable')}` : 'Automatic placement in the pool'}</p>
         <div class="pool-model-runtime"><span>⚡</span><div><b>${escapeHtml(runtimeName)}</b><small>${escapeHtml(runtimeState)}</small></div></div>
         ${capacityMarkup(capacity)}
         ${loadProgressMarkup(visibleJob)}
@@ -145,6 +149,7 @@
     field('pool-tensor').value = settings?.tensor_parallel || 1;
     field('pool-pipeline').value = settings?.pipeline_parallel || 1;
     field('pool-memory').value = settings?.gpu_memory_utilization || 0.82;
+    field('pool-memory-mode').value = settings?.memory_budget_mode || (settings ? 'fixed' : 'auto');
     field('pool-served-name').value = settings?.served_model_name || model.id.split('/').at(-1);
     sheet.hidden = false;
     document.body.classList.add('bottom-sheet-open');
@@ -183,6 +188,7 @@
       served_model_name: field('pool-served-name').value.trim(),
       context_length: Number(field('pool-context').value), tensor_parallel: Number(field('pool-tensor').value),
       pipeline_parallel: Number(field('pool-pipeline').value), gpu_memory_utilization: Number(field('pool-memory').value),
+      memory_budget_mode: field('pool-memory-mode').value,
     } : null;
     try {
       await api(`/api/v1/pool/models/${encodeURIComponent(editing.id)}/settings`, {method: 'PUT', headers: auth(), body: JSON.stringify({keep_loaded: field('pool-keep-loaded').checked, cluster_id: field('pool-cluster').value || null, last_settings: lastSettings})});

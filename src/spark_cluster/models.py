@@ -284,6 +284,7 @@ class ModelLaunchRequest(BaseModel):
     tensor_parallel: int = Field(default=1, gt=0, le=64)
     pipeline_parallel: int = Field(default=1, gt=0, le=64)
     gpu_memory_utilization: float = Field(default=0.82, gt=0, lt=1)
+    memory_budget_mode: Literal["auto", "fixed"] = "auto"
     optimization_profile: Literal["balanced", "latency", "throughput", "long-context"] = "balanced"
     kv_cache_dtype: Literal["auto", "fp8_e4m3"] = "auto"
     max_num_seqs: int = Field(default=4, gt=0, le=1024)
@@ -367,6 +368,7 @@ class ModelLaunchJob(BaseModel):
 
 
 class InferenceTelemetry(BaseModel):
+    runtimes: dict[str, dict] = Field(default_factory=dict)
     sampled_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     source: str = "unavailable"
     available: bool = False

@@ -1,5 +1,8 @@
 import time
 
+import httpx
+import pytest
+
 from spark_cluster.config import Settings
 from spark_cluster.store import SnapshotStore
 from spark_cluster.telemetry import InferenceTelemetryService, parse_prometheus
@@ -42,4 +45,35 @@ def test_prometheus_parser_and_measured_runtime_telemetry(tmp_path):
     assert result.active_requests == 3
     store.save_telemetry(result)
     assert store.latest_telemetry() == result
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_multiple_runtime_metrics_keep_independent_counter_baselines(tmp_path):
+    store = SnapshotStore(tmp_path / "state.db")
+    service = InferenceTelemetryService(Settings(database_path=tmp_path / "state.db"), store)
+    counts = {"first": 100, "second": 10}
+    targets = {name: f"http://{name}/metrics" for name in counts}
+    service.target_provider = lambda: targets
+
+    def metrics(request):
+        count = counts[request.url.host]
+        return httpx.Response(200, text=f"vllm:prompt_tokens_total {count}\nvllm:num_requests_running 1\n")
+
+    service.transport = httpx.MockTransport(metrics)
+    first = await service.sample()
+    assert first.input_tokens_total == 110
+    assert set(first.runtimes) == {"first", "second"}
+    assert first.active_requests == 2
+    assert first.ttft_p95_ms is None
+    for url in targets.values():
+        service._target_previous[url] = (time.monotonic() - 2, service._target_previous[url][1])
+    counts.update(first=120, second=0)  # Only the second runtime restarted.
+    second = await service.sample()
+    assert 9 < second.prefill_tokens_per_second < 11
+    assert second.runtimes["second"]["prefill_tokens_per_second"] is None
+    targets.pop("second")
+    final = await service.sample()
+    assert set(final.runtimes) == {"first"}
+    assert "http://second/metrics" not in service._target_previous
     store.close()

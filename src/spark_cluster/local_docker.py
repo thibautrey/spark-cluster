@@ -17,6 +17,44 @@ from .models import CacheTier, ClusterSnapshot, MemoryStats, ModelRuntime, NodeS
 GIB = 2**30
 
 
+def gpu_process_memory(devices: list[GPUDevice]) -> list[dict]:
+    """Read actual device use and host PIDs; unavailable measurements fail closed."""
+    try:
+        import pynvml
+    except ImportError:
+        return []
+    result = []
+    try:
+        pynvml.nvmlInit()
+        for gpu in devices:
+            try:
+                handle = pynvml.nvmlDeviceGetHandleByIndex(gpu.index)
+                memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                processes = {}
+                complete = True
+                try:
+                    for process in pynvml.nvmlDeviceGetComputeRunningProcesses(handle):
+                        if 0 <= process.usedGpuMemory <= memory.total:
+                            processes[process.pid] = process.usedGpuMemory / GIB
+                        else:
+                            complete = False
+                except pynvml.NVMLError:
+                    complete = False
+                result.append({
+                    "id": gpu.uuid, "index": gpu.index,
+                    "total_gib": memory.total / GIB, "used_gib": memory.used / GIB,
+                    "processes": processes, "accounting_complete": complete,
+                })
+            except pynvml.NVMLError:
+                continue
+    except pynvml.NVMLError:
+        return []
+    finally:
+        with contextlib.suppress(Exception):
+            pynvml.nvmlShutdown()
+    return result
+
+
 def detect_nvidia_gpus() -> list[GPUDevice]:
     try:
         import pynvml
@@ -252,6 +290,40 @@ class DockerEngineClient:
             return {index: sorted(models) for index, models in placements.items()}
         except (httpx.HTTPError, KeyError, TypeError, ValueError):
             return {}
+
+    async def gpu_memory(self, profiles, cluster: ClusterTarget | None = None) -> list[dict]:
+        devices = cluster.gpus if cluster else await asyncio.to_thread(detect_nvidia_gpus)
+        gpus = await asyncio.to_thread(gpu_process_memory, devices)
+        if not gpus:
+            return []
+
+        async def processes(profile):
+            try:
+                name = quote(profile.name, safe="")
+                state = await self.request("GET", f"/containers/{name}/json", allow={404}, timeout=5)
+                if state.status_code == 404 or not state.json().get("State", {}).get("Running"):
+                    return profile.id, set(), True
+                labels = state.json().get("Config", {}).get("Labels", {})
+                if labels.get("spark-cluster.on-demand") != profile.id:
+                    return profile.id, set(), False
+                response = await self.request(
+                    "GET", f"/containers/{name}/top", params={"ps_args": "-eo pid"}, timeout=5
+                )
+                table = response.json()
+                column = [title.casefold() for title in table["Titles"]].index("pid")
+                return profile.id, {int(row[column]) for row in table["Processes"]}, True
+            except (httpx.HTTPError, RuntimeError, KeyError, TypeError, ValueError):
+                return profile.id, set(), False
+
+        owners = await asyncio.gather(*(processes(profile) for profile in profiles))
+        for gpu in gpus:
+            gpu["managed_gib"] = {
+                owner: sum(gpu["processes"].get(pid, 0.0) for pid in pids)
+                for owner, pids, _ in owners
+            }
+            gpu["accounting_complete"] &= all(complete for _, _, complete in owners)
+            gpu.pop("processes")
+        return gpus
 
     @staticmethod
     def container_name(cluster_id: str) -> str:
