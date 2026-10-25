@@ -4,7 +4,9 @@ import sqlite3
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
+from spark_cluster.app import create_app
 from spark_cluster.config import Settings
 from spark_cluster.inference_tracking import (
     BODY_LIMIT,
@@ -216,3 +218,43 @@ async def test_metrics_switch_reset_missing_and_nonfinite_values(tmp_path):
     assert not (await service.sample()).available
     assert service._previous is None
     store.close()
+
+
+def test_global_api_records_real_router_requests_and_exposes_metrics(tmp_path, monkeypatch):
+    settings = Settings(
+        database_path=tmp_path / "api.db",
+        setup_state_path=tmp_path / "setup",
+        model_cache_path=tmp_path / "models",
+        openai_api_base="http://127.0.0.1:9/v1",
+    )
+    app = create_app(settings)
+
+    async def resolve(reference):
+        return {"id": "org/model", "served_model_name": "model"}
+
+    async def backend(model_id, path, scope, receive, send):
+        mark_dispatch(scope, "pool-a")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"application/json")],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": b'{"usage":{"prompt_tokens":5,"completion_tokens":2}}',
+            }
+        )
+
+    monkeypatch.setattr(app.state.model_pool, "resolve_model", resolve)
+    monkeypatch.setattr(app.state.model_pool, "_infer", backend)
+    with TestClient(app) as client:
+        assert client.post("/v1/chat/completions", json={"model": "org/model"}).status_code == 200
+        activity = client.get("/api/v1/inference/activity?limit=1").json()
+        assert activity["totals"]["requests"] == 1
+        assert activity["totals"]["input_tokens"] == 5
+        assert activity["recent"][0]["cluster_id"] == "pool-a"
+        assert client.get("/api/v1/inference/activity?limit=101").status_code == 422
+        assert "spark_cluster_inference_requests_total 1" in client.get("/metrics").text

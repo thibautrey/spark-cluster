@@ -347,6 +347,7 @@ async def test_runtime_model_metadata_is_persisted_verbatim(tmp_path, monkeypatc
     node = PoolNode.__new__(PoolNode)
     node.metadata_path = tmp_path / "runtime-model-metadata.json"
     node.runtime_metadata = {}
+    node._metadata_checked = {}
     await node.capture_runtime_metadata("org/model", "http://127.0.0.1:31000")
     assert node.metadata_for("org/model") == payload
     assert json.loads(node.metadata_path.read_text())["org/model"] == payload
@@ -362,6 +363,7 @@ async def test_invalid_runtime_model_metadata_is_not_cached(tmp_path, monkeypatc
     node = PoolNode.__new__(PoolNode)
     node.metadata_path = tmp_path / "runtime-model-metadata.json"
     node.runtime_metadata = {}
+    node._metadata_checked = {}
     await node.capture_runtime_metadata("org/model", "http://127.0.0.1:31000")
     assert node.runtime_metadata == {}
     assert not node.metadata_path.exists()

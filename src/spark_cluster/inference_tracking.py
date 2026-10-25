@@ -251,7 +251,8 @@ class InferenceTracker:
                 healthy=not self.persistence_error,
                 last_flush_at=self.last_flush_at,
             ),
-            coverage="Routed pool, node and legacy listeners. Direct backend traffic is aggregate-only "
+            coverage="Routed pool, node and legacy listeners. "
+            "Direct backend traffic is aggregate-only "
             "when runtime metrics are available. "
             "Tokens are provider-reported; missing is unknown.",
             mode="measured",
