@@ -83,7 +83,7 @@
       const memory = request.memory_end || request.memory_start;
       const pool = poolNames.get(request.cluster_id) || request.cluster_id || 'Unassigned';
       const memoryText = memory ? `${memory.used_gib.toFixed(1)} / ${memory.total_gib.toFixed(1)} GiB` : 'Unavailable';
-      return `<tr>${cell(new Date(request.started_at * 1000).toLocaleTimeString())}${cell(`${request.model_id} · ${pool}`)}${cell(request.outcome)}${cell(milliseconds(request.duration_ms))}${cell(`${number(request.input_tokens)} / ${number(request.output_tokens)}`)}${cell(memoryText)}${actionCell(request.model_id)}</tr>`;
+      return `<tr class="inference-model-row" data-model-repo="${escapeHtml(request.model_id)}" tabindex="0" aria-label="Open details for ${escapeHtml(request.model_id)}">${cell(new Date(request.started_at * 1000).toLocaleTimeString())}${cell(`${request.model_id} · ${pool}`)}${cell(request.outcome)}${cell(milliseconds(request.duration_ms))}${cell(`${number(request.input_tokens)} / ${number(request.output_tokens)}`)}${cell(memoryText)}${actionCell(request.model_id)}</tr>`;
     }).join('') : '<tr><td colspan="7">Tracking is ready. Requests appear here as clients use the pool endpoints.</td></tr>';
     if (menu.hidden) $('inference-recent').innerHTML = recentMarkup;
     $('inference-pools').innerHTML = activity.pools.map(pool => {
@@ -99,9 +99,20 @@
 
   $('inference-recent').addEventListener('click', event => {
     const trigger = event.target.closest('.inference-menu-trigger');
-    if (!trigger) return;
-    if (trigger === menuTrigger && !menu.hidden) closeMenu({restoreFocus: true});
-    else openMenu(trigger);
+    if (trigger) {
+      if (trigger === menuTrigger && !menu.hidden) closeMenu({restoreFocus: true});
+      else openMenu(trigger);
+      return;
+    }
+    const model = event.target.closest('[data-model-repo]');
+    if (model) window.inspectCatalogModel?.(model.dataset.modelRepo, 'main', model);
+  });
+  $('inference-recent').addEventListener('keydown', event => {
+    if (!['Enter', ' '].includes(event.key)) return;
+    const model = event.target.closest('[data-model-repo]');
+    if (!model || event.target !== model) return;
+    event.preventDefault();
+    window.inspectCatalogModel?.(model.dataset.modelRepo, 'main', model);
   });
   keepMemory.addEventListener('click', async () => {
     if (!menuModel) return;
