@@ -42,9 +42,9 @@ class RuntimeUnavailable(RuntimeError):
 async def admission_disconnect(receive):
     """Cancel admission on disconnect, after consuming the body and before streaming.
 
-The watcher stops before StreamingResponse starts, so only one consumer reads the
-ASGI receive channel at a time.
-"""
+    The watcher stops before StreamingResponse starts, so only one consumer reads the
+    ASGI receive channel at a time.
+    """
     if receive is None:
         yield
         return

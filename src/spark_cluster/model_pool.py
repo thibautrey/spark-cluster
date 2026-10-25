@@ -18,7 +18,6 @@ from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from .adaptive_concurrency import MAX_CONCURRENCY, fingerprint, response_feedback
-from .inference_tracking import mark_dispatch, request_stream_usage
 from .inference_http import (
     INFERENCE_TIMEOUT,
     RequestTooLarge,
@@ -27,6 +26,7 @@ from .inference_http import (
     inference_error,
     read_inference_body,
 )
+from .inference_tracking import mark_dispatch, request_stream_usage
 from .local_docker import local_gpu_snapshot
 from .models import ModelFitPlan, ModelFitRequest, ModelLaunchRequest
 from .on_demand import DemandProxy, InferenceProfile
@@ -841,13 +841,15 @@ class PoolNode:
                 write_private(self.path, self.native)
 
 
-def node_resident(node, model_id):
+def node_resident(node, model_id, *, include_unhealthy=False):
     if "resident_models" in node:
         return next(
             (
                 r
                 for r in node["resident_models"]
-                if r["model_id"] == model_id and r.get("status", "ready") == "ready"
+                if r["model_id"] == model_id
+                and r.get("status", "ready")
+                in ({"ready", "unhealthy"} if include_unhealthy else {"ready"})
             ),
             None,
         )
@@ -858,6 +860,10 @@ def node_resident(node, model_id):
             "keep_loaded": node.get("keep_loaded", False),
         }
     return None
+
+
+def node_retained(node, model_id):
+    return any(m["id"] == model_id and m.get("keep_loaded") for m in node.get("models", []))
 
 
 class ModelPool:
@@ -1121,7 +1127,9 @@ class ModelPool:
         applied = []
         try:
             for node in state["clusters"]:
-                if node_resident(node, model_id):
+                if node_resident(node, model_id, include_unhealthy=True) or (
+                    not preferences.keep_loaded and node_retained(node, model_id)
+                ):
                     await self.call(
                         self.cluster(node["id"]),
                         "retain",
@@ -1465,7 +1473,9 @@ class ModelPool:
                 raise ValueError("Wait for the pending load to finish before unloading")
         state = await self.inventory(force=True)
         for node in state["clusters"]:
-            if node_resident(node, model_id):
+            if node_resident(node, model_id, include_unhealthy=True) or node_retained(
+                node, model_id
+            ):
                 await self.call(self.cluster(node["id"]), "unload", {"model_id": model_id})
         prefs = self.preferences.get(model_id, ModelPreferences())
         prefs.keep_loaded = False

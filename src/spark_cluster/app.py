@@ -57,8 +57,8 @@ from .cluster_registry import (
 )
 from .cluster_setup import ClusterSetupService, SetupFailure
 from .config import Settings
-from .inference_tracking import InferenceTracker
 from .inference_http import RequestTooLarge, inference_error, read_inference_body
+from .inference_tracking import InferenceTracker
 from .local_docker import DockerEngineClient, detect_nvidia_gpus, local_gpu_snapshot
 from .mcp_server import SparkClusterMCP
 from .model_manager import (
