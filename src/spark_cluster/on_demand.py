@@ -406,7 +406,8 @@ class DemandProxy:
                         headers = [
                             (k, v)
                             for k, v in scope["headers"]
-                            if k.lower() not in HOP_HEADERS | connection_tokens | {b"content-length"}
+                            if k.lower()
+                            not in HOP_HEADERS | connection_tokens | {b"content-length"}
                         ]
                         async with httpx.AsyncClient(timeout=900, trust_env=False) as client:
                             async with client.stream(
