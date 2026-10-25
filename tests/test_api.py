@@ -392,6 +392,12 @@ def test_pool_mutations_require_admin_and_reads_expose_no_recipes(tmp_path):
         assert "test-admin" not in state.text
         assert client.get("/api/v1/pool/node/status").status_code == 401
         assert client.post("/api/v1/pool/load", json={"model_id": "org/model"}).status_code == 401
+        assert (
+            client.post(
+                "/api/v1/pool/scale", json={"model_id": "org/model", "delta": 1}
+            ).status_code
+            == 401
+        )
         result = client.put(
             "/api/v1/pool/models/org/model/settings",
             json={"keep_loaded": True, "cluster_id": None},

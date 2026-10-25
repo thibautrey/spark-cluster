@@ -3,11 +3,15 @@
   let activity = null;
   let pending = false;
   let retainedModels = new Set();
-  let loadedModels = new Set();
+  let instanceCounts = new Map();
   let menuModel = null;
   let menuTrigger = null;
   const menu = $('inference-row-menu');
   const keepMemory = $('inference-keep-memory');
+  const instanceStepper = $('inference-instance-stepper');
+  const instanceMinus = $('inference-instance-minus');
+  const instanceCount = $('inference-instance-count');
+  const instancePlus = $('inference-instance-plus');
   const poolAction = $('inference-pool-action');
   const poolActionIcon = $('inference-pool-action-icon');
   const poolActionLabel = $('inference-pool-action-label');
@@ -34,7 +38,13 @@
     menuError.hidden = true;
     menuError.textContent = '';
     keepMemory.setAttribute('aria-checked', String(retainedModels.has(menuModel)));
-    const action = loadedModels.has(menuModel) ? 'unload' : 'load';
+    const instances = instanceCounts.get(menuModel) || 0;
+    instanceStepper.hidden = instances < 1;
+    instanceCount.textContent = `${instances} instance${instances === 1 ? '' : 's'}`;
+    instanceMinus.disabled = instances <= 1;
+    instanceMinus.setAttribute('aria-label', `Remove one ${menuModel} instance`);
+    instancePlus.setAttribute('aria-label', `Add one ${menuModel} instance`);
+    const action = instances ? 'unload' : 'load';
     const label = action === 'load' ? 'Load' : 'Unload';
     poolAction.dataset.action = action;
     poolAction.setAttribute('aria-label', `${label} ${menuModel}`);
@@ -91,7 +101,12 @@
     $('throughput-spark').title = 'Reported output tokens per second, averaged over each minute';
     const poolNames = new Map(activity.pools.map(pool => [pool.id, pool.name]));
     retainedModels = new Set(activity.retained_models || []);
-    loadedModels = new Set(activity.pools.map(pool => pool.active_model).filter(Boolean));
+    instanceCounts = new Map();
+    activity.pools.forEach(pool => {
+      if (pool.active_model) {
+        instanceCounts.set(pool.active_model, (instanceCounts.get(pool.active_model) || 0) + 1);
+      }
+    });
     const active = activity.active.map(request => ({...request, outcome: request.state, duration_ms: request.elapsed_ms}));
     const rows = [...active, ...activity.recent].slice(0, 12);
     const recentMarkup = rows.length ? rows.map(request => {
@@ -174,7 +189,7 @@
         }),
       });
       if (action === 'unload') {
-        loadedModels.delete(modelId);
+        instanceCounts.delete(modelId);
         retainedModels.delete(modelId);
       }
       $('inference-action-status').textContent = action === 'load'
@@ -190,6 +205,35 @@
       poolAction.disabled = false;
     }
   });
+  async function scaleInstances(delta) {
+    if (!menuModel) return;
+    const modelId = menuModel;
+    [keepMemory, instanceMinus, instancePlus, poolAction].forEach(item => { item.disabled = true; });
+    menuError.hidden = true;
+    try {
+      const result = await api('/api/v1/pool/scale', {
+        method: 'POST',
+        headers: window.adminAuthHeaders(),
+        body: JSON.stringify({model_id: modelId, delta}),
+      });
+      if (delta < 0) instanceCounts.set(modelId, result.instances);
+      $('inference-action-status').textContent = delta > 0
+        ? `Additional instance requested for ${modelId}.`
+        : `${modelId} now has ${result.instances} active instance${result.instances === 1 ? '' : 's'}.`;
+      closeMenu({restoreFocus: true});
+      void refresh();
+    } catch (error) {
+      menuError.textContent = error.message;
+      menuError.hidden = false;
+    } finally {
+      keepMemory.disabled = false;
+      instancePlus.disabled = false;
+      instanceMinus.disabled = (instanceCounts.get(modelId) || 0) <= 1;
+      poolAction.disabled = false;
+    }
+  }
+  instanceMinus.addEventListener('click', () => scaleInstances(-1));
+  instancePlus.addEventListener('click', () => scaleInstances(1));
   document.addEventListener('click', event => {
     if (!menu.hidden && !menu.contains(event.target) && !event.target.closest('.inference-menu-trigger')) closeMenu();
   });
@@ -199,7 +243,11 @@
   menu.addEventListener('keydown', event => {
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
-    const items = [keepMemory, poolAction].filter(item => !item.disabled);
+    const items = [
+      keepMemory,
+      ...(!instanceStepper.hidden ? [instanceMinus, instancePlus] : []),
+      poolAction,
+    ].filter(item => !item.disabled);
     const current = items.indexOf(document.activeElement);
     const next = event.key === 'Home' ? 0
       : event.key === 'End' ? items.length - 1

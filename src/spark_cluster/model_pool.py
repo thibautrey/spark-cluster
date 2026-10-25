@@ -7,6 +7,7 @@ import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Literal
 from urllib.parse import urlencode
 from uuid import uuid4
 
@@ -92,6 +93,11 @@ class PoolLoadRequest(BaseModel):
     model_id: str = Field(min_length=1, max_length=200)
     settings: ModelLaunchRequest | None = None
     cluster_id: str | None = None
+
+
+class PoolScaleRequest(BaseModel):
+    model_id: str = Field(min_length=1, max_length=200)
+    delta: Literal[-1, 1]
 
 
 class NodeLoadRequest(PoolLoadRequest):
@@ -684,6 +690,7 @@ class ModelPool:
         self.cache = None
         self.cache_time = 0.0
         self.pending_requests = 0
+        self._routing_cursor = {}
         self._inventory_task = None
         self.tracker = None
 
@@ -849,6 +856,24 @@ class ModelPool:
             return SimpleNamespace(id="self", kind="local-docker")
         return self.registry.get(cluster_id)
 
+    def resident_for(self, model_id, clusters, preferences):
+        residents = [
+            node
+            for node in clusters
+            if node["available"]
+            and node["active_model"] == model_id
+            and node["id"] not in self.reserved
+            and (not preferences.cluster_id or node["id"] == preferences.cluster_id)
+        ]
+        if not residents:
+            return None
+        idle = sorted((node for node in residents if not node["busy"]), key=lambda node: node["id"])
+        choices = idle or sorted(residents, key=lambda node: node["id"])
+        cursor = self._routing_cursor.get(model_id, 0)
+        selected = choices[cursor % len(choices)]
+        self._routing_cursor[model_id] = cursor + 1
+        return selected
+
     async def resolve_model(self, reference: str) -> dict:
         reference = reference.strip()
         if not reference:
@@ -903,7 +928,7 @@ class ModelPool:
         preferences.keep_loaded = keep_loaded
         return await self.update_preferences(model_id, preferences)
 
-    async def enqueue(self, request):
+    async def enqueue(self, request, *, new_instance=False):
         for job in self.jobs:
             if job["model_id"] == request.model_id and job["status"] in {
                 "queued",
@@ -930,6 +955,7 @@ class ModelPool:
             "progress": 2.0,
             "machines": [],
             "completed_at": None,
+            "new_instance": new_instance,
         }
         self.jobs.append(job)
         self.save()
@@ -977,6 +1003,7 @@ class ModelPool:
                         for n in state["clusters"]
                         if n["available"]
                         and (not target_cluster_id or n["id"] == target_cluster_id)
+                        and (not job.get("new_instance") or n["active_model"] != request.model_id)
                         and any(m["id"] == request.model_id and m["loadable"] for m in n["models"])
                     ]
                     if not candidates:
@@ -1126,6 +1153,69 @@ class ModelPool:
             self.cache = None
             self.save()
 
+    async def scale_instances(self, request: PoolScaleRequest):
+        pending = next(
+            (
+                job
+                for job in self.jobs
+                if job["model_id"] == request.model_id
+                and job["status"] in {"queued", "waiting", "loading"}
+            ),
+            None,
+        )
+        if pending:
+            raise ValueError("Wait for the pending load to finish before changing instances")
+        async with self.scheduling:
+            state = await self.inventory(force=True)
+            instances = [
+                node for node in state["clusters"] if node["active_model"] == request.model_id
+            ]
+            if not instances:
+                raise ValueError("Load the model before changing its instance count")
+            if request.delta < 0:
+                if len(instances) == 1:
+                    raise ValueError("At least one model instance must remain loaded")
+                idle = [node for node in instances if not node["busy"]]
+                if not idle:
+                    raise ValueError(
+                        "Wait for an active request to finish before removing an instance"
+                    )
+                affinity = self.preferences.get(request.model_id, ModelPreferences()).cluster_id
+                idle.sort(
+                    key=lambda node: (
+                        node["id"] == affinity,
+                        node.get("keep_loaded", False),
+                        node["id"],
+                    )
+                )
+                selected = idle[0]
+                await self.call(
+                    self.cluster(selected["id"]), "unload", {"model_id": request.model_id}
+                )
+                self.cache = None
+                return {
+                    "status": "ready",
+                    "instances": len(instances) - 1,
+                    "cluster_id": selected["id"],
+                }
+            affinity = self.preferences.get(request.model_id, ModelPreferences()).cluster_id
+            additional = [
+                node
+                for node in state["clusters"]
+                if node["available"]
+                and (not affinity or node["id"] == affinity)
+                and node["active_model"] != request.model_id
+                and any(
+                    model["id"] == request.model_id and model["loadable"]
+                    for model in node["models"]
+                )
+            ]
+            if not additional:
+                raise ValueError("No additional pool can run another instance of this model")
+            job = await self.enqueue(PoolLoadRequest(model_id=request.model_id), new_instance=True)
+            job["instances"] = len(instances)
+            return job
+
     async def unload(self, model_id):
         for job in self.jobs:
             if job["model_id"] == model_id and job["status"] in {"queued", "waiting", "loading"}:
@@ -1165,17 +1255,7 @@ class ModelPool:
     async def _infer(self, model_id, path, scope, receive, send):
         state = await self.inventory()
         prefs = self.preferences.get(model_id, ModelPreferences())
-        resident = next(
-            (
-                n
-                for n in state["clusters"]
-                if n["available"]
-                and n["active_model"] == model_id
-                and n["id"] not in self.reserved
-                and (not prefs.cluster_id or n["id"] == prefs.cluster_id)
-            ),
-            None,
-        )
+        resident = self.resident_for(model_id, state["clusters"], prefs)
         if resident:
             job = {"status": "ready", "cluster_id": resident["id"]}
         else:

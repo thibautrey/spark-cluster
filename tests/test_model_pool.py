@@ -6,7 +6,13 @@ import httpx
 import pytest
 
 from spark_cluster.config import Settings
-from spark_cluster.model_pool import ModelPool, ModelPreferences, PoolLoadRequest, PoolNode
+from spark_cluster.model_pool import (
+    ModelPool,
+    ModelPreferences,
+    PoolLoadRequest,
+    PoolNode,
+    PoolScaleRequest,
+)
 from spark_cluster.models import ModelLaunchRequest
 
 
@@ -114,6 +120,46 @@ async def test_existing_residency_preferred_to_empty_cluster(tmp_path):
     job = await pool.enqueue(PoolLoadRequest(model_id="org/model"))
     await finished(pool)
     assert job["cluster_id"] == "second"
+
+
+@pytest.mark.asyncio
+async def test_scale_up_loads_an_additional_instance(tmp_path):
+    pool = FakePool(tmp_path)
+    pool.nodes["first"]["active_model"] = "org/model"
+    pool.nodes["first"]["models"][0]["loaded"] = True
+    job = await pool.scale_instances(PoolScaleRequest(model_id="org/model", delta=1))
+    await finished(pool)
+    assert job["status"] == "ready"
+    assert job["cluster_id"] == "second"
+    assert pool.nodes["first"]["active_model"] == "org/model"
+    assert pool.nodes["second"]["active_model"] == "org/model"
+
+
+@pytest.mark.asyncio
+async def test_scale_down_removes_one_instance_and_preserves_minimum(tmp_path):
+    pool = FakePool(tmp_path)
+    for cluster_id, node in pool.nodes.items():
+        node.update(id=cluster_id, available=True, active_model="org/model")
+        node["models"][0]["loaded"] = True
+    pool.preferences["org/model"] = ModelPreferences(cluster_id="first", keep_loaded=True)
+    result = await pool.scale_instances(PoolScaleRequest(model_id="org/model", delta=-1))
+    assert result == {"status": "ready", "instances": 1, "cluster_id": "second"}
+    assert pool.nodes["first"]["active_model"] == "org/model"
+    assert pool.nodes["second"]["active_model"] is None
+    assert pool.preferences["org/model"].keep_loaded is True
+    with pytest.raises(ValueError, match="At least one"):
+        await pool.scale_instances(PoolScaleRequest(model_id="org/model", delta=-1))
+
+
+def test_resident_routing_uses_idle_instances_round_robin(tmp_path):
+    pool = FakePool(tmp_path)
+    for cluster_id, node in pool.nodes.items():
+        node.update(id=cluster_id, available=True, active_model="org/model")
+    preferences = ModelPreferences()
+    assert pool.resident_for("org/model", list(pool.nodes.values()), preferences)["id"] == "first"
+    assert pool.resident_for("org/model", list(pool.nodes.values()), preferences)["id"] == "second"
+    pool.nodes["first"]["busy"] = True
+    assert pool.resident_for("org/model", list(pool.nodes.values()), preferences)["id"] == "second"
 
 
 @pytest.mark.asyncio
