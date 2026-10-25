@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=runtime-guide-model-instance-scale-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=launch-workspace-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -319,8 +319,19 @@
 
         <section class="panel launch-panel idle" id="launch" data-route-view="launch">
           <section id="model-pool" class="model-pool">
-            <div class="pool-filters"><label>Find a model<input id="pool-search" type="search" placeholder="Model name…" /></label><label class="pool-checkbox"><input id="pool-show-unavailable" type="checkbox" /> Include models needing runtime support</label></div>
-            <p id="pool-message" role="status"></p>
+            <section class="launch-pool-overview" id="launch-pool-overview" aria-label="Compute pool health"><div class="empty-state">Loading GPU pool…</div></section>
+            <nav class="launch-model-tabs" aria-label="Model status">
+              <button class="active" type="button" data-launch-filter="all">All models <span id="launch-count-all">0</span></button>
+              <button type="button" data-launch-filter="running">Running <span id="launch-count-running">0</span></button>
+              <button type="button" data-launch-filter="ready">Ready to launch <span id="launch-count-ready">0</span></button>
+            </nav>
+            <div class="pool-filters launch-model-toolbar">
+              <label class="launch-model-search"><span class="sr-only">Search models or publishers</span><i aria-hidden="true">⌕</i><input id="pool-search" type="search" placeholder="Search models or publishers…" /></label>
+              <label><span class="sr-only">Task</span><select id="pool-task"><option value="all">All tasks</option></select></label>
+              <label><span class="sr-only">Sort models</span><select id="pool-sort"><option value="recommended">Recommended</option><option value="name">Name</option><option value="memory">Lowest memory</option></select></label>
+              <span class="launch-model-total" id="launch-model-total">0 models</span>
+            </div>
+            <p id="pool-message" role="status" aria-live="polite"></p>
             <div id="pool-model-list" class="pool-model-grid"></div>
           </section>
           <div class="bottom-sheet pool-settings-sheet" id="pool-model-settings" hidden>
@@ -376,7 +387,7 @@
             </section>
           </div>
 
-          <div class="launch-layout idle" id="launch-layout">
+          <div class="launch-layout idle" id="launch-layout" hidden>
             <form class="launch-form" id="launch-form">
               <label>Local model<select id="launch-model" required><option value="">Loading models…</option></select></label>
               <label>Optimization goal<select id="launch-workload"><option value="balanced">Balanced</option><option value="latency">Lowest latency</option><option value="throughput">Maximum throughput</option><option value="long-context">Long context</option></select></label>
@@ -512,7 +523,7 @@
     <script src="/assets/model-readme.js?v=adaptive-pools-v1"></script>
     <script src="/assets/catalog.js?v=overview-model-sheet-v2"></script>
     <script src="/assets/setup.js?v=native-macos-onboarding-v1"></script>
-    <script src="/assets/pool.js?v=adaptive-pools-v1" defer></script>
+    <script src="/assets/pool.js?v=launch-workspace-v1" defer></script>
     <script src="/assets/runtimes.js?v=native-host-library-v1" defer></script>
     <script src="/assets/inference.js?v=model-instance-scale-v1" defer></script>
 </body>

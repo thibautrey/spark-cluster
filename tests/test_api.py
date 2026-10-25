@@ -103,6 +103,13 @@ def test_dashboard_and_live_snapshot(tmp_path):
         page = client.get("/")
         assert page.status_code == 200
         assert '<details class="launch-options" id="launch-options">' in page.text
+        assert 'id="launch-pool-overview"' in page.text
+        assert 'data-launch-filter="running"' in page.text
+        assert 'data-launch-filter="ready"' in page.text
+        assert 'placeholder="Search models or publishers…"' in page.text
+        assert 'id="pool-task"' in page.text
+        assert 'id="pool-sort"' in page.text
+        assert 'id="launch-layout" hidden' in page.text
         assert '<div class="log-terminal empty" id="log-terminal">' in page.text
         assert "Newest entries follow automatically" not in page.text
         response = client.get("/api/v1/snapshot")
@@ -624,21 +631,27 @@ def test_cluster_dropdown_exposes_global_capacity_context(tmp_path):
     assert "spark-cluster.cluster-context" in app_script
     assert "window.selectedClusterContext" in app_script
     assert "cluster-context-changed" in app_script
-    assert "capacity.missing_gib == null" in pool_script
-    assert "capacity.capacity?.missing_gib == null" in pool_script
-    assert "Memory preflight unavailable for this compute pool" in pool_script
-    assert "Needs ${capacity.missing_gib.toFixed(1)} GiB more" in pool_script
-    assert "Fits on ${escapeHtml(alternative.cluster_name)}" in pool_script
+    assert "window.selectedClusterContext?.()" in pool_script
+    assert "capacities.find(item => item.cluster_id === selected)" in pool_script
+    assert "capacity?.fits || capacity?.can_load" in pool_script
     assert "cluster_id: window.selectedClusterContext" in pool_script
-    assert "pool-model-capacity" in page or "pool-model-capacity" in pool_script
+    assert 'id="launch-pool-overview"' in page
 
 
-def test_pool_ui_renders_global_and_per_machine_load_progress(tmp_path):
+def test_pool_ui_renders_model_first_launch_workspace(tmp_path):
     with make_client(tmp_path) as client:
         page = client.get("/").text
         pool_script = client.get("/assets/pool.js").text
-    assert "pool-load-progress" in pool_script
-    assert "pool-machine-progress" in pool_script
-    assert "memory_after_gib" in pool_script
-    assert "now - job.completed_at < 12" in pool_script
-    assert "adaptive-pools-v1" in page
+        pool_styles = client.get("/assets/app.css").text
+    assert "launch-card-progress" in pool_script
+    assert "launch-pool-overview" in pool_script
+    assert "launch-model-card" in pool_script
+    assert "Ready to launch" in pool_script
+    assert "Review requirements" in pool_script
+    assert "Automatic GPU placement" in pool_script
+    assert "data-launch-filter" in pool_script
+    assert "modelTask" in pool_script
+    assert "grid-template-columns:repeat(3" in pool_styles
+    assert "reserved_gib" in pool_script
+    assert "available_gib" in pool_script
+    assert "launch-workspace-v1" in page
