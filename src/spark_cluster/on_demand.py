@@ -30,6 +30,15 @@ from .adaptive_concurrency import (
     startup_capacity_failure,
 )
 from .inference_tracking import mark_dispatch, request_stream_usage
+from .inference_http import (
+    INFERENCE_TIMEOUT,
+    RequestTooLarge,
+    RuntimeUnavailable,
+    admission_disconnect,
+    forwarded_headers,
+    inference_error,
+    read_inference_body,
+)
 from .local_docker import DockerEngineClient
 from .pool_memory import (
     MemoryPlan,
@@ -40,17 +49,6 @@ from .pool_memory import (
 )
 
 logger = logging.getLogger(__name__)
-HOP_HEADERS = {
-    b"host",
-    b"connection",
-    b"keep-alive",
-    b"proxy-authenticate",
-    b"proxy-authorization",
-    b"te",
-    b"trailer",
-    b"transfer-encoding",
-    b"upgrade",
-}
 
 
 class InferenceProfile(BaseModel):
@@ -66,6 +64,9 @@ class InferenceProfile(BaseModel):
     preload_path: str | None = None
     idle_seconds: float = Field(default=120, ge=1)
     startup_seconds: float = Field(default=900, ge=1)
+    health_interval_seconds: float = Field(default=15, ge=1)
+    health_timeout_seconds: float = Field(default=3, gt=0, le=60)
+    health_failure_threshold: int = Field(default=3, ge=1, le=10)
     container: dict
     resources: RuntimeResources | None = None
 
@@ -73,7 +74,7 @@ class InferenceProfile(BaseModel):
     def validate_ports(self):
         if self.listen_port == self.upstream_port:
             raise ValueError("Inference listener and runtime must use different ports")
-        if not self.readiness_path.startswith("/"):
+        if not self.readiness_path.startswith("/") or self.readiness_path.startswith("//"):
             raise ValueError("Readiness path must be relative")
         if self.preload_path is not None and (
             not self.preload_path.startswith("/") or self.preload_path.startswith("//")
@@ -122,6 +123,9 @@ class ResidentRuntime:
     runtime_ceiling: int = 64
     engine_image: str | None = None
     parallelism_prepared: bool = False
+    health_checked_at: float = 0.0
+    health_failures: int = 0
+    ready_since: float = field(default_factory=time.monotonic)
 
     def public(self):
         return {
@@ -133,6 +137,7 @@ class ResidentRuntime:
             "active_requests": self.active_requests,
             "status": self.status,
             "exclusive": self.exclusive,
+            "health_failures": self.health_failures,
         }
 
 
@@ -166,6 +171,9 @@ class OnDemandInference:
         self.changed = asyncio.Event()
         self.dynamic: set[str] = set()
         self.pool = None
+        self.health_task = None
+        self.recovery: dict[str, tuple[int, float]] = {}
+        self.recovery_tasks: dict[str, asyncio.Task] = {}
         if state_path and state_path.exists():
             state = json.loads(state_path.read_text())
             self.retained = set(state.get("retained", []))
@@ -292,32 +300,121 @@ class OnDemandInference:
             concurrency=self.admission_controller(resident).public()
             if resident.status == "ready"
             else None,
+            recovery=self.recovery_state(resident.profile),
         )
 
-    @contextlib.asynccontextmanager
-    async def lease(self, profile: InferenceProfile, feedback=None):
-        await self.ensure(profile, wait=True)
-        resident = self.residents.get(profile.id)
-        if resident is None:
-            raise RuntimeError("Runtime was unloaded before admission")
-        controller = self.admission_controller(resident)
-        async with controller.slot(feedback) as admission:
-            while True:
-                async with self.lock:
-                    resident = self.residents.get(profile.id)
-                    if resident and resident.status == "ready":
-                        resident.active_requests += 1
-                        self.admission_controller(resident)
-                        break
-                await self.ensure(profile, wait=True)
-            admission.begin()
+    def recovery_state(self, profile):
+        failures, retry_at = self.recovery.get(profile.id, (0, 0))
+        return {
+            "failures": failures,
+            "retry_after_seconds": max(0, retry_at - time.monotonic()),
+        }
+
+    def failed_runtime(self, profile):
+        failures = min(self.recovery.get(profile.id, (0, 0))[0] + 1, 16)
+        delay = min(5 * 2 ** (failures - 1), 300)
+        self.recovery[profile.id] = (failures, time.monotonic() + delay)
+        self.changed.set()
+
+    async def check_health(self, resident):
+        """Probe an idle runtime without holding the cluster-wide scheduling lock."""
+        profile = resident.profile
+        gate = self.profile_locks.setdefault(profile.id, asyncio.Lock())
+        if (
+            gate.locked()
+            or resident.status != "ready"
+            or resident.active_requests
+            or time.monotonic() - resident.health_checked_at < profile.health_interval_seconds
+        ):
+            return
+        async with gate:
+            resident.health_checked_at = time.monotonic()
             try:
+                async with httpx.AsyncClient(
+                    timeout=profile.health_timeout_seconds, trust_env=False
+                ) as client:
+                    async with asyncio.timeout(profile.health_timeout_seconds):
+                        response = await client.get(profile.upstream + profile.readiness_path)
+                healthy = response.is_success
+            except (httpx.HTTPError, TimeoutError):
+                healthy = False
+            async with self.lock:
+                # A request may have acquired its lease while the probe was in flight.
+                if self.residents.get(profile.id) is not resident or resident.active_requests:
+                    return
+                resident.health_failures = 0 if healthy else resident.health_failures + 1
+                if healthy and time.monotonic() - resident.ready_since >= 60:
+                    self.recovery.pop(profile.id, None)
+                if resident.health_failures >= profile.health_failure_threshold:
+                    resident.status = "unhealthy"
+                    self.last_error = "Runtime readiness checks failed; recovery is backing off"
+                    self.failed_runtime(profile)
+
+    async def reconcile_health(self):
+        for resident in list(self.residents.values()):
+            try:
+                await self.check_health(resident)
+            except Exception:
+                logger.exception("Runtime health reconciliation failed for %s", resident.profile.id)
+        # Only retained models are restarted proactively. Other models recover on demand.
+        for profile in list(self.profiles):
+            resident = self.residents.get(profile.id)
+            if (
+                profile.id in self.retained
+                and profile.id in self.recovery
+                and (resident is None or resident.status == "unhealthy")
+                and not (resident and resident.active_requests)
+                and not self.profile_locks.setdefault(profile.id, asyncio.Lock()).locked()
+                and profile.id not in self.recovery_tasks
+                and not self.recovery_state(profile)["retry_after_seconds"]
+            ):
+                self.recovery_tasks[profile.id] = asyncio.create_task(self.recover(profile))
+
+    async def recover(self, profile):
+        try:
+            await self.ensure(profile)
+        except Exception:
+            logger.exception("Retained runtime recovery failed for %s", profile.id)
+        finally:
+            self.recovery_tasks.pop(profile.id, None)
+
+    async def monitor_health(self):
+        while True:
+            await asyncio.sleep(1)
+            try:
+                await self.reconcile_health()
+            except Exception:
+                logger.exception("Runtime health monitor failed; retrying next pass")
+
+    @contextlib.asynccontextmanager
+    async def lease(self, profile: InferenceProfile, feedback=None, receive=None):
+        async with contextlib.AsyncExitStack() as stack:
+            leased = None
+            try:
+                async with admission_disconnect(receive):
+                    await self.ensure(profile, wait=True)
+                    resident = self.residents.get(profile.id)
+                    if resident is None:
+                        raise RuntimeError("Runtime was unloaded before admission")
+                    controller = self.admission_controller(resident)
+                    admission = await stack.enter_async_context(controller.slot(feedback))
+                    while True:
+                        async with self.lock:
+                            resident = self.residents.get(profile.id)
+                            if resident and resident.status == "ready":
+                                resident.active_requests += 1
+                                leased = resident
+                                self.admission_controller(resident)
+                                break
+                        await self.ensure(profile, wait=True)
+                admission.begin()
                 yield admission
             finally:
-                async with self.lock:
-                    resident.active_requests -= 1
-                    resident.last_used = time.monotonic()
-                    self.changed.set()
+                if leased:
+                    async with self.lock:
+                        leased.active_requests -= 1
+                        leased.last_used = time.monotonic()
+                        self.changed.set()
 
     def register(self, profile: InferenceProfile) -> None:
         if self.profile_for(profile.model_id or profile.model):
@@ -345,6 +442,7 @@ class OnDemandInference:
                     "model_id": p.model_id or p.model,
                     "keep_loaded": p.id in self.retained,
                     "launch_settings": p.launch_settings,
+                    "recovery": self.recovery_state(p),
                 }
                 for p in self.profiles
             ],
@@ -473,12 +571,20 @@ class OnDemandInference:
                 self.servers.append(server)
                 self.tasks.append(asyncio.create_task(server.serve(sockets=[sock])))
             self.tasks.append(asyncio.create_task(self.reap()))
+            self.health_task = asyncio.create_task(self.monitor_health())
         except BaseException:
             for sock in self.sockets:
                 sock.close()
             raise
 
     async def stop(self) -> None:
+        if self.health_task:
+            self.health_task.cancel()
+            await asyncio.gather(self.health_task, return_exceptions=True)
+        recovery_tasks = list(self.recovery_tasks.values())
+        for task in recovery_tasks:
+            task.cancel()
+        await asyncio.gather(*recovery_tasks, return_exceptions=True)
         for server in self.servers:
             server.should_exit = True
         if self.tasks:
@@ -498,7 +604,7 @@ class OnDemandInference:
             async with self.lock:
                 for resident in list(self.residents.values()):
                     if (
-                        resident.status == "ready"
+                        resident.status in {"ready", "unhealthy"}
                         and not resident.active_requests
                         and resident.profile.id not in self.retained
                         and time.monotonic() - resident.last_used >= resident.profile.idle_seconds
@@ -508,7 +614,10 @@ class OnDemandInference:
                         except Exception:
                             self.last_error = "Idle runtime cleanup failed; inspect controller logs"
                             logger.exception("On-demand idle cleanup failed")
-            await self.concurrency.flush()
+            try:
+                await self.concurrency.flush()
+            except Exception:
+                logger.exception("Concurrency state flush failed; retrying next pass")
 
     async def ensure(
         self, profile: InferenceProfile, *, wait=False, keep_loaded=None, _profile_locked=False
@@ -520,9 +629,15 @@ class OnDemandInference:
         )
         async with gate:
             profile = next((p for p in self.profiles if p.id == profile.id), profile)
+            retry_after = self.recovery_state(profile)["retry_after_seconds"]
+            if retry_after:
+                raise RuntimeUnavailable(retry_after)
             while True:
                 async with self.lock:
                     existing = self.residents.get(profile.id)
+                    if existing and existing.status == "unhealthy":
+                        await self._remove(profile)
+                        existing = None
                     if existing and existing.status == "ready":
                         state = await self.docker.request(
                             "GET", f"/containers/{profile.name}/json", allow={404}
@@ -548,6 +663,13 @@ class OnDemandInference:
                                     self.retain(profile, keep_loaded)
                                 return
                             # Upgrade continuous-batching flags only after active streams drain.
+                        # A dead runtime may still have requests unwinding their leases.
+                        if existing.active_requests:
+                            raise RuntimeError("Wait for failed runtime requests to drain")
+                        if not state.json().get("State", {}).get("Running"):
+                            existing.status = "unhealthy"
+                            self.failed_runtime(profile)
+                            raise RuntimeUnavailable(self.recovery_state(profile)["retry_after_seconds"])
                         await self._remove(profile)
                     gpus = await self.gpu_memory()
                     resources = self.resources_for(profile, gpus)
@@ -587,12 +709,15 @@ class OnDemandInference:
                     if self.residents.get(profile.id) is not resident:
                         raise RuntimeError("Runtime residency changed during startup")
                     resident.status = "ready"
+                    resident.ready_since = resident.health_checked_at = time.monotonic()
                     resident.parallelism_prepared = True
                     resident.last_used = time.monotonic()
                     if keep_loaded is not None:
                         self.retain(profile, keep_loaded)
                     self.changed.set()
-            except BaseException:
+            except BaseException as error:
+                if not isinstance(error, asyncio.CancelledError):
+                    self.failed_runtime(profile)
                 async with self.lock:
                     await self._remove(profile, force=True)
                 raise
@@ -662,7 +787,7 @@ class OnDemandInference:
                     raise RuntimeError("Inference runtime exited during startup")
                 try:
                     response = await client.get(profile.upstream + profile.readiness_path)
-                    if response.status_code in {200, 401, 403}:
+                    if response.is_success:
                         if profile.preload_path:
                             remaining = deadline - time.monotonic()
                             if remaining <= 0:
@@ -714,19 +839,10 @@ class DemandProxy:
             await self.manager.pool.infer(model_id, path.lstrip("/"), scope, receive, send)
             return
         if self.manager.pending >= 64:
-            await JSONResponse({"error": "Inference queue is full"}, status_code=503)(
+            await inference_error("Inference queue is full", retry_after=1)(
                 scope, receive, send
             )
             return
-        body = bytearray()
-        async for chunk in request.stream():
-            body.extend(chunk)
-            if len(body) > 64 * 1024 * 1024:
-                await JSONResponse({"error": "Request exceeds 64 MiB"}, status_code=413)(
-                    scope, receive, send
-                )
-                return
-        forwarded = request_stream_usage(body, request.headers.get("content-type", ""), path)
         scope, feedback, send = response_feedback(
             scope, self.profile.model_id or self.profile.model, path, send
         )
@@ -734,45 +850,42 @@ class DemandProxy:
         response_started = False
         try:
             async with asyncio.timeout(1800):
-                async with self.manager.lease(self.profile, feedback):
+                body = await read_inference_body(request)
+                forwarded = request_stream_usage(
+                    body, request.headers.get("content-type", ""), path
+                )
+                async with self.manager.lease(self.profile, feedback, receive=receive):
                     resident = self.manager.residents.get(self.profile.id)
                     mark_dispatch(scope, gpu_ids=resident.gpu_ids if resident else None)
                     query = scope.get("query_string", b"").decode("ascii")
                     raw_path = scope.get("raw_path", path.encode()).decode("ascii")
                     url = self.profile.upstream + raw_path + ("?" + query if query else "")
-                    connection_tokens = {
-                        token.strip().lower().encode()
-                        for token in request.headers.get("connection", "").split(",")
-                    }
-                    headers = [
-                        (k, v)
-                        for k, v in scope["headers"]
-                        if k.lower() not in HOP_HEADERS | connection_tokens | {b"content-length"}
-                    ]
-                    async with httpx.AsyncClient(timeout=900, trust_env=False) as client:
+                    headers = forwarded_headers(scope["headers"], request=True)
+                    async with httpx.AsyncClient(
+                        timeout=INFERENCE_TIMEOUT, trust_env=False
+                    ) as client:
                         async with client.stream(
                             request.method, url, headers=headers, content=forwarded
                         ) as upstream:
                             response = StreamingResponse(
                                 upstream.aiter_raw(), status_code=upstream.status_code
                             )
-                            excluded = HOP_HEADERS | {
-                                token.strip().lower().encode()
-                                for token in upstream.headers.get("connection", "").split(",")
-                            }
-                            response.raw_headers = [
-                                (k, v) for k, v in upstream.headers.raw if k.lower() not in excluded
-                            ]
+                            response.raw_headers = forwarded_headers(upstream.headers.raw)
                             response_started = True
                             await response(scope, receive, send)
-        except (httpx.HTTPError, RuntimeError, TimeoutError):
+        except RequestTooLarge as error:
+            await inference_error(str(error), status=413)(scope, receive, send)
+        except RuntimeUnavailable as error:
+            await inference_error(str(error), retry_after=error.retry_after)(scope, receive, send)
+        except (httpx.TimeoutException, TimeoutError):
+            if response_started:
+                raise
+            await inference_error("Inference upstream timed out", status=504)(scope, receive, send)
+        except (httpx.HTTPError, RuntimeError):
             self.manager.last_error = "Inference request failed; inspect controller logs"
             logger.exception("On-demand inference failed for %s", self.profile.id)
             if response_started:
                 raise
-            if not response_started:
-                await JSONResponse({"error": self.manager.last_error}, status_code=503)(
-                    scope, receive, send
-                )
+            await inference_error(self.manager.last_error, retry_after=1)(scope, receive, send)
         finally:
             self.manager.pending -= 1

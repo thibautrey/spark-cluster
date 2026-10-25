@@ -179,7 +179,7 @@ def plan_memory(resources, gpus, residents, retained, usable_fraction=0.82):
             for r in residents.values()
             if r.profile.id not in retained
             and not r.active_requests
-            and r.status == "ready"
+            and r.status in {"ready", "unhealthy"}
             and (not resources.gpu_ids or set(r.gpu_ids) & set(resources.gpu_ids))
         ),
         key=lambda r: (r.last_used, r.profile.id),
