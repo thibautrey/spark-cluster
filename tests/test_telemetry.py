@@ -58,7 +58,9 @@ async def test_multiple_runtime_metrics_keep_independent_counter_baselines(tmp_p
 
     def metrics(request):
         count = counts[request.url.host]
-        return httpx.Response(200, text=f"vllm:prompt_tokens_total {count}\nvllm:num_requests_running 1\n")
+        return httpx.Response(
+            200, text=f"vllm:prompt_tokens_total {count}\nvllm:num_requests_running 1\n"
+        )
 
     service.transport = httpx.MockTransport(metrics)
     first = await service.sample()

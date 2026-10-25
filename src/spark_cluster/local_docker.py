@@ -40,11 +40,16 @@ def gpu_process_memory(devices: list[GPUDevice]) -> list[dict]:
                             complete = False
                 except pynvml.NVMLError:
                     complete = False
-                result.append({
-                    "id": gpu.uuid, "index": gpu.index,
-                    "total_gib": memory.total / GIB, "used_gib": memory.used / GIB,
-                    "processes": processes, "accounting_complete": complete,
-                })
+                result.append(
+                    {
+                        "id": gpu.uuid,
+                        "index": gpu.index,
+                        "total_gib": memory.total / GIB,
+                        "used_gib": memory.used / GIB,
+                        "processes": processes,
+                        "accounting_complete": complete,
+                    }
+                )
             except pynvml.NVMLError:
                 continue
     except pynvml.NVMLError:
@@ -300,7 +305,9 @@ class DockerEngineClient:
         async def processes(profile):
             try:
                 name = quote(profile.name, safe="")
-                state = await self.request("GET", f"/containers/{name}/json", allow={404}, timeout=5)
+                state = await self.request(
+                    "GET", f"/containers/{name}/json", allow={404}, timeout=5
+                )
                 if state.status_code == 404 or not state.json().get("State", {}).get("Running"):
                     return profile.id, set(), True
                 labels = state.json().get("Config", {}).get("Labels", {})

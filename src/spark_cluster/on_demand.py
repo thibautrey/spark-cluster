@@ -126,7 +126,9 @@ class OnDemandInference:
         self.residents: dict[str, ResidentRuntime] = {}
         self.profile_locks: dict[str, asyncio.Lock] = {}
         self.resource_provider = None
-        self.usable_fraction = getattr(getattr(docker, "settings", None), "model_usable_memory_fraction", 0.82)
+        self.usable_fraction = getattr(
+            getattr(docker, "settings", None), "model_usable_memory_fraction", 0.82
+        )
         self._gpus = []
         self.servers: list[ListenerServer] = []
         self.tasks: list[asyncio.Task] = []
@@ -188,8 +190,11 @@ class OnDemandInference:
         self.residents.clear()
         if profile:
             self.residents[profile.id] = ResidentRuntime(
-                profile, ["unknown"], {"unknown": self.usable_fraction},
-                exclusive=True, status="ready",
+                profile,
+                ["unknown"],
+                {"unknown": self.usable_fraction},
+                exclusive=True,
+                status="ready",
             )
 
     @property
@@ -208,8 +213,9 @@ class OnDemandInference:
             self._gpus = await self.docker.gpu_memory([r.profile for r in self.residents.values()])
         else:
             # Adapters without device telemetry retain the safe legacy exclusive slot.
-            self._gpus = [{"id": "unknown", "index": 0, "total_gib": 1.0,
-                           "used_gib": 0.0, "managed_gib": {}}]
+            self._gpus = [
+                {"id": "unknown", "index": 0, "total_gib": 1.0, "used_gib": 0.0, "managed_gib": {}}
+            ]
         return self._gpus
 
     def resources_for(self, profile, gpus):
@@ -222,8 +228,11 @@ class OnDemandInference:
         if resident and resident.status == "ready":
             return MemoryPlan(resident.gpu_ids, resident.budget_gib, resident.fraction)
         return plan_memory(
-            self.resources_for(profile, gpus), gpus, self.residents,
-            self.retained, self.usable_fraction,
+            self.resources_for(profile, gpus),
+            gpus,
+            self.residents,
+            self.retained,
+            self.usable_fraction,
         )
 
     @contextlib.asynccontextmanager
@@ -254,9 +263,13 @@ class OnDemandInference:
         return {
             "enabled": bool(self.profiles),
             "active_profile": self.active.id if self.active else None,
-            "active_profiles": [r.profile.id for r in self.residents.values() if r.status == "ready"],
-            "resident_models": [dict(r.public(), keep_loaded=r.profile.id in self.retained)
-                                for r in self.residents.values()],
+            "active_profiles": [
+                r.profile.id for r in self.residents.values() if r.status == "ready"
+            ],
+            "resident_models": [
+                dict(r.public(), keep_loaded=r.profile.id in self.retained)
+                for r in self.residents.values()
+            ],
             "pending_requests": self.pending,
             "last_error": self.last_error,
             "profiles": [
@@ -329,27 +342,48 @@ class OnDemandInference:
                 if not details.get("State", {}).get("Running"):
                     await self._remove(profile)
                     continue
-                actual = profile.model_copy(update={"container": {
-                    **details.get("Config", {}), "HostConfig": details.get("HostConfig", {})
-                }})
+                actual = profile.model_copy(
+                    update={
+                        "container": {
+                            **details.get("Config", {}),
+                            "HostConfig": details.get("HostConfig", {}),
+                        }
+                    }
+                )
                 resources = imported_resources(actual, gpus)
                 allocation = json.loads(labels.get("spark-cluster.reservation", "null") or "null")
                 if allocation:
                     budgets = allocation["budget_gib"]
-                    if not all(0 < float(budgets[device]) < float("inf") for device in allocation["gpu_ids"]):
+                    if not all(
+                        0 < float(budgets[device]) < float("inf")
+                        for device in allocation["gpu_ids"]
+                    ):
                         raise RuntimeError("Invalid persisted GPU reservation")
                     resident = ResidentRuntime(
-                        profile, allocation["gpu_ids"], budgets,
-                        allocation.get("fraction"), allocation.get("exclusive", False), status="ready",
+                        profile,
+                        allocation["gpu_ids"],
+                        budgets,
+                        allocation.get("fraction"),
+                        allocation.get("exclusive", False),
+                        status="ready",
                     )
                 else:
                     selected = [g for g in gpus if g["id"] in resources.gpu_ids]
                     resident = ResidentRuntime(
-                        profile, [g["id"] for g in selected],
-                        {g["id"]: g["total_gib"] * (resources.memory_fraction
-                         if resources.mode == "fixed" else self.usable_fraction) for g in selected},
+                        profile,
+                        [g["id"] for g in selected],
+                        {
+                            g["id"]: g["total_gib"]
+                            * (
+                                resources.memory_fraction
+                                if resources.mode == "fixed"
+                                else self.usable_fraction
+                            )
+                            for g in selected
+                        },
                         resources.memory_fraction if resources.mode == "fixed" else None,
-                        resources.mode == "exclusive", status="ready",
+                        resources.mode == "exclusive",
+                        status="ready",
                     )
                 self.residents[profile.id] = resident
             listeners = [p for p in self.profiles if p.id not in self.dynamic]
@@ -389,18 +423,26 @@ class OnDemandInference:
             await asyncio.sleep(1)
             async with self.lock:
                 for resident in list(self.residents.values()):
-                    if (resident.status == "ready" and not resident.active_requests
+                    if (
+                        resident.status == "ready"
+                        and not resident.active_requests
                         and resident.profile.id not in self.retained
-                        and time.monotonic() - resident.last_used >= resident.profile.idle_seconds):
+                        and time.monotonic() - resident.last_used >= resident.profile.idle_seconds
+                    ):
                         try:
                             await self._remove(resident.profile)
                         except Exception:
                             self.last_error = "Idle runtime cleanup failed; inspect controller logs"
                             logger.exception("On-demand idle cleanup failed")
 
-    async def ensure(self, profile: InferenceProfile, *, wait=False, keep_loaded=None,
-                     _profile_locked=False) -> None:
-        gate = contextlib.nullcontext() if _profile_locked else self.profile_locks.setdefault(profile.id, asyncio.Lock())
+    async def ensure(
+        self, profile: InferenceProfile, *, wait=False, keep_loaded=None, _profile_locked=False
+    ) -> None:
+        gate = (
+            contextlib.nullcontext()
+            if _profile_locked
+            else self.profile_locks.setdefault(profile.id, asyncio.Lock())
+        )
         async with gate:
             profile = next((p for p in self.profiles if p.id == profile.id), profile)
             while True:
@@ -410,7 +452,9 @@ class OnDemandInference:
                         state = await self.docker.request(
                             "GET", f"/containers/{profile.name}/json", allow={404}
                         )
-                        if state.status_code == 200 and state.json().get("State", {}).get("Running"):
+                        if state.status_code == 200 and state.json().get("State", {}).get(
+                            "Running"
+                        ):
                             existing.last_used = time.monotonic()
                             if keep_loaded is not None:
                                 self.retain(profile, keep_loaded)
@@ -425,7 +469,10 @@ class OnDemandInference:
                         await self._remove(profile)
                         # The reservation is visible before the slow engine startup.
                         resident = ResidentRuntime(
-                            profile, plan.gpu_ids, plan.budget_gib, plan.fraction,
+                            profile,
+                            plan.gpu_ids,
+                            plan.budget_gib,
+                            plan.fraction,
                             resources.mode == "exclusive",
                         )
                         self.residents[profile.id] = resident
@@ -452,10 +499,12 @@ class OnDemandInference:
         payload = copy.deepcopy(profile.container)
         if profile.resources:
             host = payload.setdefault("HostConfig", {})
-            host["DeviceRequests"] = [{"Driver": "nvidia", "DeviceIDs": resident.gpu_ids,
-                                      "Capabilities": [["gpu"]]}]
-            payload["Env"] = [e for e in payload.get("Env", [])
-                              if not e.startswith("NVIDIA_VISIBLE_DEVICES=")]
+            host["DeviceRequests"] = [
+                {"Driver": "nvidia", "DeviceIDs": resident.gpu_ids, "Capabilities": [["gpu"]]}
+            ]
+            payload["Env"] = [
+                e for e in payload.get("Env", []) if not e.startswith("NVIDIA_VISIBLE_DEVICES=")
+            ]
             payload["Env"].append("NVIDIA_VISIBLE_DEVICES=" + ",".join(resident.gpu_ids))
             if resident.fraction is not None:
                 command = payload.get("Cmd", [])
@@ -463,10 +512,14 @@ class OnDemandInference:
                     if flag in command:
                         command[command.index(flag) + 1] = str(resident.fraction)
         labels = payload.setdefault("Labels", {})
-        labels["spark-cluster.reservation"] = json.dumps({
-            "gpu_ids": resident.gpu_ids, "budget_gib": resident.budget_gib,
-            "fraction": resident.fraction, "exclusive": resident.exclusive,
-        })
+        labels["spark-cluster.reservation"] = json.dumps(
+            {
+                "gpu_ids": resident.gpu_ids,
+                "budget_gib": resident.budget_gib,
+                "fraction": resident.fraction,
+                "exclusive": resident.exclusive,
+            }
+        )
         labels["spark-cluster.managed"] = "true"
         labels["spark-cluster.on-demand"] = profile.id
         labels["spark-cluster.model"] = profile.model
@@ -479,25 +532,22 @@ class OnDemandInference:
             "POST", "/containers/create", payload=payload, params={"name": profile.name}, timeout=30
         )
         container_id = created.json()["Id"]
-        try:
-            await self.docker.request("POST", f"/containers/{container_id}/start", timeout=30)
-            deadline = time.monotonic() + profile.startup_seconds
-            async with httpx.AsyncClient(timeout=3, trust_env=False) as client:
-                while time.monotonic() < deadline:
-                    state = await self.docker.request("GET", f"/containers/{container_id}/json")
-                    if not state.json().get("State", {}).get("Running"):
-                        raise RuntimeError("Inference runtime exited during startup")
-                    try:
-                        response = await client.get(profile.upstream + profile.readiness_path)
-                        if response.status_code in {200, 401, 403}:
-                            self.last_error = None
-                            return
-                    except httpx.HTTPError:
-                        pass
-                    await asyncio.sleep(1)
-            raise TimeoutError("Inference runtime startup deadline exceeded")
-        except BaseException:
-            raise
+        await self.docker.request("POST", f"/containers/{container_id}/start", timeout=30)
+        deadline = time.monotonic() + profile.startup_seconds
+        async with httpx.AsyncClient(timeout=3, trust_env=False) as client:
+            while time.monotonic() < deadline:
+                state = await self.docker.request("GET", f"/containers/{container_id}/json")
+                if not state.json().get("State", {}).get("Running"):
+                    raise RuntimeError("Inference runtime exited during startup")
+                try:
+                    response = await client.get(profile.upstream + profile.readiness_path)
+                    if response.status_code in {200, 401, 403}:
+                        self.last_error = None
+                        return
+                except httpx.HTTPError:
+                    pass
+                await asyncio.sleep(1)
+        raise TimeoutError("Inference runtime startup deadline exceeded")
 
 
 class DemandProxy:
@@ -550,41 +600,35 @@ class DemandProxy:
         try:
             async with asyncio.timeout(1800):
                 async with self.manager.lease(self.profile):
-                    try:
-                        mark_dispatch(scope)
-                        query = scope.get("query_string", b"").decode("ascii")
-                        raw_path = scope.get("raw_path", path.encode()).decode("ascii")
-                        url = self.profile.upstream + raw_path + ("?" + query if query else "")
-                        connection_tokens = {
-                            token.strip().lower().encode()
-                            for token in request.headers.get("connection", "").split(",")
-                        }
-                        headers = [
-                            (k, v)
-                            for k, v in scope["headers"]
-                            if k.lower()
-                            not in HOP_HEADERS | connection_tokens | {b"content-length"}
-                        ]
-                        async with httpx.AsyncClient(timeout=900, trust_env=False) as client:
-                            async with client.stream(
-                                request.method, url, headers=headers, content=forwarded
-                            ) as upstream:
-                                response = StreamingResponse(
-                                    upstream.aiter_raw(), status_code=upstream.status_code
-                                )
-                                excluded = HOP_HEADERS | {
-                                    token.strip().lower().encode()
-                                    for token in upstream.headers.get("connection", "").split(",")
-                                }
-                                response.raw_headers = [
-                                    (k, v)
-                                    for k, v in upstream.headers.raw
-                                    if k.lower() not in excluded
-                                ]
-                                response_started = True
-                                await response(scope, receive, send)
-                    finally:
-                        pass  # The per-runtime lease updates activity after streaming completes.
+                    mark_dispatch(scope)
+                    query = scope.get("query_string", b"").decode("ascii")
+                    raw_path = scope.get("raw_path", path.encode()).decode("ascii")
+                    url = self.profile.upstream + raw_path + ("?" + query if query else "")
+                    connection_tokens = {
+                        token.strip().lower().encode()
+                        for token in request.headers.get("connection", "").split(",")
+                    }
+                    headers = [
+                        (k, v)
+                        for k, v in scope["headers"]
+                        if k.lower() not in HOP_HEADERS | connection_tokens | {b"content-length"}
+                    ]
+                    async with httpx.AsyncClient(timeout=900, trust_env=False) as client:
+                        async with client.stream(
+                            request.method, url, headers=headers, content=forwarded
+                        ) as upstream:
+                            response = StreamingResponse(
+                                upstream.aiter_raw(), status_code=upstream.status_code
+                            )
+                            excluded = HOP_HEADERS | {
+                                token.strip().lower().encode()
+                                for token in upstream.headers.get("connection", "").split(",")
+                            }
+                            response.raw_headers = [
+                                (k, v) for k, v in upstream.headers.raw if k.lower() not in excluded
+                            ]
+                            response_started = True
+                            await response(scope, receive, send)
         except (httpx.HTTPError, RuntimeError, TimeoutError):
             self.manager.last_error = "Inference request failed; inspect controller logs"
             logger.exception("On-demand inference failed for %s", self.profile.id)

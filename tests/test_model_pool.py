@@ -577,9 +577,20 @@ async def test_shared_cluster_loads_while_a_different_retained_model_is_busy(tmp
     pool = FakePool(tmp_path)
     pool.nodes["second"]["busy"] = True
     node = pool.nodes["first"]
-    node.update(multi_residency=True, busy=True, active_model=None, keep_loaded=True,
-                resident_models=[{"model_id": "other/model", "active_requests": 1,
-                                  "status": "ready", "keep_loaded": True}])
+    node.update(
+        multi_residency=True,
+        busy=True,
+        active_model=None,
+        keep_loaded=True,
+        resident_models=[
+            {
+                "model_id": "other/model",
+                "active_requests": 1,
+                "status": "ready",
+                "keep_loaded": True,
+            }
+        ],
+    )
     node["models"].append({"id": "org/second", "loadable": True, "loaded": False})
     pool.gate = asyncio.Event()
     first = await pool.enqueue(PoolLoadRequest(model_id="org/model"))
@@ -596,10 +607,16 @@ async def test_shared_cluster_loads_while_a_different_retained_model_is_busy(tmp
 def test_routing_and_instances_use_per_model_residency_in_a_shared_cluster(tmp_path):
     pool = FakePool(tmp_path)
     first = pool.nodes["first"]
-    first.update(id="first", available=True, active_model=None, busy=True, resident_models=[
-        {"model_id": "org/model", "active_requests": 0, "status": "ready"},
-        {"model_id": "other/model", "active_requests": 2, "status": "ready"},
-    ])
+    first.update(
+        id="first",
+        available=True,
+        active_model=None,
+        busy=True,
+        resident_models=[
+            {"model_id": "org/model", "active_requests": 0, "status": "ready"},
+            {"model_id": "other/model", "active_requests": 2, "status": "ready"},
+        ],
+    )
     selected = pool.resident_for("org/model", [first], ModelPreferences())
     assert selected is first
     pool.reserved.add(("first", "new/model"))
@@ -610,10 +627,18 @@ def test_routing_and_instances_use_per_model_residency_in_a_shared_cluster(tmp_p
 async def test_inventory_exposes_gpu_budgets_for_each_co_resident_model(tmp_path):
     pool = FakePool(tmp_path)
     first = pool.nodes["first"]
-    first.update(active_model=None, resident_models=[{
-        "model_id": "org/model", "gpu_ids": ["gpu-1"], "budget_gib": {"gpu-1": 2.5},
-        "active_requests": 1, "status": "ready",
-    }])
+    first.update(
+        active_model=None,
+        resident_models=[
+            {
+                "model_id": "org/model",
+                "gpu_ids": ["gpu-1"],
+                "budget_gib": {"gpu-1": 2.5},
+                "active_requests": 1,
+                "status": "ready",
+            }
+        ],
+    )
     first["models"][0]["loaded"] = True
     state = await pool.inventory(force=True)
     placement = state["models"][0]["placements"][0]
@@ -624,18 +649,33 @@ async def test_inventory_exposes_gpu_budgets_for_each_co_resident_model(tmp_path
 
 def test_saved_memory_fractions_migrate_to_fixed_but_new_requests_use_auto(tmp_path):
     path = tmp_path / "model-pool.json"
-    path.write_text(json.dumps({"models": {"org/model": {"last_settings": {
-        "model_id": "org/model", "served_model_name": "model", "gpu_memory_utilization": 0.45,
-    }}}}))
+    path.write_text(
+        json.dumps(
+            {
+                "models": {
+                    "org/model": {
+                        "last_settings": {
+                            "model_id": "org/model",
+                            "served_model_name": "model",
+                            "gpu_memory_utilization": 0.45,
+                        }
+                    }
+                }
+            }
+        )
+    )
     pool = FakePool(tmp_path)
     assert pool.preferences["org/model"].last_settings.memory_budget_mode == "fixed"
-    assert ModelLaunchRequest(model_id="org/new", served_model_name="new").memory_budget_mode == "auto"
+    assert (
+        ModelLaunchRequest(model_id="org/new", served_model_name="new").memory_budget_mode == "auto"
+    )
 
 
 def test_auto_budget_covers_engine_concurrency_and_replicated_parallel_kv():
     settings = Settings(active_hardware="nvidia-gpu")
-    launch = ModelLaunchRequest(model_id="org/model", served_model_name="model",
-                                tensor_parallel=2, pipeline_parallel=2)
+    launch = ModelLaunchRequest(
+        model_id="org/model", served_model_name="model", tensor_parallel=2, pipeline_parallel=2
+    )
     fit = SimpleNamespace(resident_weights_gib=16, resident_kv_cache_gib=8)
     resources = PoolNode.resources_for_fit(launch, fit, settings)
     assert resources.gpu_count == 4

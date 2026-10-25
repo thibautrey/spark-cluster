@@ -19,7 +19,7 @@
     const fitting = capacities.filter(item => item.fits || item.can_load);
     if (selected === 'all') {
       if (fitting.length) {
-        const best = fitting.sort((a, b) => b.available_gib - a.available_gib)[0];
+        const best = fitting.sort((a, b) => Number(b.fits) - Number(a.fits) || b.available_gib - a.available_gib)[0];
         return {fits: true, selected, capacity: best, alternatives: fitting};
       }
       const closest = capacities.filter(item => item.reason || item.missing_gib !== null)

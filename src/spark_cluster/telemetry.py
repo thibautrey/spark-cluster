@@ -108,8 +108,11 @@ class InferenceTelemetryService:
             self.target_provider() if self.target_provider else self.url
         )
         targets = target if isinstance(target, dict) else ({"runtime": target} if target else {})
-        self._target_previous = {url: previous for url, previous in self._target_previous.items()
-                                 if url in targets.values()}
+        self._target_previous = {
+            url: previous
+            for url, previous in self._target_previous.items()
+            if url in targets.values()
+        }
         if not targets:
             self._previous = None
             telemetry = InferenceTelemetry(
@@ -117,7 +120,9 @@ class InferenceTelemetryService:
             )
         else:
             temporary = self.client is None
-            client = self.client or httpx.AsyncClient(timeout=3, trust_env=False, transport=self.transport)
+            client = self.client or httpx.AsyncClient(
+                timeout=3, trust_env=False, transport=self.transport
+            )
 
             async def fetch(key, url):
                 try:
@@ -134,7 +139,8 @@ class InferenceTelemetryService:
                     if error:
                         self._target_previous.pop(url, None)
                         sample = InferenceTelemetry(
-                            source=url, notes=[f"Runtime metrics unavailable: {type(error).__name__}"]
+                            source=url,
+                            notes=[f"Runtime metrics unavailable: {type(error).__name__}"],
                         )
                     else:
                         self._previous = self._target_previous.get(url)
@@ -145,16 +151,34 @@ class InferenceTelemetryService:
                     telemetry = next(iter(samples.values())).model_copy()
                 else:
                     telemetry = InferenceTelemetry(
-                        source="multiple runtimes", available=any(s.available for s in samples.values()),
-                        notes=["Counters and rates are summed; latency and cache ratios remain per runtime."],
+                        source="multiple runtimes",
+                        available=any(s.available for s in samples.values()),
+                        notes=[
+                            "Counters and rates are summed; "
+                            "latency and cache ratios remain per runtime."
+                        ],
                     )
-                    for field in ("input_tokens_total", "output_tokens_total", "requests_total",
-                                  "prefill_tokens_per_second", "decode_tokens_per_second",
-                                  "cache_hits", "cache_misses", "active_requests", "queued_requests"):
-                        values = [getattr(s, field) for s in samples.values() if getattr(s, field) is not None]
+                    for field in (
+                        "input_tokens_total",
+                        "output_tokens_total",
+                        "requests_total",
+                        "prefill_tokens_per_second",
+                        "decode_tokens_per_second",
+                        "cache_hits",
+                        "cache_misses",
+                        "active_requests",
+                        "queued_requests",
+                    ):
+                        values = [
+                            getattr(s, field)
+                            for s in samples.values()
+                            if getattr(s, field) is not None
+                        ]
                         setattr(telemetry, field, sum(values) if values else None)
-                telemetry.runtimes = {key: value.model_dump(mode="json", exclude={"runtimes"})
-                                      for key, value in samples.items()}
+                telemetry.runtimes = {
+                    key: value.model_dump(mode="json", exclude={"runtimes"})
+                    for key, value in samples.items()
+                }
             finally:
                 if temporary:
                     await client.aclose()

@@ -416,8 +416,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 )
                                 snapshot.runtime.model = (
                                     (
-                                        ", ".join(r.profile.model for r in on_demand.residents.values()
-                                                  if r.status == "ready") or "No model loaded"
+                                        ", ".join(
+                                            r.profile.model
+                                            for r in on_demand.residents.values()
+                                            if r.status == "ready"
+                                        )
+                                        or "No model loaded"
                                     )
                                     if on_demand.profiles
                                     else settings.runtime_model
