@@ -76,7 +76,7 @@
       const available = Number(gpu.available_gib || 0);
       const percent = total ? Math.min(100, committed / total * 100) : 0;
       const models = (cluster.resident_models || []).filter(model => model.gpu_ids?.includes(gpu.id));
-      return `<div class="launch-gpu-meter">
+      return `<div class="launch-gpu-meter">${window.performanceButton?.('gpu', JSON.stringify([cluster.id, String(gpu.id)]), `GPU ${gpu.index ?? ""} performance ↗`) || ""}
         <div><b>GPU ${escapeHtml(String(gpu.index ?? ''))}</b><strong>${committed.toFixed(1)} / ${total.toFixed(1)} GiB</strong></div>
         <span class="launch-gpu-track"><i style="width:${percent}%"></i></span>
         <div><small>${models.length ? 'Model memory' : external ? 'External use' : 'Idle'}</small><small>${available.toFixed(1)} GiB available</small></div>
@@ -84,7 +84,7 @@
     }).join('') : '<div class="launch-gpu-meter unavailable"><small>Per-GPU memory telemetry unavailable</small></div>';
     field('launch-pool-overview').innerHTML = `<div class="launch-pool-identity">
       <div><span aria-hidden="true">▣</span><h2>${escapeHtml(cluster.name)}</h2><em class="${healthy ? 'healthy' : 'unavailable'}">${healthy ? 'Healthy' : 'Unavailable'}</em></div>
-      <p>${gpus.length || cluster.machines?.reduce((sum, machine) => sum + Number(machine.accelerators || 0), 0) || 0} GPUs connected · Automatic placement</p>
+      ${window.performanceButton?.("pool", cluster.id, "Pool performance ↗") || ""}<p>${gpus.length || cluster.machines?.reduce((sum, machine) => sum + Number(machine.accelerators || 0), 0) || 0} GPUs connected · Automatic placement</p>
     </div><div class="launch-gpu-grid">${gpuMarkup}</div>`;
   }
 
@@ -135,7 +135,7 @@
       ${concurrency ? `<small class="launch-model-concurrency">Automatic concurrency ${concurrency.running} / ${concurrency.limit}${concurrency.waiting ? ` · ${concurrency.waiting} waiting` : ''}</small>` : ''}
       ${progressMarkup(view.job)}
       ${!view.job && last?.status === 'failed' ? `<p class="pool-error">${escapeHtml(last.message)}</p>` : ''}
-      <footer><button class="launch-card-action ${view.id === 'ready' ? 'primary' : 'secondary'}" data-pool-action="${action}" ${disabled}>${actionText}</button><button class="launch-card-settings secondary" data-pool-action="settings" aria-label="Settings for ${escapeHtml(model.id)}" title="Model settings">⚙</button></footer>
+      <footer>${window.performanceButton?.("model", model.id) || ""}<button class="launch-card-action ${view.id === 'ready' ? 'primary' : 'secondary'}" data-pool-action="${action}" ${disabled}>${actionText}</button><button class="launch-card-settings secondary" data-pool-action="settings" aria-label="Settings for ${escapeHtml(model.id)}" title="Model settings">⚙</button></footer>
     </article>`;
   }
 

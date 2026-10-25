@@ -69,3 +69,59 @@ routed request outcomes and provider-reported usage.
 gauges and journal health. GPU monitoring in the controller container requires
 NVIDIA's NVML library and devices (NVIDIA container runtime, `utility` capability).
 Without that access the dashboard explicitly shows unavailable resource samples.
+
+## Performance sheets and tiered history
+
+Open **Performance history** from Inference activity, **Speed history** from the
+throughput card, or a model/pool/GPU performance button in the library, recent
+requests, model details or launch workspace. The same sheet switches between
+Overall, Model, Pool and GPU, with ranges from one hour to 180 days. It refreshes
+every ten seconds while open and visible; closing it stops reads. The read-only
+endpoint is `/api/v1/inference/performance?scope=model&entity=org/model&hours=24`.
+GPU entity identifiers are compact JSON arrays `[pool_id,gpu_id]`, so GPU index 0
+in two pools never collides.
+
+The sheet separates routed request measurements from runtime telemetry. Streaming
+decode is weighted by measured decode duration, not an average of request rates.
+Effective prefill is reported input tokens divided by dispatch-to-first-output
+time; it includes backend scheduling and delivery, and is not a GPU kernel rate.
+JSON/non-streaming responses cannot supply this timing. Cached input percentages
+use only requests that report both cached and input tokens. Missing token usage,
+cache data and timing stay unknown, and coverage counts are visible. Failed and
+cancelled requests do not contribute successful timing/speed measurements.
+
+Known local Docker runtime placements attribute scraper measurements to their
+model, pool and exact assigned GPUs. Rates for simultaneous residents of one
+scope are summed before temporal averaging; shared cache gauges are averaged.
+GPU charts describe whole workloads assigned to the device, including shared
+multi-GPU workloads, and must not be added together as independent traffic.
+Remote controller requests retain model/pool attribution, but remote GPU placement
+and runtime measurements are unavailable unless observed by that worker. Direct
+backend traffic contributes only scraped runtime measurements. Hardware resource
+utilization does not establish token throughput or cache occupancy.
+
+Performance buckets share the separate `-inference.db` journal, using its background
+writer and a lock for concurrent sheet reads. Requests and their rollups commit in
+one transaction; retries cannot double-count a request. No database work is added
+to the inference response path. Runtime samples use a bounded background queue.
+History begins on upgrade; previously retained requests and lifetime counters stay
+available in Activity but are not backfilled into performance charts.
+
+Defaults, all configurable with the `SPARK_CLUSTER_` prefix:
+
+| Setting | Default | Behavior |
+| --- | --- | --- |
+| `INFERENCE_RETENTION_DAYS` | 7 | Raw requests expire by age as well as the existing request-count cap. |
+| `PERFORMANCE_MINUTE_DAYS` | 1 | Keep one-minute detail for this many days (1–7). |
+| `PERFORMANCE_HOUR_DAYS` | 30 | Reduce older detail to hourly buckets until this age (7–90 days). |
+| `PERFORMANCE_DAY_DAYS` | 180 | Reduce older hours to daily buckets, then expire (90–730 days). |
+| `PERFORMANCE_MAX_ROWS` | 150000 | Bound total scope/time buckets; oldest buckets expire first under pressure. |
+
+Maintenance runs at least once per minute while the controller is running, even
+without new inference requests. Coarsening merges counts, sums, durations, known
+measurement counts and peaks; it never averages existing averages. Range boundary
+buckets are included whole and expose their actual timestamp and resolution. The
+storage cap may shorten history. SQLite reuses pages released by expiry rather
+than repeatedly vacuuming an active journal. Lifetime Activity counters survive
+raw and bucket expiry. A crash can lose the unflushed second; persistence failures,
+pending records and dropped records are shown in the sheet.

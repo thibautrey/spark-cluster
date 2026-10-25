@@ -8,10 +8,13 @@ import math
 import re
 import sqlite3
 import time
+import threading
 from collections import deque
 from uuid import uuid4
 
 from starlette.requests import ClientDisconnect
+
+from .performance_history import DAY, PerformanceHistory
 
 logger = logging.getLogger(__name__)
 SCOPE_KEY = "spark.inference"
@@ -36,8 +39,10 @@ def counters():
 class InferenceJournal:
     """A separate WAL database isolates telemetry from model download contention."""
 
-    def __init__(self, path, retention):
+    def __init__(self, path, retention, settings):
+        self.lock = threading.RLock()
         self.retention = retention
+        self.retention_days = settings.inference_retention_days
         self.db = sqlite3.connect(path, check_same_thread=False, timeout=1)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=NORMAL")
@@ -51,7 +56,7 @@ class InferenceJournal:
             "(id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL)"
         )
         self.db.commit()
-        self.row_count = self.db.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
+        self.performance = PerformanceHistory(self.db, settings)
 
     def restore(self):
         row = self.db.execute("SELECT payload FROM state WHERE id=1").fetchone()
@@ -60,37 +65,53 @@ class InferenceJournal:
         ).fetchall()
         return json.loads(row[0]) if row else None, [json.loads(r[0]) for r in recent]
 
-    def save(self, events, state):
-        with self.db:
-            before = self.db.total_changes
-            self.db.executemany(
-                "INSERT OR IGNORE INTO requests VALUES (?,?,?)",
-                [(e["id"], e["finished_at"], json.dumps(e, separators=(",", ":"))) for e in events],
-            )
-            inserted = self.db.total_changes - before
-            self.db.execute("INSERT OR REPLACE INTO state VALUES (1,?)", (json.dumps(state),))
-            self.db.execute(
-                "DELETE FROM requests WHERE id IN (SELECT id FROM requests "
-                "ORDER BY finished ASC LIMIT ?)",
-                (max(0, self.row_count + inserted - self.retention),),
-            )
-        self.row_count = min(self.retention, self.row_count + inserted)
+    def save(self, events, state, samples=()):
+        with self.lock:
+            now = time.time()
+            maintenance_due = now - self.performance.last_maintenance >= 60
+            with self.db:
+                for event in events:
+                    inserted = self.db.execute(
+                        "INSERT OR IGNORE INTO requests VALUES (?,?,?)",
+                        (event["id"], event["finished_at"], json.dumps(event, separators=(",", ":"))),
+                    ).rowcount
+                    if inserted:
+                        self.performance.request(event, now)
+                for sample in samples:
+                    self.performance.runtime(sample, now)
+                self.db.execute("INSERT OR REPLACE INTO state VALUES (1,?)", (json.dumps(state),))
+                self.db.execute("DELETE FROM requests WHERE finished < ?",
+                                (now - self.retention_days * DAY,))
+                count = self.db.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
+                self.db.execute(
+                    "DELETE FROM requests WHERE id IN (SELECT id FROM requests "
+                    "ORDER BY finished ASC LIMIT ?)", (max(0, count - self.retention),),
+                )
+                self.performance.maintain(now)
+            if maintenance_due:
+                self.performance.last_maintenance = now
+
+    def performance_summary(self, scope, entity, hours):
+        with self.lock:
+            return self.performance.read(scope, entity, hours)
 
 
 class InferenceTracker:
     def __init__(self, settings):
         path = settings.database_path.with_name(settings.database_path.stem + "-inference.db")
-        self.journal = InferenceJournal(path, settings.inference_retention_requests)
+        self.journal = InferenceJournal(path, settings.inference_retention_requests, settings)
         saved, recent = self.journal.restore()
         self.state = saved or dict(since=time.time(), totals=counters(), groups={}, buckets={})
         self.recent = deque(recent, maxlen=512)
         self.pending = deque(maxlen=4096)
+        self.runtime_pending = deque(maxlen=4096)
         self.active = {}
         self.dropped = 0
         self.persistence_error = False
         self.last_flush_at = None
         self.resources = lambda cluster_id: None
         self.pool_state = lambda: []
+        self.local_pool = lambda: None
         self.task = None
 
     async def start(self):
@@ -110,13 +131,16 @@ class InferenceTracker:
             await self.flush()
 
     async def flush(self):
-        if not self.pending:
+        if (not self.pending and not self.runtime_pending
+                and time.time() - self.journal.performance.last_maintenance < 60):
             return
         events = list(self.pending)
+        samples = list(self.runtime_pending)
         self.pending.clear()
+        self.runtime_pending.clear()
         state = json.loads(json.dumps(self.state))
         # Shield the thread so shutdown cannot close SQLite during an in-flight transaction.
-        write = asyncio.create_task(asyncio.to_thread(self.journal.save, events, state))
+        write = asyncio.create_task(asyncio.to_thread(self.journal.save, events, state, samples))
         try:
             await asyncio.shield(write)
             self.persistence_error = False
@@ -131,7 +155,17 @@ class InferenceTracker:
                     self.dropped += 1
                 else:
                     self.pending.appendleft(event)
+            for sample in reversed(samples):
+                if len(self.runtime_pending) == self.runtime_pending.maxlen:
+                    self.dropped += 1
+                else:
+                    self.runtime_pending.appendleft(sample)
             logger.warning("Inference journal write failed; retrying bounded batch")
+
+    def observe_runtime(self, scopes, timestamp, metrics):
+        if len(self.runtime_pending) == self.runtime_pending.maxlen:
+            self.dropped += 1
+        self.runtime_pending.append(dict(scopes=scopes, timestamp=timestamp, metrics=metrics))
 
     async def track(self, handler, model_id, path, scope, receive, send):
         if SCOPE_KEY in scope or scope.get("method") in {"GET", "HEAD", "OPTIONS"}:
@@ -248,7 +282,7 @@ class InferenceTracker:
             recent=list(self.recent)[:limit],
             pools=self.pool_state(),
             persistence=dict(
-                pending=len(self.pending),
+                pending=len(self.pending) + len(self.runtime_pending),
                 dropped=self.dropped,
                 healthy=not self.persistence_error,
                 last_flush_at=self.last_flush_at,
@@ -276,6 +310,7 @@ class RequestRecord:
         self.first_byte_at = None
         self.tail = bytearray()
         self.cluster_id = None
+        self.gpu_ids = []
         self.status = None
         self.outcome = None
         self.input_tokens = self.output_tokens = self.cached_tokens = None
@@ -290,6 +325,8 @@ class RequestRecord:
     def dispatch(self, cluster_id=None):
         if cluster_id:
             self.cluster_id = cluster_id
+        if not self.cluster_id:
+            self.cluster_id = self.tracker.local_pool()
         if self.dispatched_at is None:
             self.dispatched_at = time.perf_counter()
             self.memory_start = self.tracker.resources(self.cluster_id)
@@ -468,6 +505,7 @@ class RequestRecord:
             model_id=self.model_id,
             path=self.path,
             cluster_id=self.cluster_id,
+            gpu_ids=self.gpu_ids,
             started_at=self.started_at,
             finished_at=time.time(),
             status=self.status,
@@ -484,6 +522,8 @@ class RequestRecord:
             ttft_ms=round((self.first_output - self.start) * 1000, 3)
             if self.first_output
             else None,
+            prefill_ms=round((self.first_output - self.dispatched_at) * 1000, 3)
+            if self.first_output and self.dispatched_at else None,
             input_tokens=self.input_tokens,
             output_tokens=self.output_tokens,
             cached_tokens=self.cached_tokens,
@@ -494,9 +534,11 @@ class RequestRecord:
         )
 
 
-def mark_dispatch(scope, cluster_id=None):
+def mark_dispatch(scope, cluster_id=None, gpu_ids=None):
     if record := scope.get(SCOPE_KEY):
         record.dispatch(cluster_id)
+        if gpu_ids is not None:
+            record.gpu_ids = list(gpu_ids)
 
 
 def request_stream_usage(body, content_type, path):
