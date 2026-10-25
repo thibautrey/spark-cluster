@@ -367,6 +367,17 @@ class RuntimeLibrary:
             raise ValueError("Install skopeo on the controller (included in the Spark image)")
         return await self._enqueue("download", request.model_dump(), self._download)
 
+    async def ensure_local_image(self, metadata: dict) -> dict:
+        cluster_platform = metadata.get("platform")
+        if not cluster_platform or not cluster_platform.startswith("linux/"):
+            raise ValueError("Local Docker runtimes require a Linux image")
+        return await self.docker.ensure_runtime_image(
+            metadata["repository"],
+            metadata["digest"],
+            cluster_platform,
+            metadata["config_digest"],
+        )
+
     async def _download(self, job):
         async with self.download_lock:
             job["message"] = "Resolving immutable package and target platform"
