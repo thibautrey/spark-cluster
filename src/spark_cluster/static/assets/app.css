@@ -95,7 +95,9 @@
 .active-downloads-head h3{font-size:15px;margin:2px 0 0}
 .active-downloads-head>span{padding:5px 8px;border:1px solid #315943;border-radius:999px;background:#12261c;color:var(--green);font:8px DM Mono;text-transform:uppercase;letter-spacing:.08em}
 .active-download-list{display:grid;gap:10px}
-.active-download-card{display:grid;gap:12px;padding:14px;border:1px solid #253b32;border-radius:9px;background:#09110eaa}
+.active-download-card{display:grid;gap:12px;padding:14px;border:1px solid #253b32;border-radius:9px;background:#09110eaa;cursor:pointer;transition:border-color .15s,background .15s}
+.active-download-card:hover{border-color:#4c7465;background:#0d1814}
+.active-download-card:focus-visible{outline:2px solid var(--cyan);outline-offset:3px}
 .active-download-identity{display:grid;grid-template-columns:38px minmax(0,1fr) auto;gap:11px;align-items:center}
 .active-download-icon{width:38px;height:38px;display:grid;place-items:center;border:1px solid #326249;border-radius:9px;background:#123022;color:var(--green);font:17px DM Mono}
 .active-download-identity p,.active-download-identity h4,.active-download-identity small{margin:0;display:block}

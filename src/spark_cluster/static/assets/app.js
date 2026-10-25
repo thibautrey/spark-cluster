@@ -619,7 +619,7 @@ function renderActiveDownloads(downloads) {
     const rate = paused ? 0 : downloadRate(job);
     const remaining = Math.max(0, job.total_bytes - currentBytes);
     const timing = paused ? '' : rate ? `<span>${formatBytes(rate)}/s</span><span>${formatDuration(remaining / rate)} remaining</span>` : '<span>Calculating speed…</span>';
-    return `<article class="active-download-card ${paused ? 'paused' : ''}">
+    return `<article class="active-download-card ${paused ? 'paused' : ''}" data-model-repo="${escapeHtml(job.repo_id)}" data-model-revision="${escapeHtml(job.revision || 'main')}" tabindex="0" aria-label="Open details for ${escapeHtml(job.repo_id)}">
       <div class="active-download-identity"><span class="active-download-icon">↓</span><div><p>${escapeHtml(downloadPhaseLabel(job))}</p><h4>${escapeHtml(job.repo_id)}</h4></div></div>
       <div class="active-download-progress"><div><i style="width:${progress}%"></i></div><b>${progress.toFixed(2)}%</b></div>
       <div class="active-download-footer"><div class="active-download-summary"><span><b>${formatBytes(currentBytes)}</b> of ${formatBytes(job.total_bytes)}</span>${timing}</div><div class="active-download-actions"><button class="download-control" type="button" data-download-action="${paused ? 'resume' : 'pause'}" data-job-id="${escapeHtml(job.id)}" data-repo-id="${escapeHtml(job.repo_id)}">${paused ? 'Resume' : 'Pause'}</button><button class="download-control danger" type="button" data-download-action="cancel" data-job-id="${escapeHtml(job.id)}" data-repo-id="${escapeHtml(job.repo_id)}">Cancel</button></div></div>
@@ -1458,11 +1458,30 @@ $('download-list').addEventListener('click', async event => {
 });
 $('active-download-list').addEventListener('click', event => {
   const button = event.target.closest('[data-download-action]');
-  if (!button) return;
-  openModelActionSheet(button.dataset.downloadAction, {
-    jobId: button.dataset.jobId,
-    repoId: button.dataset.repoId,
-  }, button);
+  if (button) {
+    openModelActionSheet(button.dataset.downloadAction, {
+      jobId: button.dataset.jobId,
+      repoId: button.dataset.repoId,
+    }, button);
+    return;
+  }
+  const model = event.target.closest('[data-model-repo]');
+  if (model) window.inspectCatalogModel?.(
+    model.dataset.modelRepo,
+    model.dataset.modelRevision || 'main',
+    model,
+  );
+});
+$('active-download-list').addEventListener('keydown', event => {
+  if (!['Enter', ' '].includes(event.key)) return;
+  const model = event.target.closest('[data-model-repo]');
+  if (!model || event.target !== model) return;
+  event.preventDefault();
+  window.inspectCatalogModel?.(
+    model.dataset.modelRepo,
+    model.dataset.modelRevision || 'main',
+    model,
+  );
 });
 $('local-models').addEventListener('click', event => {
   const button = event.target.closest('[data-model-action="delete"]');
