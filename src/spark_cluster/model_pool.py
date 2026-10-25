@@ -1150,7 +1150,8 @@ class ModelPool:
         finally:
             if selected:
                 self.reserved.discard(selected.id)
-            self.cache = None
+            if job.get("status") != "ready":
+                self.cache = None
             self.save()
 
     async def scale_instances(self, request: PoolScaleRequest):
@@ -1193,6 +1194,7 @@ class ModelPool:
                     self.cluster(selected["id"]), "unload", {"model_id": request.model_id}
                 )
                 self.cache = None
+                await self.inventory(force=True)
                 return {
                     "status": "ready",
                     "instances": len(instances) - 1,

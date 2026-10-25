@@ -133,6 +133,7 @@ async def test_scale_up_loads_an_additional_instance(tmp_path):
     assert job["cluster_id"] == "second"
     assert pool.nodes["first"]["active_model"] == "org/model"
     assert pool.nodes["second"]["active_model"] == "org/model"
+    assert pool.cache is not None
 
 
 @pytest.mark.asyncio
@@ -147,6 +148,7 @@ async def test_scale_down_removes_one_instance_and_preserves_minimum(tmp_path):
     assert pool.nodes["first"]["active_model"] == "org/model"
     assert pool.nodes["second"]["active_model"] is None
     assert pool.preferences["org/model"].keep_loaded is True
+    assert pool.cache is not None
     with pytest.raises(ValueError, match="At least one"):
         await pool.scale_instances(PoolScaleRequest(model_id="org/model", delta=-1))
 
