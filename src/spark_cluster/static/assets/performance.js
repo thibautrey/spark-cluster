@@ -68,6 +68,7 @@
     entityField.innerHTML = options.map(item => `<option value="${attr(item.entity)}">${escapeHtml(label(item.scope, item.entity))}</option>`).join('');
     entityField.value = current.entity;
     entityField.hidden = current.scope === 'overall';
+    entityField.parentElement.hidden = entityField.hidden;
     const s = data.summary;
     const runtime = [
       ['Runtime decode', number(s.runtime_decode_tokens_per_second, ' tok/s')],
@@ -117,6 +118,7 @@
     current = {scope, entity: scope === 'overall' ? 'all' : entity};
     scopeField.value = scope;
     entityField.hidden = scope === 'overall';
+    entityField.parentElement.hidden = entityField.hidden;
     entityField.innerHTML = `<option value="${attr(current.entity)}">${escapeHtml(label(scope, current.entity))}</option>`;
     document.getElementById('performance-title').textContent = label(scope, current.entity);
     sheet.hidden = false;

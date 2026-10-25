@@ -7,8 +7,8 @@ import logging
 import math
 import re
 import sqlite3
-import time
 import threading
+import time
 from collections import deque
 from uuid import uuid4
 
@@ -73,19 +73,25 @@ class InferenceJournal:
                 for event in events:
                     inserted = self.db.execute(
                         "INSERT OR IGNORE INTO requests VALUES (?,?,?)",
-                        (event["id"], event["finished_at"], json.dumps(event, separators=(",", ":"))),
+                        (
+                            event["id"],
+                            event["finished_at"],
+                            json.dumps(event, separators=(",", ":")),
+                        ),
                     ).rowcount
                     if inserted:
                         self.performance.request(event, now)
                 for sample in samples:
                     self.performance.runtime(sample, now)
                 self.db.execute("INSERT OR REPLACE INTO state VALUES (1,?)", (json.dumps(state),))
-                self.db.execute("DELETE FROM requests WHERE finished < ?",
-                                (now - self.retention_days * DAY,))
+                self.db.execute(
+                    "DELETE FROM requests WHERE finished < ?", (now - self.retention_days * DAY,)
+                )
                 count = self.db.execute("SELECT COUNT(*) FROM requests").fetchone()[0]
                 self.db.execute(
                     "DELETE FROM requests WHERE id IN (SELECT id FROM requests "
-                    "ORDER BY finished ASC LIMIT ?)", (max(0, count - self.retention),),
+                    "ORDER BY finished ASC LIMIT ?)",
+                    (max(0, count - self.retention),),
                 )
                 self.performance.maintain(now)
             if maintenance_due:
@@ -131,8 +137,11 @@ class InferenceTracker:
             await self.flush()
 
     async def flush(self):
-        if (not self.pending and not self.runtime_pending
-                and time.time() - self.journal.performance.last_maintenance < 60):
+        if (
+            not self.pending
+            and not self.runtime_pending
+            and time.time() - self.journal.performance.last_maintenance < 60
+        ):
             return
         events = list(self.pending)
         samples = list(self.runtime_pending)
@@ -523,7 +532,8 @@ class RequestRecord:
             if self.first_output
             else None,
             prefill_ms=round((self.first_output - self.dispatched_at) * 1000, 3)
-            if self.first_output and self.dispatched_at else None,
+            if self.first_output and self.dispatched_at
+            else None,
             input_tokens=self.input_tokens,
             output_tokens=self.output_tokens,
             cached_tokens=self.cached_tokens,

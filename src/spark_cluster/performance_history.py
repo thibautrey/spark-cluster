@@ -6,15 +6,21 @@ import time
 
 DAY = 86400
 RUNTIME_FIELDS = (
-    "prefill_tokens_per_second", "decode_tokens_per_second", "gpu_kv_cache_usage",
-    "cache_retrieval_p95_ms", "ttft_p50_ms", "ttft_p95_ms",
+    "prefill_tokens_per_second",
+    "decode_tokens_per_second",
+    "gpu_kv_cache_usage",
+    "cache_retrieval_p95_ms",
+    "ttft_p50_ms",
+    "ttft_p95_ms",
 )
 
 
 def merge(target, source):
     for key, value in source.items():
-        target[key] = max(target.get(key, value), value) if key.endswith("_max") else (
-            target.get(key, 0) + value
+        target[key] = (
+            max(target.get(key, value), value)
+            if key.endswith("_max")
+            else (target.get(key, 0) + value)
         )
     return target
 
@@ -47,16 +53,12 @@ class PerformanceHistory:
             "scope TEXT, entity TEXT, resolution INTEGER, timestamp INTEGER, payload TEXT, "
             "PRIMARY KEY(scope,entity,resolution,timestamp))"
         )
-        db.execute(
-            "CREATE INDEX IF NOT EXISTS performance_time ON performance_buckets(timestamp)"
-        )
+        db.execute("CREATE INDEX IF NOT EXISTS performance_time ON performance_buckets(timestamp)")
         db.commit()
 
     def resolution(self, timestamp, now):
         age = now - timestamp
-        return 60 if age < self.minute_days * DAY else (
-            3600 if age < self.hour_days * DAY else DAY
-        )
+        return 60 if age < self.minute_days * DAY else (3600 if age < self.hour_days * DAY else DAY)
 
     def add(self, entities, timestamp, values, now):
         if timestamp < now - self.day_days * DAY:
@@ -67,7 +69,8 @@ class PerformanceHistory:
             key = (scope, entity, resolution, bucket)
             row = self.db.execute(
                 "SELECT payload FROM performance_buckets "
-                "WHERE scope=? AND entity=? AND resolution=? AND timestamp=?", key,
+                "WHERE scope=? AND entity=? AND resolution=? AND timestamp=?",
+                key,
             ).fetchone()
             payload = merge(json.loads(row[0]) if row else {}, values)
             self.db.execute(
@@ -101,8 +104,12 @@ class PerformanceHistory:
                     prefill_tokens=event["input_tokens"],
                     prefill_seconds=event["prefill_ms"] / 1000,
                 )
-        self.add(scopes(event["model_id"], event["cluster_id"], event.get("gpu_ids", [])),
-                 event["finished_at"], values, now)
+        self.add(
+            scopes(event["model_id"], event["cluster_id"], event.get("gpu_ids", [])),
+            event["finished_at"],
+            values,
+            now,
+        )
 
     def runtime(self, sample, now):
         values = {"runtime_samples": 1}
@@ -117,14 +124,18 @@ class PerformanceHistory:
     def maintain(self, now):
         if now - self.last_maintenance < 60:
             return
-        self.db.execute("DELETE FROM performance_buckets WHERE timestamp < ?",
-                        (now - self.day_days * DAY,))
+        self.db.execute(
+            "DELETE FROM performance_buckets WHERE timestamp < ?", (now - self.day_days * DAY,)
+        )
         # Move old fine buckets into the next tier exactly once, atomically with the journal.
-        for resolution, cutoff in ((60, now - self.minute_days * DAY),
-                                   (3600, now - self.hour_days * DAY)):
+        for resolution, cutoff in (
+            (60, now - self.minute_days * DAY),
+            (3600, now - self.hour_days * DAY),
+        ):
             rows = self.db.execute(
                 "SELECT scope,entity,resolution,timestamp,payload FROM performance_buckets "
-                "WHERE resolution=? AND timestamp < ?", (resolution, cutoff),
+                "WHERE resolution=? AND timestamp < ?",
+                (resolution, cutoff),
             ).fetchall()
             for scope, entity, old_resolution, timestamp, payload in rows:
                 self.add([(scope, entity)], timestamp, json.loads(payload), now)
@@ -147,9 +158,16 @@ class PerformanceHistory:
         def ratio(a, b):
             return values.get(a, 0) / values[b] if values.get(b) else None
 
-        result = {key: values.get(key, 0) for key in (
-            "requests", "successful", "failed", "cancelled", "runtime_samples",
-        )}
+        result = {
+            key: values.get(key, 0)
+            for key in (
+                "requests",
+                "successful",
+                "failed",
+                "cancelled",
+                "runtime_samples",
+            )
+        }
         for key in ("input_tokens", "output_tokens", "cached_tokens"):
             result[key] = values.get(key) if values.get(key + "_known") else None
             result[key + "_known"] = values.get(key + "_known", 0)
@@ -171,7 +189,8 @@ class PerformanceHistory:
         rows = self.db.execute(
             "SELECT resolution,timestamp,payload FROM performance_buckets "
             "WHERE scope=? AND entity=? AND timestamp+resolution>? AND timestamp<=? "
-            "ORDER BY timestamp", (scope, entity, start, now),
+            "ORDER BY timestamp",
+            (scope, entity, start, now),
         ).fetchall()
         resolution = 60 if hours <= 24 else 3600 if hours <= 24 * 30 else DAY
         points = {}
@@ -183,18 +202,31 @@ class PerformanceHistory:
         history = []
         for (timestamp, step), values in sorted(points.items()):
             merge(total, values)
-            history.append(dict(timestamp=timestamp, resolution_seconds=step,
-                                **self.metrics(values)))
-        entities = [dict(scope=kind, entity=identifier) for kind, identifier in self.db.execute(
-            "SELECT scope,entity FROM performance_buckets WHERE timestamp+resolution>? "
-            "GROUP BY scope,entity ORDER BY MAX(timestamp) DESC LIMIT 256", (start,),
-        ).fetchall()]
+            history.append(
+                dict(timestamp=timestamp, resolution_seconds=step, **self.metrics(values))
+            )
+        entities = [
+            dict(scope=kind, entity=identifier)
+            for kind, identifier in self.db.execute(
+                "SELECT scope,entity FROM performance_buckets WHERE timestamp+resolution>? "
+                "GROUP BY scope,entity ORDER BY MAX(timestamp) DESC LIMIT 256",
+                (start,),
+            ).fetchall()
+        ]
         return dict(
-            scope=scope, entity=entity, start=start, end=now, summary=self.metrics(total),
+            scope=scope,
+            entity=entity,
+            start=start,
+            end=now,
+            summary=self.metrics(total),
             entities=entities,
             history=history,
-            retention=dict(minute_days=self.minute_days, hour_days=self.hour_days,
-                           day_days=self.day_days, max_rows=self.max_rows),
+            retention=dict(
+                minute_days=self.minute_days,
+                hour_days=self.hour_days,
+                day_days=self.day_days,
+                max_rows=self.max_rows,
+            ),
             coverage="Routed requests and locally scraped runtimes. GPU requests describe the "
             "whole workload placed on that GPU; multi-GPU requests appear on each assigned GPU. "
             "Runtime rates are sample means. Effective prefill includes backend scheduling and "
