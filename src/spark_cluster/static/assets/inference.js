@@ -3,10 +3,15 @@
   let activity = null;
   let pending = false;
   let retainedModels = new Set();
+  let loadedModels = new Set();
   let menuModel = null;
   let menuTrigger = null;
   const menu = $('inference-row-menu');
   const keepMemory = $('inference-keep-memory');
+  const poolAction = $('inference-pool-action');
+  const poolActionIcon = $('inference-pool-action-icon');
+  const poolActionLabel = $('inference-pool-action-label');
+  const poolActionDescription = $('inference-pool-action-description');
   const menuError = $('inference-menu-error');
   const number = value => value == null ? '—' : formatNumber(value);
   const milliseconds = value => value == null ? '—' : `${Math.round(value).toLocaleString()} ms`;
@@ -29,6 +34,15 @@
     menuError.hidden = true;
     menuError.textContent = '';
     keepMemory.setAttribute('aria-checked', String(retainedModels.has(menuModel)));
+    const action = loadedModels.has(menuModel) ? 'unload' : 'load';
+    const label = action === 'load' ? 'Load' : 'Unload';
+    poolAction.dataset.action = action;
+    poolAction.setAttribute('aria-label', `${label} ${menuModel}`);
+    poolActionIcon.textContent = action === 'load' ? '↑' : '↓';
+    poolActionLabel.textContent = label;
+    poolActionDescription.textContent = action === 'load'
+      ? 'Load this model into an available pool.'
+      : 'Unload this model and release its pool memory.';
     trigger.setAttribute('aria-expanded', 'true');
     menu.hidden = false;
     const triggerBox = trigger.getBoundingClientRect();
@@ -77,6 +91,7 @@
     $('throughput-spark').title = 'Reported output tokens per second, averaged over each minute';
     const poolNames = new Map(activity.pools.map(pool => [pool.id, pool.name]));
     retainedModels = new Set(activity.retained_models || []);
+    loadedModels = new Set(activity.pools.map(pool => pool.active_model).filter(Boolean));
     const active = activity.active.map(request => ({...request, outcome: request.state, duration_ms: request.elapsed_ms}));
     const rows = [...active, ...activity.recent].slice(0, 12);
     const recentMarkup = rows.length ? rows.map(request => {
@@ -130,11 +145,56 @@
       keepMemory.disabled = false;
     }
   });
+  poolAction.addEventListener('click', async () => {
+    if (!menuModel) return;
+    const modelId = menuModel;
+    const action = poolAction.dataset.action;
+    keepMemory.disabled = true;
+    poolAction.disabled = true;
+    menuError.hidden = true;
+    try {
+      await api(`/api/v1/pool/${action}`, {
+        method: 'POST',
+        headers: window.adminAuthHeaders(),
+        body: JSON.stringify({
+          model_id: modelId,
+          cluster_id: window.selectedClusterContext?.() === 'all'
+            ? null : window.selectedClusterContext?.(),
+        }),
+      });
+      if (action === 'unload') {
+        loadedModels.delete(modelId);
+        retainedModels.delete(modelId);
+      }
+      $('inference-action-status').textContent = action === 'load'
+        ? `Load requested for ${modelId}.`
+        : `${modelId} was unloaded and its pool memory was released.`;
+      closeMenu({restoreFocus: true});
+      void refresh();
+    } catch (error) {
+      menuError.textContent = error.message;
+      menuError.hidden = false;
+    } finally {
+      keepMemory.disabled = false;
+      poolAction.disabled = false;
+    }
+  });
   document.addEventListener('click', event => {
     if (!menu.hidden && !menu.contains(event.target) && !event.target.closest('.inference-menu-trigger')) closeMenu();
   });
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !menu.hidden) closeMenu({restoreFocus: true});
+  });
+  menu.addEventListener('keydown', event => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const items = [keepMemory, poolAction].filter(item => !item.disabled);
+    const current = items.indexOf(document.activeElement);
+    const next = event.key === 'Home' ? 0
+      : event.key === 'End' ? items.length - 1
+        : event.key === 'ArrowDown' ? (current + 1) % items.length
+          : (current - 1 + items.length) % items.length;
+    items[next].focus();
   });
   window.addEventListener('resize', () => closeMenu());
   window.addEventListener('scroll', () => closeMenu(), true);
