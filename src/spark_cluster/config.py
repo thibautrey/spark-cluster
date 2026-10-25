@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     runtime_metrics_url: str | None = None
     runtime_metrics_poll_seconds: float = 5
     inference_retention_requests: int = Field(default=50_000, ge=100, le=1_000_000)
+    inference_retention_days: int = Field(default=7, ge=1, le=30)
+    performance_minute_days: int = Field(default=1, ge=1, le=7)
+    performance_hour_days: int = Field(default=30, ge=7, le=90)
+    performance_day_days: int = Field(default=180, ge=90, le=730)
+    performance_max_rows: int = Field(default=150_000, ge=1000, le=1_000_000)
     setup_enabled: bool = False
     setup_state_path: Path = Path("./setup-state")
     setup_ssh_identity: Path | None = None

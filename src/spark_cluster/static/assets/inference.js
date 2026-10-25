@@ -112,16 +112,16 @@
       const memory = request.memory_end || request.memory_start;
       const pool = poolNames.get(request.cluster_id) || request.cluster_id || 'Unassigned';
       const memoryText = memory ? `${memory.used_gib.toFixed(1)} / ${memory.total_gib.toFixed(1)} GiB` : 'Unavailable';
-      return `<tr class="inference-model-row" data-model-repo="${escapeHtml(request.model_id)}" tabindex="0" aria-label="Open details for ${escapeHtml(request.model_id)}">${cell(new Date(request.started_at * 1000).toLocaleTimeString())}${cell(`${request.model_id} · ${pool}`)}${cell(request.outcome)}${cell(milliseconds(request.duration_ms))}${cell(`${number(request.input_tokens)} / ${number(request.output_tokens)}`)}${cell(memoryText)}${actionCell(request.model_id)}</tr>`;
+      return `<tr class="inference-model-row" data-model-repo="${escapeHtml(request.model_id)}" tabindex="0" aria-label="Open details for ${escapeHtml(request.model_id)}">${cell(new Date(request.started_at * 1000).toLocaleTimeString())}<td>${escapeHtml(request.model_id)} · ${escapeHtml(pool)} ${window.performanceButton?.("model", request.model_id, "Speed & cache ↗") || ""}</td>${cell(request.outcome)}${cell(milliseconds(request.duration_ms))}${cell(`${number(request.input_tokens)} / ${number(request.output_tokens)}`)}${cell(memoryText)}${actionCell(request.model_id)}</tr>`;
     }).join('') : '<tr><td colspan="7">Tracking is ready. Requests appear here as clients use the pool endpoints.</td></tr>';
     if (menu.hidden) $('inference-recent').innerHTML = recentMarkup;
     $('inference-pools').innerHTML = activity.pools.map(pool => {
       const machines = pool.machines;
       const used = machines.reduce((sum, machine) => sum + (machine.memory_used_gib || 0), 0);
       const total = machines.reduce((sum, machine) => sum + (machine.memory_total_gib || 0), 0);
-      return `<p>${escapeHtml(pool.name)} · ${escapeHtml(pool.resident_models?.map(r => r.model_id).join(', ') || pool.active_model || 'No model loaded')} · ${pool.age_seconds < 15 && pool.available && machines.length && machines.every(machine => machine.available !== false) ? `${used.toFixed(1)} / ${total.toFixed(1)} GiB` : 'Resource sample unavailable'} · ${pool.busy ? 'busy' : 'idle'}</p>`;
+      return `<p>${window.performanceButton?.("pool", pool.id, pool.name) || escapeHtml(pool.name)} · ${escapeHtml(pool.resident_models?.map(r => r.model_id).join(', ') || pool.active_model || 'No model loaded')} · ${pool.age_seconds < 15 && pool.available && machines.length && machines.every(machine => machine.available !== false) ? `${used.toFixed(1)} / ${total.toFixed(1)} GiB` : 'Resource sample unavailable'} · ${pool.busy ? 'busy' : 'idle'}</p>`;
     }).join('') || '<p>Pool resource samples will appear when a compute pool reports.</p>';
-    $('inference-groups').innerHTML = activity.groups.map(group => `<p>${escapeHtml(group.model_id)} · ${escapeHtml(poolNames.get(group.cluster_id) || group.cluster_id || 'Unassigned')} · ${number(group.requests)} requests · ${number(group.input_tokens)} input / ${number(group.output_tokens)} output tokens</p>`).join('');
+    $('inference-groups').innerHTML = activity.groups.map(group => `<p>${window.performanceButton?.("model", group.model_id, group.model_id) || escapeHtml(group.model_id)} · ${escapeHtml(poolNames.get(group.cluster_id) || group.cluster_id || 'Unassigned')} · ${number(group.requests)} requests · ${number(group.input_tokens)} input / ${number(group.output_tokens)} output tokens</p>`).join('');
     const persistence = activity.persistence;
     $('inference-tracking-note').textContent = `${activity.coverage} Memory is a shared pool sample, not per-request allocation. Records retain no prompts, responses or credentials. ${persistence.healthy ? 'Journal healthy' : 'Journal write failing; retry pending'} · ${persistence.pending} pending · ${persistence.dropped} dropped.`;
   }

@@ -142,8 +142,8 @@
         </section>
 
         <section class="metrics runtime-idle" id="overview" data-route-view="overview">
-          <article class="metric" id="output-metric"><span id="output-metric-label">Inference</span><strong><b id="output-tps">—</b><small id="output-unit"></small></strong><canvas id="throughput-spark" width="180" height="42"></canvas></article>
-          <article class="metric accent" id="cache-hit-metric" hidden><span>KV cache hit rate</span><strong><b id="hit-rate">—</b><small>%</small></strong><div class="ring" id="hit-ring"><span></span></div></article>
+          <article class="metric" id="output-metric"><span id="output-metric-label">Inference</span><strong><b id="output-tps">—</b><small id="output-unit"></small></strong><canvas id="throughput-spark" width="180" height="42"></canvas><button type="button" class="performance-trigger" data-performance-scope="overall">Speed history ↗</button></article>
+          <article class="metric accent" id="cache-hit-metric" hidden><span>KV cache hit rate</span><strong><b id="hit-rate">—</b><small>%</small></strong><div class="ring" id="hit-ring"><span></span></div><button type="button" class="performance-trigger" data-performance-scope="overall">Cache history ↗</button></article>
           <article class="metric"><span id="memory-metric-label">Memory</span><strong><b id="memory-used">—</b><small id="memory-total"> / — GiB</small></strong><div class="bar" role="progressbar" aria-label="Memory allocated" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="memory-bar"></i></div></article>
           <article class="metric" id="prefix-reuse-metric" hidden><span>Prefix reuse</span><strong><b id="prefix-reuse">—</b><small> tokens</small></strong></article>
         </section>
@@ -155,7 +155,7 @@
             <article class="metric"><span>Memory headroom</span><strong id="overview-free">—</strong><footer>Free on reporting nodes</footer></article>
             <article class="metric"><span>Hottest GPU</span><strong id="overview-temperature">—</strong><footer id="overview-temperature-node">Waiting for telemetry</footer></article>
           </div>
-          <article class="panel overview-runtime"><div class="panel-head"><h2>Inference activity</h2><a href="#launch">Manage runtime ↗</a></div><p id="overview-model">Connecting to inference tracking…</p><dl id="overview-runtime-stats"></dl>
+          <article class="panel overview-runtime"><div class="panel-head"><h2>Inference activity</h2><button type="button" class="performance-trigger" data-performance-scope="overall">Performance history ↗</button><a href="#launch">Manage runtime ↗</a></div><p id="overview-model">Connecting to inference tracking…</p><dl id="overview-runtime-stats"></dl>
             <p class="overview-updated" id="inference-coverage"></p>
             <div class="overview-table-wrap"><table class="overview-table"><thead><tr><th>Recent requests</th><th>Model / pool</th><th>Result</th><th>Latency</th><th>Tokens in / out</th><th>Pool memory</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="inference-recent"><tr><td colspan="7">Loading recorded activity…</td></tr></tbody></table></div>
             <div class="inference-row-menu" id="inference-row-menu" role="menu" hidden>
@@ -521,11 +521,24 @@
         </form>
       </section>
     </div>
+    <div class="bottom-sheet performance-sheet" id="performance-sheet" hidden>
+      <button class="bottom-sheet-backdrop" id="performance-backdrop" type="button" tabindex="-1" aria-label="Close performance history"></button>
+      <section class="bottom-sheet-panel performance-panel" role="dialog" aria-modal="true" aria-labelledby="performance-title">
+        <header class="bottom-sheet-header"><div><p class="eyebrow">PERFORMANCE HISTORY</p><h3 id="performance-title">All tracked workloads</h3></div><button class="catalog-sheet-close" id="performance-close" type="button" aria-label="Close performance history">×</button></header>
+        <div class="performance-toolbar">
+          <label>View<select id="performance-scope"><option value="overall">Overall</option><option value="model">Model</option><option value="pool">Pool</option><option value="gpu">GPU</option></select></label>
+          <label>Workload<select id="performance-entity" hidden aria-label="Workload"></select></label>
+          <label>Range<select id="performance-range"><option value="1">Last hour</option><option value="24" selected>Last 24 hours</option><option value="168">Last 7 days</option><option value="720">Last 30 days</option><option value="4320">Last 180 days</option></select></label>
+          <button type="button" class="secondary" id="performance-refresh">Refresh</button><span id="performance-status" role="status"></span>
+        </div><div class="performance-body" id="performance-body"></div>
+      </section>
+    </div>
     <script src="/assets/navigation.js?v=runtime-readiness-v1"></script>
     <script src="/assets/app.js?v=runtime-guide-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=adaptive-pools-v1"></script>
+    <script src="/assets/performance.js?v=performance-history-v1"></script>
     <script src="/assets/catalog.js?v=overview-model-sheet-v2"></script>
     <script src="/assets/setup.js?v=native-macos-onboarding-v1"></script>
     <script src="/assets/pool.js?v=launch-workspace-v1" defer></script>

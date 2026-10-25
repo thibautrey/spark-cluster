@@ -58,6 +58,7 @@ from .cluster_registry import (
 from .cluster_setup import ClusterSetupService, SetupFailure
 from .config import Settings
 from .inference_tracking import InferenceTracker
+from .performance_history import RUNTIME_FIELDS, scopes as performance_scopes
 from .local_docker import DockerEngineClient, detect_nvidia_gpus, local_gpu_snapshot
 from .mcp_server import SparkClusterMCP
 from .model_manager import (
@@ -291,9 +292,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     inference_tracker.resources = resource_sample
     inference_tracker.pool_state = pool_usage
+    inference_tracker.local_pool = lambda: (c.id if (c := model_pool.local_cluster()) else None)
     telemetry_service = InferenceTelemetryService(settings, runtime.store)
     telemetry_service.target_provider = metrics_target
-    telemetry_service.observer = on_demand.concurrency.telemetry
+    def observe_telemetry(samples):
+        on_demand.concurrency.telemetry(samples)
+        local = model_pool.local_cluster()
+        # Only known local runtime placements receive model/pool/GPU attribution.
+        measured = []
+        grouped = {}
+        for key, metrics in samples.items():
+            if not metrics.get("available"):
+                continue
+            resident = on_demand.residents.get(key)
+            if resident and local:
+                entities = performance_scopes(
+                    resident.profile.model_id or resident.profile.model,
+                    local.id, resident.gpu_ids,
+                )[1:]
+                for entity in entities:
+                    grouped.setdefault(entity, []).append(metrics)
+            measured.append(metrics)
+        for entity, metrics_list in grouped.items():
+            combined = {}
+            for field in RUNTIME_FIELDS:
+                values = [m[field] for m in metrics_list if m.get(field) is not None]
+                if values:
+                    combined[field] = sum(values) if field.endswith("tokens_per_second") else (
+                        sum(values) / len(values)
+                    )
+            inference_tracker.observe_runtime(
+                [entity], telemetry_service.latest.sampled_at.timestamp(), combined,
+            )
+        if measured:
+            # Use the scraper's combined sample once; never add runtime and request tokens.
+            metrics = telemetry_service.latest.model_dump(mode="json")
+            inference_tracker.observe_runtime(
+                [("overall", "all")], telemetry_service.latest.sampled_at.timestamp(), metrics,
+            )
+
+    telemetry_service.observer = observe_telemetry
     optimization_lab = OptimizationLab(settings, runtime.store, telemetry_service)
     cluster_connector = RemoteClusterConnector(settings, cluster_registry)
 
@@ -847,6 +885,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if preferences.keep_loaded
             ),
         }
+
+    @app.get("/api/v1/inference/performance")
+    async def inference_performance(
+        scope: str = Query(default="overall", pattern="^(overall|model|pool|gpu)$"),
+        entity: str = Query(default="all", min_length=1, max_length=1024),
+        hours: int = Query(default=24, ge=1, le=24 * 730),
+    ) -> dict:
+        result = await asyncio.to_thread(
+            inference_tracker.journal.performance_summary, scope,
+            "all" if scope == "overall" else entity, hours,
+        )
+        result["persistence"] = dict(
+            healthy=not inference_tracker.persistence_error,
+            pending=len(inference_tracker.pending) + len(inference_tracker.runtime_pending),
+            dropped=inference_tracker.dropped,
+        )
+        return result
 
     @app.get("/api/v1/telemetry", response_model=InferenceTelemetry)
     async def inference_telemetry() -> InferenceTelemetry:

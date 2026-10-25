@@ -735,7 +735,8 @@ class DemandProxy:
         try:
             async with asyncio.timeout(1800):
                 async with self.manager.lease(self.profile, feedback):
-                    mark_dispatch(scope)
+                    resident = self.manager.residents.get(self.profile.id)
+                    mark_dispatch(scope, gpu_ids=resident.gpu_ids if resident else None)
                     query = scope.get("query_string", b"").decode("ascii")
                     raw_path = scope.get("raw_path", path.encode()).decode("ascii")
                     url = self.profile.upstream + raw_path + ("?" + query if query else "")
