@@ -166,6 +166,8 @@ async def test_two_residents_survive_with_actual_engine_caps_and_targeted_unload
     assert set(manager.residents) == {"first", "second"}
     assert manager.active is None
     assert manager.status()["active_profiles"] == ["first", "second"]
+    reuse = await manager.plan(first)
+    assert reuse.available_gib == pytest.approx(2.56)
     for p in (first, second):
         payload = manager.docker.containers[p.name]["Config"]
         assert payload["HostConfig"]["DeviceRequests"][0]["DeviceIDs"] == ["gpu-0"]
@@ -198,6 +200,9 @@ async def test_startup_reservations_prevent_concurrent_overbooking(monkeypatch):
         assert sum(r.budget_gib["gpu-0"] for r in manager.residents.values()) == 6
         with pytest.raises(RuntimeError, match="starting runtimes"):
             await manager.ensure(third)
+        with pytest.raises(RuntimeError, match="startup"):
+            await manager.remove(first)
+        assert set(manager.residents) == {first.id, second.id}
     finally:
         finish.set()
         await asyncio.gather(*tasks)
@@ -424,3 +429,24 @@ async def test_node_loads_assign_distinct_gpus_and_ports_without_lowering_concur
         assert command[command.index("--max-num-seqs") + 1] == "7"
         assert command[command.index("--max-model-len") + 1] == "4096"
     assert len(ports) == 4
+
+
+@pytest.mark.asyncio
+async def test_legacy_adoption_without_gpu_telemetry_preserves_running_container():
+    first = profile("legacy")
+    manager = manager_for([], [])
+    manager.register(first)
+    manager.docker.available = True
+    manager.docker.containers[first.name] = {
+        "State": {"Running": True},
+        "Config": {"Labels": {"spark-cluster.on-demand": first.id}},
+    }
+
+    async def ping():
+        return True
+
+    manager.docker.ping = ping
+    with pytest.raises(RuntimeError, match="telemetry"):
+        await manager.start()
+    assert first.name in manager.docker.containers
+    assert not any(method in {"POST", "DELETE"} for method, _, _ in manager.docker.calls)
