@@ -310,7 +310,11 @@ class OnDemandInference:
             await self.remove(self.active)
         await self.remove(profile)
         payload = copy.deepcopy(profile.container)
-        payload.setdefault("Labels", {})["spark-cluster.on-demand"] = profile.id
+        labels = payload.setdefault("Labels", {})
+        labels["spark-cluster.managed"] = "true"
+        labels["spark-cluster.on-demand"] = profile.id
+        labels["spark-cluster.model"] = profile.model
+        labels["spark-cluster.model-id"] = profile.model_id or profile.model
         payload.setdefault("HostConfig", {})["RestartPolicy"] = {"Name": "no"}
         payload["HostConfig"]["AutoRemove"] = False
         # Docker health probes must not call the public listener and trigger recursion.
