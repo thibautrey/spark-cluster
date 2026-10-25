@@ -308,7 +308,7 @@ class RuntimeWorkflowService:
                     cluster_id=job.request.cluster_id,
                     engine_id=job.engine_id,
                     version=job.version,
-                    image=job.image,
+                    image=f"{metadata['repository']}@{job.digest}",
                     digest=job.digest,
                     platform=job.platform,
                     artifact_id=None,
