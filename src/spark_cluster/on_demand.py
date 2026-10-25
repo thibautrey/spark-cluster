@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field, model_validator
 from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 
-from .inference_tracking import mark_dispatch
+from .inference_tracking import mark_dispatch, request_stream_usage
 from .local_docker import DockerEngineClient
 
 logger = logging.getLogger(__name__)
@@ -387,6 +387,7 @@ class DemandProxy:
                     scope, receive, send
                 )
                 return
+        forwarded = request_stream_usage(body, request.headers.get("content-type", ""), path)
         self.manager.pending += 1
         response_started = False
         try:
@@ -405,11 +406,11 @@ class DemandProxy:
                         headers = [
                             (k, v)
                             for k, v in scope["headers"]
-                            if k.lower() not in HOP_HEADERS | connection_tokens
+                            if k.lower() not in HOP_HEADERS | connection_tokens | {b"content-length"}
                         ]
                         async with httpx.AsyncClient(timeout=900, trust_env=False) as client:
                             async with client.stream(
-                                request.method, url, headers=headers, content=bytes(body)
+                                request.method, url, headers=headers, content=forwarded
                             ) as upstream:
                                 response = StreamingResponse(
                                     upstream.aiter_raw(), status_code=upstream.status_code

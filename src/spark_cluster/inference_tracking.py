@@ -497,3 +497,22 @@ class RequestRecord:
 def mark_dispatch(scope, cluster_id=None):
     if record := scope.get(SCOPE_KEY):
         record.dispatch(cluster_id)
+
+
+def request_stream_usage(body, content_type, path):
+    """Ask compatible generation routes for usage unless the client opted out."""
+    if "application/json" not in content_type or not path.rstrip("/").endswith(
+        ("/chat/completions", "/completions")
+    ):
+        return bytes(body)
+    try:
+        value = json.loads(body)
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        return bytes(body)
+    if not isinstance(value, dict) or value.get("stream") is not True:
+        return bytes(body)
+    options = value.get("stream_options", {})
+    if not isinstance(options, dict) or "include_usage" in options:
+        return bytes(body)
+    value["stream_options"] = {**options, "include_usage": True}
+    return json.dumps(value, separators=(",", ":")).encode()
