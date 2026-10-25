@@ -335,7 +335,8 @@ class RequestRecord:
         if cluster_id:
             self.cluster_id = cluster_id
         if not self.cluster_id:
-            self.cluster_id = self.tracker.local_pool()
+            local_pool = getattr(self.tracker, "local_pool", None)
+            self.cluster_id = local_pool() if local_pool else None
         if self.dispatched_at is None:
             self.dispatched_at = time.perf_counter()
             self.memory_start = self.tracker.resources(self.cluster_id)
