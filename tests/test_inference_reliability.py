@@ -191,6 +191,44 @@ async def test_startup_cancellation_cleans_reservation_without_teaching_failure(
 
 
 @pytest.mark.asyncio
+async def test_failed_cleanup_keeps_reservation_and_retries_with_backoff(monkeypatch):
+    p = profile()
+    manager = OnDemandInference(Docker(), [p])
+    original_remove = manager._remove
+
+    async def start(p, resident):
+        async def unavailable(*args, **kwargs):
+            raise RuntimeError("Docker unavailable during cleanup")
+
+        monkeypatch.setattr(manager, "_remove", unavailable)
+        raise RuntimeError("engine startup failed")
+
+    monkeypatch.setattr(manager, "_start_runtime", start)
+    with pytest.raises(RuntimeError, match="engine startup failed"):
+        await manager.ensure(p)
+    resident = manager.residents[p.id]
+    assert resident.status == "unhealthy" and resident.budget_gib
+    with pytest.raises(RuntimeUnavailable):
+        await manager.ensure(p)
+    manager.recovery[p.id] = (1, 0)
+    with pytest.raises(RuntimeUnavailable):
+        await manager.ensure(p)
+    assert manager.recovery_state(p)["failures"] == 2
+    assert manager.residents[p.id] is resident
+    assert 9 < manager.recovery_state(p)["retry_after_seconds"] <= 10
+
+    async def recovered(*args):
+        pass
+
+    monkeypatch.setattr(manager, "_remove", original_remove)
+    monkeypatch.setattr(manager, "_start_runtime", recovered)
+    manager.recovery[p.id] = (2, 0)
+    await manager.ensure(p)
+    assert manager.residents[p.id] is not resident
+    assert manager.residents[p.id].status == "ready"
+
+
+@pytest.mark.asyncio
 async def test_disconnect_while_admission_queued_releases_all_counters(monkeypatch):
     p = profile()
     manager = OnDemandInference(Docker(), [p])
