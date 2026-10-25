@@ -666,4 +666,4 @@ def test_pool_ui_renders_model_first_launch_workspace(tmp_path):
     assert "grid-template-columns:repeat(3" in pool_styles
     assert "reserved_gib" in pool_script
     assert "available_gib" in pool_script
-    assert "launch-workspace-v1" in page
+    assert "launch-inventory-v2" in page
