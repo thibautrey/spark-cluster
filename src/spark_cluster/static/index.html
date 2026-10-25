@@ -453,6 +453,35 @@
         </section>
       </main>
     </div>
+    <div class="bottom-sheet resource-history-sheet" id="resource-history-sheet" hidden>
+      <button class="bottom-sheet-backdrop" id="resource-history-backdrop" type="button" tabindex="-1" aria-label="Close resource history"></button>
+      <section class="bottom-sheet-panel resource-history-panel" role="dialog" aria-modal="true" aria-labelledby="resource-history-title">
+        <header class="bottom-sheet-header resource-history-header">
+          <span class="catalog-sheet-handle" aria-hidden="true"></span>
+          <div><p class="eyebrow" id="resource-history-node">NODE RESOURCE</p><h3 id="resource-history-title">Resource history</h3></div>
+          <span class="resource-history-window" id="resource-history-window">Last 30 minutes</span>
+          <button class="catalog-sheet-close" id="resource-history-close" type="button" aria-label="Close resource history">×</button>
+        </header>
+        <div class="resource-history-content">
+          <div class="resource-history-loading" id="resource-history-loading" role="status"><i aria-hidden="true"></i><span>Loading recorded samples…</span></div>
+          <div id="resource-history-data" hidden>
+            <div class="resource-history-summary">
+              <div class="resource-history-current"><small>Current</small><strong id="resource-history-current">—</strong><span id="resource-history-updated">—</span></div>
+              <dl><div><dt>Minimum</dt><dd id="resource-history-min">—</dd></div><div><dt>Average</dt><dd id="resource-history-average">—</dd></div><div><dt>Maximum</dt><dd id="resource-history-max">—</dd></div></dl>
+            </div>
+            <figure class="resource-history-chart">
+              <svg id="resource-history-chart" viewBox="0 0 920 320" role="img" aria-labelledby="resource-history-chart-title resource-history-chart-description">
+                <title id="resource-history-chart-title">Resource history chart</title>
+                <desc id="resource-history-chart-description">Recorded values over time.</desc>
+              </svg>
+              <figcaption><span id="resource-history-start">—</span><span id="resource-history-samples">—</span><span id="resource-history-end">—</span></figcaption>
+            </figure>
+          </div>
+          <div class="resource-history-empty" id="resource-history-empty" role="status" hidden><strong>No recorded samples yet</strong><span>The chart will appear after this node reports telemetry.</span></div>
+          <p class="action-sheet-error" id="resource-history-error" role="alert" hidden></p>
+        </div>
+      </section>
+    </div>
     <div class="bottom-sheet admin-token-sheet" id="admin-token-sheet" hidden>
       <button class="bottom-sheet-backdrop" id="admin-token-backdrop" type="button" tabindex="-1" aria-label="Close administrator access"></button>
       <section class="bottom-sheet-panel admin-token-panel" role="dialog" aria-modal="true" aria-labelledby="admin-token-title">
