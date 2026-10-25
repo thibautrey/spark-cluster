@@ -22,6 +22,13 @@ counted explicitly. Nothing is inferred from
 response length, SSE chunk count, or GPU activity. Earlier unrecorded requests
 cannot be reconstructed. Historical records survive runtime unloads and restarts.
 
+An observed client disconnect before completion is a cancellation, including when
+the ASGI streaming response handles the disconnect without raising an exception.
+A terminal SSE finish event counts as completed generation even if the client
+closes before `[DONE]`. Provider errors and upstream streams that end without a
+terminal event remain failures. Historical outcomes are retained as recorded;
+missing response content cannot safely establish why an older stream stopped.
+
 ## Cost and bounds
 
 There is no database, filesystem, network, GPU query, or additional I/O wait in the
