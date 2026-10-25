@@ -5,11 +5,13 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from .config import Settings
+from .deepseek_mia import MODEL_ID, MiaRecipePlan, build_mia_recipe
 from .runtime_engines import capabilities, recommended_engine
 
 
 class PerformancePlanRequest(BaseModel):
     model_id: str = Field(min_length=1, max_length=200)
+    revision: str | None = Field(default=None, min_length=1, max_length=200)
     node_count: int | None = Field(default=None, ge=1, le=8)
     topology: Literal["auto", "single", "direct", "ring", "switch"] = "auto"
     workload: Literal["balanced", "latency", "throughput", "long-context"] = "balanced"
@@ -51,6 +53,8 @@ class PerformancePlan(BaseModel):
     cache_cpu_gib: int = 32
     cache_disk_gib: int = 1536
     context_options: list[int] = Field(default_factory=list)
+    recipe: MiaRecipePlan | None = None
+    blockers: list[str] = Field(default_factory=list)
 
 
 NVIDIA_SCALE = "https://developer.nvidia.com/blog/running-frontier-class-ai-models-across-8-nvidia-dgx-spark-nodes/"
@@ -103,6 +107,8 @@ def build_performance_plan(
     model = request.model_id.lower()
     nodes = max(1, request.node_count or available_nodes or 1)
     is_spark = settings.active_hardware == "dgx-spark"
+    if is_spark and request.model_id == MODEL_ID:
+        return _mia_performance_plan(request, nodes)
     collective, topology_guidance = _topology(nodes, request.topology, settings.active_hardware)
     evidence = (
         [
@@ -297,4 +303,85 @@ def build_performance_plan(
         cache_cpu_gib=cache_cpu_gib,
         cache_disk_gib=cache_disk_gib,
         context_options=[16_384, 65_536, 262_144, 524_288, 1_048_576],
+    )
+
+
+def _mia_performance_plan(request: PerformancePlanRequest, available_nodes: int) -> PerformancePlan:
+    nodes = 4 if available_nodes >= 4 else 3
+    context = min(request.context_length, 1_048_576 if nodes == 4 else 262_144)
+    if nodes == 3 and request.workload != "long-context":
+        context = min(context, 32_768)
+    recipe = build_mia_recipe(
+        nodes,
+        context,
+        request.concurrent_sequences,
+        request.topology,
+        request.revision,
+    )
+    recipe.environment["CONTEXT_LENGTH"] = str(context)
+    warnings = [
+        "Published MIA results are external evidence for a patched SGLang recipe, "
+        "not throughput measured by this controller.",
+        "Never use RAM Engram offload or expandable_segments:True on this unified-memory stack.",
+        "Named loop errors, malformed-history repair and the output cap require the recipe's "
+        "adapters; environment variables alone do not add them to stock SGLang.",
+    ]
+    if context != request.context_length:
+        warnings.append(f"The profile reduces the requested context to {context:,} tokens.")
+    if available_nodes < 3:
+        recipe.blockers.append(
+            "The native checkpoint needs at least three DGX Sparks; two do not fit."
+        )
+    if nodes == 3:
+        topology = "ConnectX-7 RoCE triangle"
+        topology_guidance = "Use both ports on each of three Sparks to form the complete triangle."
+        warnings.append(
+            "TP3 uses 32k context for unattended serving. The 256k configured ceiling needs "
+            "head-memory and long-prefill validation; choose long-context to explore it."
+        )
+    elif request.topology == "ring":
+        topology = "Patched NCCL switchless RoCE ring"
+        topology_guidance = (
+            "Use four cables, physical rank order and the upstream NCCL patch on every rank."
+        )
+    else:
+        topology = "Switched RoCE fabric"
+        topology_guidance = "Use a RoCE switch; the switchless ring is a separate opt-in profile."
+    return PerformancePlan(
+        model_family=request.model_id,
+        profile=f"DeepSeek V4.1 Flash · MIA SGLang TP{nodes}",
+        engine="MIA patched SGLang · native MXFP4 experts / FP8 dense weights",
+        engine_id="sglang",
+        engine_executable=False,
+        recommended_nodes=nodes,
+        tensor_parallel=nodes,
+        context_length=context,
+        gpu_memory_utilization=float(recipe.environment["MEM_FRACTION_STATIC"]),
+        kv_cache_dtype="auto",
+        max_num_seqs=int(recipe.environment["MAX_RUNNING_REQUESTS"]),
+        max_num_batched_tokens=int(recipe.environment["CHUNKED_PREFILL_SIZE"]),
+        collective_backend=topology,
+        topology_guidance=topology_guidance,
+        engine_guidance=(
+            "Prepare the pinned upstream recipe using the profile below. Managed launch "
+            "requires a dedicated multi-node adapter with packed Engram mounts and patched "
+            "kernels; configuring an SGLang image alone is insufficient."
+        ),
+        automatic_settings=recipe.prerequisites,
+        warnings=warnings,
+        evidence=[
+            PerformanceEvidence(
+                title=f"MIA TP{nodes} measurements", finding=finding, source_url=recipe.recipe_url
+            )
+            for finding in recipe.measurements
+        ],
+        speculative_method="dspark",
+        speculative_tokens=5,
+        expert_parallel=False,
+        cache_cpu_gib=0,
+        cache_disk_gib=0,
+        context_options=[16_384, 32_768, 65_536, 131_072, 262_144]
+        + ([524_288, 1_048_576] if nodes == 4 else []),
+        recipe=recipe,
+        blockers=recipe.blockers,
     )

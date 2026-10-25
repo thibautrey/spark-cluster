@@ -21,7 +21,11 @@ SHA256-verified native packages for supported macOS and Windows hosts. Open
 
 Spark Cluster turns a set of DGX Spark systems into an approachable inference cluster. The dashboard can run on a NAS, VM, workstation, or one of the Sparks and control GPU machines on the same trusted LAN. Its guided setup covers physical preparation, network discovery, SSH verification, NVIDIA fabric checks, Kubernetes installation, model storage, observability, and runtime operations.
 
-The runtime is model-agnostic and works with Hugging Face models supported by the selected vLLM image. DeepSeek models are fully supported, including architecture-aware MLA memory estimates.
+The runtime works with Hugging Face models supported by the configured engine adapter and
+image, with architecture-aware MLA memory estimates for DeepSeek. The official DeepSeek V4.1
+Flash checkpoint has [MIA TP3/TP4 recipe planning](docs/research/mia-deepseek-2026-10-25.md)
+with NVMe Engram and compressed KV estimates; its patched multi-node SGLang runtime requires
+separate preparation before it can serve.
 
 ## Why Spark Cluster
 

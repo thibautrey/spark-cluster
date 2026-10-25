@@ -105,6 +105,9 @@ class ModelFitRequest(BaseModel):
 class ModelFitPlan(BaseModel):
     repo_id: str
     revision: str
+    checkpoint_commit: str | None = None
+    recipe_id: str | None = None
+    recipe_source_url: str | None = None
     architecture: str | None = None
     parameter_count: int | None = None
     repository_bytes: int

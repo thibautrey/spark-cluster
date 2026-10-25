@@ -709,8 +709,11 @@ async function loadPerformancePlan(apply = true) {
     }
     const evidence = plan.evidence.map(item => `<a href="${escapeHtml(item.source_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)} ↗</a>`).join(' · ');
     const warnings = plan.warnings.length ? `<p>${plan.warnings.map(item => escapeHtml(item)).join(' ')}</p>` : '';
+    const blockers = plan.blockers?.length ? `<p><b>Required before launch:</b> ${plan.blockers.map(item => escapeHtml(item)).join(' ')}</p>` : '';
+    const recipe = plan.recipe;
+    const recipeDetails = recipe ? `<p>Recipe ${escapeHtml(recipe.recipe_revision.slice(0, 12))} · checkpoint ${escapeHtml(recipe.checkpoint_revision.slice(0, 12))} · ${escapeHtml(recipe.license)}</p><ul>${recipe.prerequisites.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul><p>Merge these reviewed settings into the full upstream ${escapeHtml(recipe.env_file)} profile, preserving its production adapters and local fabric configuration.</p><pre>${escapeHtml(Object.entries(recipe.environment).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join('\n'))}</pre><p>${recipe.measurements.map(item => escapeHtml(item)).join(' ')}</p><a href="${escapeHtml(recipe.recipe_url)}" target="_blank" rel="noopener noreferrer">Pinned recipe and preparation steps ↗</a>` : '';
     const detail = `${escapeHtml(plan.engine_guidance)} ${escapeHtml(plan.topology_guidance)}`;
-    const details = detail || warnings || evidence ? `<details class="performance-plan-details"><summary>Plan details</summary><p>${detail}</p>${warnings}${evidence ? `<small>${evidence}</small>` : ''}</details>` : '';
+    const details = detail || warnings || evidence ? `<details class="performance-plan-details"><summary>Plan details</summary><p>${detail}</p>${blockers}${warnings}${recipeDetails}${evidence ? `<small>${evidence}</small>` : ''}</details>` : '';
     $('performance-plan').innerHTML = `<span>${plan.engine_executable ? '↗' : '!'}</span><div><b>${escapeHtml(plan.profile)}</b><small>${escapeHtml(plan.engine)} · ${escapeHtml(plan.collective_backend)} · TP ${plan.tensor_parallel} · ${plan.max_num_seqs} sequences · ${plan.kv_cache_dtype === 'fp8_e4m3' ? 'FP8 KV' : 'automatic KV'}</small>${details}</div>`;
   } catch (error) {
     launchPerformance = null;
@@ -744,7 +747,7 @@ async function checkLaunchFit() {
     launchFit = fit;
     const requestedNodes = payload.tensor_parallel * payload.pipeline_parallel;
     const parallelFits = requestedNodes >= launchFit.minimum_nodes && requestedNodes <= launchFit.cluster_nodes;
-    const canLaunch = launchFit.fits && parallelFits;
+    const canLaunch = launchFit.fits && parallelFits && launchPerformance?.engine_executable !== false;
     $('launch-fit').className = `fit-result ${canLaunch ? 'fit' : 'no-fit'}`;
     const accelerators = count => `${count} accelerator${count === 1 ? '' : 's'}`;
     let decision = `Fits on ${accelerators(requestedNodes)}`;
@@ -761,6 +764,9 @@ async function checkLaunchFit() {
     } else if (!parallelFits) {
       decision = requestedNodes < launchFit.minimum_nodes ? `Use at least ${accelerators(launchFit.minimum_nodes)}` : `Only ${accelerators(launchFit.cluster_nodes)} available`;
       detail = `TP ${payload.tensor_parallel} × PP ${payload.pipeline_parallel} selects ${accelerators(requestedNodes)}`;
+    } else if (launchPerformance?.engine_executable === false) {
+      decision = 'Runtime preparation required';
+      detail = launchPerformance.blockers?.join(' ') || launchPerformance.engine_guidance;
     }
     $('launch-fit').innerHTML = `<span class="fit-symbol">${canLaunch ? '✓' : '!'}</span><div><b>${escapeHtml(decision)}</b><small>${escapeHtml(detail)}</small></div>`;
     launchFit.parallel_fits = parallelFits;

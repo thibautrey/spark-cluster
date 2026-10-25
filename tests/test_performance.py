@@ -5,7 +5,7 @@ from spark_cluster.performance import PerformancePlanRequest, build_performance_
 def test_deepseek_v41_plan_uses_tensorfold_dual_rail_findings():
     plan = build_performance_plan(
         PerformancePlanRequest(
-            model_id="deepseek-ai/DeepSeek-V4.1-Flash-1017",
+            model_id="LibertAIDAI/DeepSeek-V4.1-Flash-1017-EXL3-3.5bpw",
             node_count=4,
             topology="ring",
             context_length=262_144,

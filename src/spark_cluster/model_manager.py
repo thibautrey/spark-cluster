@@ -19,6 +19,16 @@ import httpx
 from huggingface_hub import HfApi, hf_hub_download, snapshot_download
 
 from .config import Settings
+from .deepseek_mia import (
+    KV_BYTES_PER_TOKEN_PER_RANK,
+    MANAGED_LAUNCH_BLOCKER,
+    RESIDENT_WEIGHTS_GIB,
+    build_mia_recipe,
+    is_mia_checkpoint,
+)
+from .deepseek_mia import (
+    MODEL_ID as MIA_MODEL_ID,
+)
 from .model_relay import ModelRelay
 from .models import (
     ClusterSnapshot,
@@ -56,6 +66,7 @@ class RepositoryMetadata:
     external_artifacts_bytes: int = 0
     external_artifacts: tuple[str, ...] = ()
     kv_bytes_per_token_bf16: float | None = None
+    commit: str | None = None
 
 
 def safe_repo_parts(repo_id: str) -> tuple[str, ...]:
@@ -175,6 +186,7 @@ class HuggingFaceCatalog:
         return RepositoryMetadata(
             repo_id=repo_id,
             revision=revision,
+            commit=getattr(info, "sha", None),
             repository_bytes=repository_bytes,
             weight_bytes=weight_bytes,
             parameter_count=parameter_count,
@@ -424,9 +436,7 @@ def build_fit_plan(
         bytes_per_token = metadata.kv_bytes_per_token_bf16 * kv_dtype_bytes / 2
         architecture_known = True
     else:
-        bytes_per_token, architecture_known = _kv_bytes_per_token(
-            metadata.config, kv_dtype_bytes
-        )
+        bytes_per_token, architecture_known = _kv_bytes_per_token(metadata.config, kv_dtype_bytes)
     if architecture_known:
         kv_cache_gib = bytes_per_token * request.context_length * request.concurrent_sequences / GIB
         confidence = "architecture"
@@ -474,6 +484,7 @@ def build_fit_plan(
     total_required = full_total
     headroom = full_headroom
     performance_impact = "none"
+    mia_recipe = None
     requirements: list[str] = []
     tradeoffs: list[str] = []
 
@@ -544,6 +555,121 @@ def build_fit_plan(
             f"Engram placement removes about {engram_gib:.1f} GiB from resident model memory."
         )
 
+    if metadata.repo_id == MIA_MODEL_ID:
+        launch_supported = False
+        requirements.append(MANAGED_LAUNCH_BLOCKER)
+        engine = "MIA patched SGLang with DSpark and NVMe Engram"
+        checkpoint_commit = metadata.commit or metadata.revision
+        if (
+            is_mia_checkpoint(metadata.repo_id, checkpoint_commit)
+            and engram_bytes
+            and settings.active_hardware == "dgx-spark"
+        ):
+            physical = (
+                sorted((node.memory.total_gib for node in available_nodes), reverse=True)
+                if available_nodes
+                else [settings.fallback_node_memory_gib] * len(node_capacities)
+            )
+            # The static pool is a recipe-specific budget, not the generic vLLM reserve.
+            # KV is compressed and replicated per TP rank. The pin is allocated even
+            # for a short request, so estimate the complete pool, not only active tokens.
+            candidates = {}
+            for candidate in (3, 4):
+                recipe = build_mia_recipe(
+                    candidate,
+                    request.context_length,
+                    request.concurrent_sequences,
+                    revision=checkpoint_commit,
+                )
+                pool = int(recipe.environment["MAX_TOTAL_TOKENS"])
+                supported = (
+                    request.context_length <= recipe.max_context_length
+                    and request.concurrent_sequences
+                    <= int(recipe.environment["MAX_RUNNING_REQUESTS"])
+                    and request.context_length * request.concurrent_sequences <= pool
+                )
+                capacities = [
+                    value * float(recipe.environment["MEM_FRACTION_STATIC"]) for value in physical
+                ]
+                per_rank_kv = pool * KV_BYTES_PER_TOKEN_PER_RANK / GIB
+                candidate_fits = (
+                    supported
+                    and _node_requirement(
+                        capacities,
+                        candidate,
+                        max(RESIDENT_WEIGHTS_GIB, resident_weights),
+                        per_rank_kv * candidate,
+                    )[0]
+                )
+                candidates[candidate] = (supported, candidate_fits)
+            minimum_nodes = next(
+                (candidate for candidate in (3, 4) if candidates[candidate][1]),
+                3 if candidates[3][0] else 4,
+            )
+            selected = next(
+                (candidate for candidate in (4, 3) if candidates[candidate][1]),
+                4 if len(physical) >= 4 or not candidates[3][0] else 3,
+            )
+            mia_recipe = build_mia_recipe(
+                selected,
+                request.context_length,
+                request.concurrent_sequences,
+                revision=checkpoint_commit,
+            )
+            pool = int(mia_recipe.environment["MAX_TOTAL_TOKENS"])
+            node_capacities = [
+                value * float(mia_recipe.environment["MEM_FRACTION_STATIC"]) for value in physical
+            ]
+            resident_weights = max(RESIDENT_WEIGHTS_GIB, resident_weights)
+            kv_cache_gib = pool * KV_BYTES_PER_TOKEN_PER_RANK / GIB * selected
+            resident_kv = kv_cache_gib
+            runtime_fits, runtime_overhead, total_required, headroom = _node_requirement(
+                node_capacities, selected, resident_weights, resident_kv
+            )
+            runtime_fits = runtime_fits and (
+                request.context_length <= mia_recipe.max_context_length
+                and request.concurrent_sequences
+                <= int(mia_recipe.environment["MAX_RUNNING_REQUESTS"])
+                and request.context_length * request.concurrent_sequences <= pool
+            )
+            minimum_nodes = max(minimum_nodes, 3)
+            ssd_per_node = max(engram_gib / selected, 48 if selected == 4 else 63)
+            placement = "engram-nvme"
+            offloaded_weights = engram_gib
+            detected_format = "MXFP4 experts / FP8 dense (MIA recipe)"
+            detected_bits = None  # Mixed native precision cannot be summarized as uniform FP8.
+            confidence = "architecture"
+            requirements = [item for item in requirements if "TensorFold" not in item]
+            requirements.extend(mia_recipe.prerequisites)
+            requirements.extend(mia_recipe.blockers[1:])
+            notes.extend(
+                [
+                    f"MIA TP{selected} capacity uses the reviewed static fraction "
+                    f"{mia_recipe.environment['MEM_FRACTION_STATIC']}, a ~305 GiB expanded "
+                    "resident footprint (including padding/draft costs), and the complete "
+                    f"{pool:,}-token compressed KV pool at 1670.75 bytes/token/rank. "
+                    "These are recipe estimates, not local runtime measurements.",
+                    "Checkpoint disk size minus Engram understates runtime residency. "
+                    "The packed rank rows also occupy NVMe alongside the original checkpoint.",
+                ]
+            )
+            if request.kv_cache_dtype != "auto":
+                notes.append(
+                    "The reviewed recipe uses its native compressed KV layout; generic KV "
+                    "precision does not rescale it."
+                )
+            if selected == 3 and request.context_length > 32_768:
+                tradeoffs.append(
+                    "TP3 long prompts need head-memory stress testing; 32768 is the "
+                    "unattended default."
+                )
+            kv_dtype = "native-compressed"
+        else:
+            requirements.append(
+                "Resolve the reviewed MIA checkpoint revision and Engram shards on DGX Spark "
+                "before applying its compressed-KV and resident-memory estimates."
+            )
+
     if not runtime_fits and launch_supported and placement == "full-memory" and kv_cache_gib:
         weights_fit = _minimum_nodes(node_capacities, complete_weights_gib, 0)[0]
         if weights_fit <= len(node_capacities):
@@ -590,7 +716,7 @@ def build_fit_plan(
     repository_storage_gib = metadata.repository_bytes / GIB
     runtime_storage_required_gib = (
         metadata.repository_bytes + metadata.external_artifacts_bytes
-    ) / GIB
+    ) / GIB + (ssd_per_node if mia_recipe else 0)
     storage_fits = repository_storage_gib <= storage_available_gib
     runtime_storage_fits = runtime_storage_required_gib <= storage_available_gib
     download_fits = storage_fits
@@ -667,6 +793,10 @@ def build_fit_plan(
     return ModelFitPlan(
         repo_id=request.repo_id,
         revision=request.revision,
+        checkpoint_commit=metadata.commit
+        or (metadata.revision if re.fullmatch(r"[0-9a-f]{40}", metadata.revision) else None),
+        recipe_id=mia_recipe.id if mia_recipe else None,
+        recipe_source_url=mia_recipe.recipe_url if mia_recipe else None,
         architecture=metadata.architecture,
         parameter_count=metadata.parameter_count,
         repository_bytes=metadata.repository_bytes,
@@ -787,16 +917,21 @@ class ModelManager:
                     return await self.fit(request)
                 cached_bytes = previous.repository_bytes
 
+        if request.repo_id == MIA_MODEL_ID and request.revision not in {
+            "main",
+            previous.revision,
+            previous.checkpoint_commit,
+        }:
+            return await self.fit(request)
         previous_sequences = max(1, previous.concurrent_sequences)
         previous_context = max(1, previous.context_length)
-        kv_bytes_per_token = previous.kv_cache_gib * GIB / (
-            previous_context * previous_sequences
-        )
+        kv_bytes_per_token = previous.kv_cache_gib * GIB / (previous_context * previous_sequences)
         if previous.kv_cache_dtype == "fp8_e4m3":
             kv_bytes_per_token *= 2
         metadata = RepositoryMetadata(
             repo_id=request.repo_id,
             revision=request.revision,
+            commit=previous.checkpoint_commit,
             repository_bytes=previous.repository_bytes,
             weight_bytes=previous.weight_bytes,
             parameter_count=previous.parameter_count,
@@ -1190,10 +1325,7 @@ class ModelManager:
         self._start_inventory_refresh(force=seeded)
         with self._inventory_guard:
             inventory = list(self._inventory_cache or ())
-        models = [
-            model.model_copy(update={"loaded": model.id in loaded})
-            for model in inventory
-        ]
+        models = [model.model_copy(update={"loaded": model.id in loaded}) for model in inventory]
         known = {model.id for model in models}
         models.extend(
             LocalModel(id=model_id, source="runtime", loaded=True)

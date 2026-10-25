@@ -171,7 +171,7 @@ def summary(data: dict) -> CatalogModel:
 
 
 class ModelBrowser:
-    planner_version = "catalog-fit-v2"
+    planner_version = "catalog-fit-v3-mia"
 
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -563,6 +563,7 @@ class ModelBrowser:
         return RepositoryMetadata(
             repo_id=repo_id,
             revision=revision,
+            commit=data.get("sha"),
             repository_bytes=sum(size for _, size in files),
             weight_bytes=sum(
                 size for name, size in files if name.lower().endswith(WEIGHT_SUFFIXES)

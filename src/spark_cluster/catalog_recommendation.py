@@ -6,9 +6,17 @@ from datetime import UTC, date, datetime
 
 from pydantic import BaseModel, Field
 
+from .deepseek_mia import (
+    MODEL_ID,
+    MODEL_REVISION,
+    RECIPE_SOURCE,
+)
+from .deepseek_mia import (
+    REVIEWED as MIA_REVIEWED,
+)
 from .spark_optimization import SparkOptimization
 
-RECOMMENDATION_VERSION = "evidence-v1"
+RECOMMENDATION_VERSION = "evidence-v2-mia"
 # Exact model revisions inspected on the review date. These are community reports,
 # not certifications. A changed revision never inherits an old recipe's priority.
 REPORTS = {
@@ -44,6 +52,18 @@ REPORTS = {
         "source": "https://github.com/tonyd2wild/DeepSeek-V4.1-Flash-vLLM-DGX-Spark",
         "note": "Four-Spark recipe reported; does not fit two Sparks. Requires official "
         "1017 Engram shards. Published throughput depends on prompt, concurrency and RoCE rails.",
+    },
+    MODEL_ID: {
+        "commit": MODEL_REVISION,
+        "nodes": [3, 4],
+        "runtime": "MIA patched SGLang with DSpark and NVMe Engram",
+        "source": RECIPE_SOURCE,
+        "reviewed": MIA_REVIEWED,
+        "note": "Native MXFP4 experts / FP8 dense weights need at least three Sparks, "
+        "~305 GiB resident plus local NVMe Engram. TP3 unattended context 32k; TP4 1M "
+        "context and 16 scheduler slots share an 8M-token KV pool. Published TP4 prose "
+        "87.7 tok/s c1 and 342.7 aggregate c16 require the production overlay and fabric. "
+        "Stock SGLang and the managed vLLM launcher do not implement this recipe.",
     },
 }
 REVIEWED = date(2026, 10, 23)
@@ -129,12 +149,13 @@ def recommend(data: dict, spark: SparkOptimization, today: date | None = None) -
         result.reasons.extend(spark.reasons)
     report = REPORTS.get(repo_id)
     if report:
+        reviewed = report.get("reviewed", REVIEWED)
         result.sources.append(report["source"])
-        result.reviewed = REVIEWED.isoformat()
+        result.reviewed = reviewed.isoformat()
         result.reported_nodes = report["nodes"]
         result.runtime = report["runtime"]
         result.caveats.append(report["note"])
-        age = ((today or datetime.now(UTC).date()) - REVIEWED).days
+        age = ((today or datetime.now(UTC).date()) - reviewed).days
         if data.get("sha") == report["commit"] and 0 <= age <= 30:
             result.priority, result.evidence = 2, 2
             result.label = "Documented Spark recipe"

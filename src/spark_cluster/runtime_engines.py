@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 
 from .config import Settings
+from .deepseek_mia import MANAGED_LAUNCH_BLOCKER, MODEL_ID
 from .models import ModelLaunchRequest, RuntimeExecutionPlan
 
 
@@ -85,6 +86,8 @@ def capabilities(settings: Settings) -> dict[str, EngineCapability]:
 def recommended_engine(model_id: str, settings: Settings) -> tuple[str, list[str]]:
     model = model_id.casefold()
     notes: list[str] = []
+    if model_id == MODEL_ID and settings.active_hardware == "dgx-spark":
+        return "sglang", [MANAGED_LAUNCH_BLOCKER]
     if "deepseek-v4.1" in model or "deepseek_v4.1" in model:
         notes.append(
             "TensorFold is a specialized measured option, but this installation has no "
@@ -108,6 +111,8 @@ def build_execution_plan(
         warnings.extend(recommendations)
     engine = matrix[engine_id]
     blockers = list(engine.blockers)
+    if request.model_id == MODEL_ID:
+        blockers.append(MANAGED_LAUNCH_BLOCKER)
     ranks = request.tensor_parallel * request.pipeline_parallel
     if not engine.image:
         blockers.append(f"No pinned {engine.name} image is configured.")
