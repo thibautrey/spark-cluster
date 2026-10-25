@@ -611,7 +611,13 @@ def test_runtime_ui_uses_guided_prepare_launch_workflows(tmp_path):
         page = client.get("/").text
         app_script = client.get("/assets/app.js").text
         runtime_script = client.get("/assets/runtimes.js").text
-    assert "runtime-guide-v1" in page
+        styles = client.get("/assets/app.css").text
+    assert "runtime-workspace-v1" in page
+    assert 'id="runtime-pool-overview"' in page
+    assert 'data-runtime-tab="engines"' in page
+    assert 'data-runtime-tab="packages"' in page
+    assert 'placeholder="Search runtimes…"' in page
+    assert 'id="runtime-engine-filter"' in page
     assert "Prepare and launch" in app_script
     assert "/api/v1/runtime-management/workflows" in app_script
     assert "Set up ${esc(engine.name)}" in runtime_script
@@ -620,6 +626,12 @@ def test_runtime_ui_uses_guided_prepare_launch_workflows(tmp_path):
     assert "Native host ready" in runtime_script
     assert "revealPackageLibrary(true)" in runtime_script
     assert "library.hosts.length === 1" in runtime_script
+    assert "renderPoolOverview" in runtime_script
+    assert "Launch a model ↗" in runtime_script
+    assert "Revalidate" in runtime_script
+    assert "runtimeDescription" in runtime_script
+    assert "runtime-pool-overview" in styles
+    assert "runtime-engine-footer" in styles
 
 
 def test_cluster_dropdown_exposes_global_capacity_context(tmp_path):

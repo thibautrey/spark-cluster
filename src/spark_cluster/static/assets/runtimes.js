@@ -29,6 +29,7 @@
   let timer = null;
   let guides = {};
   let guidedWorkflow = null;
+  let activeRuntimeTab = 'engines';
 
   const visible = () => location.hash === '#runtimes' && !document.hidden;
   const packageTarget = () => field('target').value;
@@ -69,53 +70,119 @@
     document.getElementById('runtime-library-advanced').hidden = true;
   }
 
+  function runtimeDescription(engine) {
+    return ({
+      vllm: 'High-throughput LLM inference on NVIDIA GPUs with continuous batching.',
+      sglang: 'Language and multimodal inference with prefix caching and structured generation.',
+      'llama-cpp': 'Portable GGUF inference for CUDA and native hosts.',
+      tensorfold: 'Specialized model execution for validated sparse and hybrid layouts.',
+      deepinfer: 'Experimental kernels for supported NVIDIA accelerator families.',
+    })[engine.id] || engine.message;
+  }
+
+  function runtimeIcon(engine) {
+    return ({vllm: 'ϟ', sglang: '⌘', 'llama-cpp': 'λ', tensorfold: '◇', deepinfer: '◆'})[engine.id] || '◇';
+  }
+
+  function renderPoolOverview() {
+    const container = document.getElementById('runtime-pool-overview');
+    if (!selectedCluster || !engines) {
+      container.innerHTML = '<div class="empty-state">Choose a compute pool to inspect runtime readiness.</div>';
+      return;
+    }
+    const managed = engines.engines.filter(engine => engine.capability === 'managed_launch');
+    const ready = managed.filter(engine => engine.ready).length;
+    const assigned = Number(selectedCluster.gpu_count || 0);
+    const verified = Math.max(0, ...managed.map(engine => Number(engine.nodes_ready || 0)));
+    const healthy = selectedCluster.status === 'ready' && ready > 0;
+    const units = selectedCluster.kind === 'local-docker'
+      ? `1 host · ${assigned} GPU${assigned === 1 ? '' : 's'}`
+      : `${selectedCluster.nodes?.length || assigned} nodes · ${assigned} GPU${assigned === 1 ? '' : 's'}`;
+    container.innerHTML = `<div class="runtime-pool-identity"><div><span>▣</span><h2>${esc(selectedCluster.name)}</h2><i>⌄</i><em class="${healthy ? 'ready' : 'attention'}">${healthy ? 'Operational' : 'Needs attention'}</em></div><p>${esc(units)} · Automatic placement</p></div>
+      <div class="runtime-pool-stat ready"><strong>${ready}<small> / ${managed.length}</small></strong><span>runtimes ready to launch</span></div>
+      <div class="runtime-pool-stat"><strong>${verified}<small> / ${assigned}</small></strong><span>GPU targets verified · now</span></div>`;
+  }
+
   function engineCard(engine) {
     const guide = guides[engine.id];
     const displayState = guide?.compatible && engine.state === 'blocked' ? 'needs_preparation' : engine.state;
-    const status = guide?.compatible && engine.state === 'blocked'
-      ? 'Setup available'
-      : stateLabels[engine.state] || engine.state;
+    const status = engine.ready ? '✓ Ready to launch' : guide?.compatible ? 'Setup available' : stateLabels[displayState] || displayState;
     const count = engine.nodes_total
-      ? `${engine.nodes_ready}/${engine.nodes_total} node${engine.nodes_total === 1 ? '' : 's'} ready`
-      : guide?.compatible ? 'Guided setup available'
-      : engine.state === 'blocked' ? 'Preparation unavailable' : 'No managed nodes';
-    const action = guidedWorkflow?.engine_id === engine.id && ['queued', 'running'].includes(guidedWorkflow.status)
+      ? `${engine.nodes_ready}/${engine.nodes_total} target${engine.nodes_total === 1 ? '' : 's'} ready`
+      : guide?.compatible ? 'Guided setup available' : 'No managed targets';
+    const activeWorkflow = guidedWorkflow?.engine_id === engine.id;
+    const action = activeWorkflow && ['queued', 'running'].includes(guidedWorkflow.status)
       ? '<button class="primary" type="button" disabled>Preparing…</button>'
-      : guidedWorkflow?.engine_id === engine.id && guidedWorkflow.status === 'failed'
+      : activeWorkflow && guidedWorkflow.status === 'failed'
         ? `<button class="primary" type="button" data-retry-workflow="${esc(guidedWorkflow.id)}">Retry failed step</button>`
-      : engine.active_job_id
-      ? '<button class="primary" type="button" disabled>Preparing…</button>'
-      : engine.ready && !guide?.update_available
-        ? '<a class="primary" href="#launch">Open Launch</a>'
-        : guide?.compatible
-          ? `<button class="primary" type="button" data-guide-engine="${esc(engine.id)}">${guide.update_available ? 'Update runtime' : `Set up ${esc(engine.name)}`}</button>`
-        : engine.prepare_supported
-          ? `<button class="primary" type="button" data-prepare-engine="${esc(engine.id)}">Prepare on this pool</button>`
-          : '<a class="secondary" href="#launch">Choose compatible model</a>';
-    const nodes = engine.nodes.length ? `<details class="runtime-engine-nodes"><summary>${esc(count)}</summary><div class="runtime-node-status-list">${engine.nodes.map(node => `<span><b>${esc(node.address)}</b><i>${esc(node.status.replaceAll('_', ' '))}</i></span>`).join('')}</div></details>` : '';
+        : engine.active_job_id
+          ? '<button class="primary" type="button" disabled>Preparing…</button>'
+          : engine.ready && !guide?.update_available
+            ? '<button class="secondary" type="button" data-runtime-revalidate>Revalidate</button><a class="primary" href="#launch">Launch a model ↗</a>'
+            : guide?.compatible
+              ? `<button class="primary" type="button" data-guide-engine="${esc(engine.id)}">${guide.update_available ? 'Update runtime' : `Set up ${esc(engine.name)}`}</button>`
+              : engine.prepare_supported
+                ? `<button class="primary" type="button" data-prepare-engine="${esc(engine.id)}">Prepare on this pool</button>`
+                : '<a class="secondary" href="#launch">Choose compatible model</a>';
+    const nodeDots = engine.nodes_total
+      ? `<span class="runtime-node-summary">${engine.nodes.map(node => `<i class="${esc(node.status)}"></i>`).join('')}<b>${esc(count)}</b></span>`
+      : `<span class="runtime-node-summary"><b>${esc(count)}</b></span>`;
+    const nodes = engine.nodes.length ? `<details class="runtime-engine-nodes"><summary>${nodeDots}<i>⌄</i></summary><div class="runtime-node-status-list">${engine.nodes.map(node => `<span><b>${esc(node.address)}</b><i>${esc(node.status.replaceAll('_', ' '))}</i></span>`).join('')}</div></details>` : `<div class="runtime-engine-nodes empty">${nodeDots}</div>`;
     const progress = engine.active_job_id ? `<div class="runtime-engine-progress"><div><i style="width:${Number(engine.active_job_progress || 0)}%"></i></div><span>${Number(engine.active_job_progress || 0).toFixed(0)}%</span></div>` : '';
-    const workflow = guidedWorkflow?.engine_id === engine.id
+    const workflow = activeWorkflow
       ? `<div class="runtime-guide-progress">${guidedWorkflow.steps.map(step => `<span class="${esc(step.status)}"><i></i><b>${esc(step.title)}</b><small>${esc(step.message)}</small></span>`).join('')}</div>${guidedWorkflow.error ? `<p class="runtime-guide-error">${esc(guidedWorkflow.error)}</p>` : ''}`
       : '';
-    const technical = guide?.digest ? `<details class="runtime-guide-technical"><summary>Technical details</summary><code>${esc(guide.image)}@${esc(guide.digest)}</code></details>` : '';
-    const message = guide?.summary || engine.message;
-    const version = guide?.version ? `${guide.version} · stable recommendation` : engine.image || 'Configuration required';
-    return `<article class="runtime-engine-card" data-engine="${esc(engine.id)}">
-      <div class="runtime-engine-head"><div class="runtime-engine-title"><b>${esc(engine.name)}</b><code>${esc(version)}</code></div><span class="runtime-engine-status ${esc(displayState)}">${esc(status)}</span></div>
-      <div class="runtime-engine-body"><div class="runtime-engine-copy"><p>${esc(message)}</p><small>${esc(count)}</small></div><div class="runtime-engine-actions">${action}</div></div>
-      ${progress}${workflow}${nodes}${technical}
+    const version = guide?.version || engine.nodes.find(node => node.installed_version)?.installed_version || 'Configuration required';
+    const technical = `<details class="runtime-guide-technical"><summary>Technical details</summary><div><code>${esc(engine.image || guide?.image || 'No configured image')}</code>${guide?.digest ? `<code>${esc(guide.digest)}</code>` : ''}<p>${esc(engine.message)}</p></div></details>`;
+    return `<article class="runtime-engine-card ${esc(displayState)}" data-engine="${esc(engine.id)}">
+      <div class="runtime-engine-main"><span class="runtime-engine-icon ${esc(engine.id)}">${runtimeIcon(engine)}</span><div class="runtime-engine-title"><div><b>${esc(engine.name)}</b></div><code>${esc(version)} · configured version</code></div><span class="runtime-engine-status ${esc(displayState)}">${esc(status)}</span></div>
+      <p class="runtime-engine-description">${esc(runtimeDescription(engine))}</p>
+      ${progress}${workflow}
+      <div class="runtime-engine-footer">${nodes}<div class="runtime-engine-actions">${action}</div></div>
+      ${technical}
     </article>`;
   }
 
+  function visibleEngines() {
+    if (!engines) return [];
+    const query = document.getElementById('runtime-engine-search').value.trim().toLowerCase();
+    const filter = document.getElementById('runtime-engine-filter').value;
+    return engines.engines.filter(engine => engine.capability === 'managed_launch' || engine.image).filter(engine => {
+      const matches = !query || `${engine.name} ${engine.id}`.toLowerCase().includes(query);
+      const stateMatches = filter === 'all' || (filter === 'ready' ? engine.ready : !engine.ready);
+      return matches && stateMatches;
+    });
+  }
+
+  function showRuntimeTab(tab) {
+    activeRuntimeTab = tab;
+    document.querySelectorAll('[data-runtime-tab]').forEach(button => button.classList.toggle('active', button.dataset.runtimeTab === tab));
+    const engineContent = document.getElementById('runtime-readiness-content');
+    const packageContent = document.getElementById('runtime-library-advanced');
+    engineContent.hidden = tab !== 'engines' || !engines;
+    packageContent.hidden = tab !== 'packages';
+    if (tab === 'packages') {
+      packageContent.open = true;
+      renderLibrary();
+      if (!selectedRuntime && library.runtimes.length) {
+        const platform = targetPlatform();
+        selectRuntime(library.runtimes.find(runtime => runtime.platforms.includes(platform)) || library.runtimes[0]);
+      }
+    }
+  }
+
   function renderEngines() {
-    const visibleEngines = engines.engines.filter(engine => engine.capability === 'managed_launch' || engine.image);
-    document.getElementById('runtime-engine-list').innerHTML = visibleEngines.length
-      ? visibleEngines.map(engineCard).join('')
-      : '<div class="empty-state"><b>No runtime engine configured</b><span>Configure a pinned engine image before preparing this pool.</span></div>';
+    const visible = visibleEngines();
+    const managed = engines.engines.filter(engine => engine.capability === 'managed_launch' || engine.image);
+    document.getElementById('runtime-engine-count').textContent = managed.length;
+    document.getElementById('runtime-package-count').textContent = library.runtimes.length;
+    document.getElementById('runtime-engine-list').innerHTML = visible.length
+      ? visible.map(engineCard).join('')
+      : '<div class="empty-state"><b>No runtimes match this view</b><span>Try another state or search.</span></div>';
     document.getElementById('runtime-readiness-state').hidden = true;
-    document.getElementById('runtime-readiness-content').hidden = false;
     document.getElementById('runtime-readiness-activity').hidden = true;
-    document.getElementById('runtime-library-advanced').hidden = false;
+    renderPoolOverview();
+    showRuntimeTab(activeRuntimeTab);
   }
 
   function targetPlatform() {
@@ -157,6 +224,7 @@
   }
 
   function renderLibrary() {
+    document.getElementById('runtime-package-count').textContent = library.runtimes.length;
     renderPackageTargets();
     renderHosts();
     const platform = targetPlatform();
@@ -231,9 +299,9 @@
 
   function revealPackageLibrary(open = false) {
     const advanced = document.getElementById('runtime-library-advanced');
-    advanced.hidden = false;
-    if (open) advanced.open = true;
+    advanced.open = true;
     renderLibrary();
+    if (open) showRuntimeTab('packages');
     const platform = targetPlatform();
     if (platform && (!selectedRuntime || !selectedRuntime.platforms.includes(platform))) {
       const compatible = library.runtimes.find(runtime => runtime.platforms.includes(platform));
@@ -294,6 +362,10 @@
     if (event.target.closest('[data-runtime-retry]')) void refresh(false);
   });
   document.getElementById('runtime-engine-list').addEventListener('click', async event => {
+    if (event.target.closest('[data-runtime-revalidate]')) {
+      await refresh(true);
+      return;
+    }
     const guided = event.target.closest('[data-guide-engine]');
     const retry = event.target.closest('[data-retry-workflow]');
     if (retry) {
@@ -348,11 +420,6 @@
       renderEngines();
     }
   }
-  document.getElementById('runtime-library-advanced').addEventListener('toggle', event => {
-    if (!event.currentTarget.open || selectedRuntime || !library.runtimes.length) return;
-    const platform = targetPlatform();
-    selectRuntime(library.runtimes.find(runtime => runtime.platforms.includes(platform)) || library.runtimes[0]);
-  });
   field('list').addEventListener('click', event => {
     const button = event.target.closest('[data-runtime]');
     if (button) selectRuntime(library.runtimes.find(item => item.id === button.dataset.runtime));
@@ -423,6 +490,14 @@
       await api(`${base}/hosts/${encodeURIComponent(button.dataset.removeHost)}`, {method: 'DELETE'});
       await refresh();
     } catch (error) { field('page').textContent = error.message; button.disabled = false; }
+  });
+
+  document.querySelector('.runtime-workspace-tabs').addEventListener('click', event => {
+    const button = event.target.closest('[data-runtime-tab]');
+    if (button) showRuntimeTab(button.dataset.runtimeTab);
+  });
+  ['runtime-engine-search', 'runtime-engine-filter'].forEach(id => {
+    document.getElementById(id).addEventListener(id.endsWith('search') ? 'input' : 'change', renderEngines);
   });
 
   const checkVisibility = () => { clearTimeout(timer); if (visible()) void refresh(); };
