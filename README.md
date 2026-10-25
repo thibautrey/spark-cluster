@@ -95,6 +95,11 @@ The setup flow is deliberately sequential:
 5. **Install** — deploy pinned k3s, GPU scheduling, NFS model storage, the bridge, dashboard, and telemetry agents.
 6. **Verify** — confirm GPU registration, workloads, storage, dashboard health, and a cross-node read/write check.
 
+For one Apple Silicon Mac, the same discovery, dedicated-key enrollment and readiness flow switches
+to native-host registration after Metal is detected. It never sends Linux, k3s or NVIDIA commands to
+the Mac. The Runtimes screen then opens the native package library even when no Linux compute pool
+exists, selects the registered Mac, and offers checksum-verified macOS ARM64 packages.
+
 For direct links, a green result requires the expected point-to-point subnet, sufficient negotiated speed, successful interface-bound peer checks, and a neighbor MAC matching the remote fabric interface. Carrier alone stays amber. See the [cluster setup guide](docs/cluster-setup.md) for access, networking, supported layouts, recovery, and security boundaries.
 
 ### Inference activity

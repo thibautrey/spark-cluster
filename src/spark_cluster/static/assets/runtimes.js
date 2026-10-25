@@ -141,9 +141,12 @@
     const hostOptions = library.hosts.map(host => `<option value="host:${esc(host.id)}">Standalone host · ${esc(host.name)}</option>`).join('');
     field('target').innerHTML = `<option value="">Select a compute pool or native host</option>${poolOption}${hostOptions}`;
     const values = [...field('target').options].map(item => item.value);
+    const fallback = selectedCluster
+      ? `pool:${selectedCluster.id}`
+      : library.hosts.length === 1 ? `host:${library.hosts[0].id}` : '';
     field('target').value = current && values.includes(current)
       ? current
-      : selectedCluster ? `pool:${selectedCluster.id}` : '';
+      : fallback;
   }
 
   function renderHosts() {
@@ -226,24 +229,49 @@
     void versions();
   }
 
+  function revealPackageLibrary(open = false) {
+    const advanced = document.getElementById('runtime-library-advanced');
+    advanced.hidden = false;
+    if (open) advanced.open = true;
+    renderLibrary();
+    const platform = targetPlatform();
+    if (platform && (!selectedRuntime || !selectedRuntime.platforms.includes(platform))) {
+      const compatible = library.runtimes.find(runtime => runtime.platforms.includes(platform));
+      if (compatible) selectRuntime(compatible);
+    }
+  }
+
   async function refresh(interactive = false) {
     if (refreshing || !visible()) return;
     refreshing = true;
     clearTimeout(timer);
     showState('loading', 'Checking runtime readiness', 'Inspecting the selected compute pool.');
     try {
-      const clusterState = await api('/api/v1/clusters', {promptForAdmin: false});
+      const [clusterState, libraryState] = await Promise.all([
+        api('/api/v1/clusters', {promptForAdmin: false}),
+        api(base, {promptForAdmin: false}),
+      ]);
+      library = libraryState;
       selectedCluster = resolveSelectedCluster(clusterState);
       if (!clusters.length) {
-        showState('empty', 'No compute pool configured', 'Add a compute pool before preparing an inference engine.', '<a class="primary runtime-state-action" href="#setup">Open Compute pools</a>');
+        const hasNativeHost = library.hosts.length > 0;
+        showState(
+          'empty',
+          hasNativeHost ? 'Native host ready' : 'No compute pool configured',
+          hasNativeHost
+            ? 'Choose a verified native package below for the registered Mac.'
+            : 'Add a compute pool or register a trusted macOS or Windows host below.',
+          '<a class="primary runtime-state-action" href="#setup">Open Compute pools</a>',
+        );
+        revealPackageLibrary(true);
         return;
       }
       if (!selectedCluster) {
-        showState('empty', 'Choose one compute pool', 'Runtime readiness is evaluated for one explicit destination. Use the pool selector above.');
+        showState('empty', 'Choose one compute pool', 'Managed runtime readiness needs one pool. Native host packages remain available below.');
+        revealPackageLibrary(Boolean(library.hosts.length));
         return;
       }
       engines = await api(`${management}/engines?cluster_id=${encodeURIComponent(selectedCluster.id)}`, {promptForAdmin: interactive});
-      library = await api(base, {promptForAdmin: false});
       const managed = engines.engines.filter(engine => engine.capability === 'managed_launch');
       const results = await Promise.allSettled(managed.map(engine => api(`${management}/guide?cluster_id=${encodeURIComponent(selectedCluster.id)}&engine_id=${encodeURIComponent(engine.id)}`, {promptForAdmin: false})));
       guides = Object.fromEntries(results.flatMap((result, index) => result.status === 'fulfilled' ? [[managed[index].id, result.value]] : []));

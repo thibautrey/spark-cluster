@@ -363,17 +363,20 @@ async def test_registers_fingerprint_pinned_native_host_and_detects_macos(librar
 
     transport = NativeTransport()
     library.prerequisites.setup.transport = transport
-    host = await library.register_host(
-        RuntimeHostRequest(
-            name="Studio Mac",
-            address="192.168.50.30",
-            username="thibaut",
-            fingerprint="SHA256:" + "A" * 43,
-        )
+    request = RuntimeHostRequest(
+        name="Studio Mac",
+        address="192.168.50.30",
+        username="thibaut",
+        fingerprint="SHA256:" + "A" * 43,
     )
+    host = await library.register_host(request)
     assert host["platform"] == "darwin/arm64"
     assert transport.trusted[0].fingerprint == "SHA256:" + "A" * 43
     assert (await library.state())["hosts"][0]["id"] == host["id"]
+    repeated = await library.register_host(request.model_copy(update={"name": "Mac Studio"}))
+    assert repeated["id"] == host["id"]
+    assert repeated["name"] == "Mac Studio"
+    assert len((await library.state())["hosts"]) == 1
     await library.remove_host(host["id"])
     assert (await library.state())["hosts"] == []
 

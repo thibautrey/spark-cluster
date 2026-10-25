@@ -85,7 +85,11 @@ class FakeTransport:
         self.architecture = "aarch64"
         self.machine_kind = "dgx-spark"
         self.platform = "linux"
+        self.setup_strategy = "k3s-cluster"
         self.install_supported = True
+        self.accelerators = ["NVIDIA GB10"]
+        self.accelerator_backend = "cuda"
+        self.accelerator_vendor = "nvidia"
         self.k3s = False
         self.fabric = True
         self.uploaded = False
@@ -111,11 +115,11 @@ class FakeTransport:
                     "gpu": "NVIDIA GB10",
                     "platform": self.platform,
                     "machine_kind": self.machine_kind,
-                    "setup_strategy": "k3s-cluster",
+                    "setup_strategy": self.setup_strategy,
                     "install_supported": self.install_supported,
-                    "accelerators": ["NVIDIA GB10"],
-                    "accelerator_backend": "cuda",
-                    "accelerator_vendor": "nvidia",
+                    "accelerators": self.accelerators,
+                    "accelerator_backend": self.accelerator_backend,
+                    "accelerator_vendor": self.accelerator_vendor,
                     "driver": "580.0",
                     "memory_gib": 128,
                     "available_gib": 110,
@@ -569,18 +573,55 @@ def test_machine_classification(system, vendor, names, arch, kind, strategy, sup
 
 
 @pytest.mark.asyncio
-async def test_native_platform_blocks_bootstrap_without_dgx_checks(tmp_path):
+async def test_native_macos_preflight_allows_registration_without_linux_checks(tmp_path):
     store = SnapshotStore(tmp_path / "state.db")
     remote = FakeTransport()
     remote.machine_kind = "mac-apple-silicon"
     remote.platform = "darwin"
+    remote.setup_strategy = "metal-agent"
     remote.install_supported = False
+    remote.accelerators = ["Apple M2 Max"]
+    remote.accelerator_backend = "metal"
+    remote.accelerator_vendor = "apple"
     service = ClusterSetupService(settings(tmp_path), store, remote)
     result = await service.inspect_hardware(plan(1))
-    assert any(c.code == "platform" and c.status == "error" for c in result["checks"])
+    assert any(c.code == "platform" and c.status == "pass" for c in result["checks"])
     assert not any(c.code in {"fabric", "sudo", "toolkit"} for c in result["checks"])
+    assert result["nodes"][0]["setup_mode"] == "native-macos"
+    assert result["nodes"][0]["setup_supported"] is True
     assert result["topology"] is None
     assert not remote.uploaded
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_native_macos_setup_registers_host_without_running_linux_installer(tmp_path):
+    store = SnapshotStore(tmp_path / "state.db")
+    remote = FakeTransport()
+    remote.machine_kind = "mac-apple-silicon"
+    remote.platform = "darwin"
+    remote.setup_strategy = "metal-agent"
+    remote.install_supported = False
+    remote.accelerators = ["Apple M2 Max"]
+    remote.accelerator_backend = "metal"
+    remote.accelerator_vendor = "apple"
+    service = ClusterSetupService(settings(tmp_path), store, remote)
+    registered = []
+
+    async def register(name, node):
+        registered.append((name, deepcopy(node)))
+        return {"id": "host-" + "a" * 12, "platform": "darwin/arm64"}
+
+    service.on_native_host_ready = register
+    job = await terminal(service, await service.launch(plan(1)))
+    assert job.status == "ready"
+    assert job.mode == "native-macos"
+    assert job.dashboard_url == "#runtimes"
+    assert [step.id for step in job.steps] == ["preflight", "native-register"]
+    assert registered[0][0] == "test-cluster"
+    assert registered[0][1].address == "192.168.50.10"
+    assert not remote.uploaded
+    assert not any("apt-get" in script or "get.k3s.io" in script for script in remote.scripts)
     store.close()
 
 
@@ -594,4 +635,7 @@ def test_adaptive_onboarding_hides_dgx_controls_initially():
     assert 'id="setup-sync-guide" hidden' in page
     assert "function requiresDgxFabric()" in script
     assert "metal-agent" in script and "windows-agent" in script
+    assert "isNativeMacSetup" in script
+    assert "Register Mac" in script
+    assert 'id="setup-ready-summary"' in page
     assert "setup-check-machine-summary" in page

@@ -37,7 +37,7 @@
         </header>
 
         <section class="panel runtime-library" id="runtimes" data-route-view="runtimes">
-          <div class="panel-heading"><div><h2>Runtime readiness</h2><p>Prepare the engines required to launch models on this compute pool.</p></div></div>
+          <div class="panel-heading"><div><h2>Runtime readiness</h2><p>Prepare engines for compute pools and trusted native hosts.</p></div></div>
           <div class="runtime-readiness-state loading" id="runtime-readiness-state" role="status" aria-live="polite"><span class="runtime-state-icon" aria-hidden="true">…</span><div><b>Checking runtime readiness</b><small>Inspecting the selected compute pool.</small></div></div>
           <div id="runtime-readiness-content" hidden>
             <div class="runtime-engine-list" id="runtime-engine-list"></div>
@@ -121,7 +121,7 @@
           <div class="setup-page" data-setup-page="2" hidden>
             <div class="setup-check-head"><div><h3>Readiness & assisted fixes</h3><p class="setup-note">Checks adapt to the detected OS, accelerator backend, memory, storage, access method and network topology.</p></div><button class="secondary" id="setup-check" type="button">Run checks</button></div>
             <div id="setup-check-machine-summary" class="setup-machine-summary"></div><div id="setup-checks" class="setup-checks"><div class="empty-state">Run checks before installing.</div></div>
-            <div class="setup-callout"><b>Review the installation</b><p id="setup-review">Select machines first.</p><p id="setup-install-description">The installation plan will adapt to the detected machine type. Unsupported platforms are never given Linux or DGX-specific commands.</p><label class="setup-checkbox"><input id="setup-approve" type="checkbox" /> Install the proposed services on the selected machines.</label></div>
+            <div class="setup-callout"><b id="setup-review-title">Review the installation</b><p id="setup-review">Select machines first.</p><p id="setup-install-description">The installation plan will adapt to the detected machine type. Unsupported platforms are never given Linux or DGX-specific commands.</p><label class="setup-checkbox"><input id="setup-approve" type="checkbox" /> <span id="setup-approve-label">Install the proposed services on the selected machines.</span></label></div>
           </div>
           <div class="setup-page" data-setup-page="3" hidden>
             <div class="setup-check-head"><div><h3 id="setup-job-title">Installing compute pool services</h3><p class="setup-note">Progress is saved automatically. After an interruption, resume to verify and reconcile the configuration.</p></div><span class="pill" id="setup-job-status">queued</span></div>
@@ -129,7 +129,7 @@
             <div id="setup-job-checks" class="setup-checks"></div>
             <div class="setup-recovery" id="setup-recovery" hidden><p id="setup-job-error"></p><button class="primary" id="setup-resume" type="button">Retry / resume setup</button><button class="secondary" id="setup-revise" type="button">Revise plan</button></div>
           </div>
-          <div class="setup-page setup-ready" data-setup-page="4" hidden><span class="setup-success">✓</span><h3>Your compute pool is ready</h3><p>Machine registration, accelerator scheduling, telemetry and model storage passed verification.</p><p class="setup-note">Next, add a model and launch it to verify inference and the selected runtime and GPU placement under load.</p><a class="primary setup-link" id="setup-open" href="#models">Open compute pool dashboard →</a><button class="secondary" id="setup-new" type="button">Configure another compute pool</button></div>
+          <div class="setup-page setup-ready" data-setup-page="4" hidden><span class="setup-success">✓</span><h3>Your compute pool is ready</h3><p id="setup-ready-summary">Machine registration, accelerator scheduling, telemetry and model storage passed verification.</p><p class="setup-note" id="setup-ready-note">Next, add a model and launch it to verify inference and the selected runtime and GPU placement under load.</p><a class="primary setup-link" id="setup-open" href="#models">Open compute pool dashboard →</a><button class="secondary" id="setup-new" type="button">Configure another compute pool</button></div>
           <div class="setup-footer" id="setup-footer" hidden><span id="setup-summary">Select the machines to configure.</span><div><button class="secondary" id="setup-back" type="button" hidden>Back</button><button class="primary" id="setup-next" type="button">Choose machines →</button></div></div>
               </div>
             </section>
@@ -510,9 +510,9 @@
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=adaptive-pools-v1"></script>
     <script src="/assets/catalog.js?v=overview-model-sheet-v2"></script>
-    <script src="/assets/setup.js?v=automated-ssh-bootstrap-v1"></script>
+    <script src="/assets/setup.js?v=native-macos-onboarding-v1"></script>
     <script src="/assets/pool.js?v=adaptive-pools-v1" defer></script>
-    <script src="/assets/runtimes.js?v=runtime-guide-v1" defer></script>
+    <script src="/assets/runtimes.js?v=native-host-library-v1" defer></script>
     <script src="/assets/inference.js?v=model-instance-scale-v1" defer></script>
 </body>
 </html>

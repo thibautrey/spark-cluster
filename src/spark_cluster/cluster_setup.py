@@ -41,6 +41,10 @@ STEPS = [
     ("dashboard", "Install dashboard & runtime controls"),
     ("verify", "Verify cluster readiness"),
 ]
+NATIVE_MAC_STEPS = [
+    ("preflight", "Check Apple Silicon & Metal"),
+    ("native-register", "Register trusted macOS runtime host"),
+]
 SYNC_GUIDE = "https://docs.nvidia.com/sync/latest/cluster-assistant.html"
 BOOTSTRAP_TTL = timedelta(minutes=15)
 BOOTSTRAP_COMMENT = re.compile(r"^[a-z0-9-]{1,80}$")
@@ -253,6 +257,7 @@ class ClusterSetupService:
         self.discovery_lock = asyncio.Lock()
         self.bootstrap_lock = asyncio.Lock()
         self.on_cluster_ready: Callable[[SetupJob], Awaitable[None]] | None = None
+        self.on_native_host_ready: Callable[[str, SetupNode], Awaitable[dict]] | None = None
         self.last_hardware_topology = None
         self.last_machine_facts: dict[str, dict] = {}
         self.bootstrap_path = settings.setup_state_path / "bootstrap-sessions.json"
@@ -721,6 +726,14 @@ class ClusterSetupService:
             platform_name = data.get("platform", "unknown")
             accelerators = data.get("accelerators", [])
             backend = data.get("accelerator_backend", "cpu")
+            native_macos = (
+                data.get("setup_strategy") == "metal-agent"
+                and platform_name == "darwin"
+                and kind == "mac-apple-silicon"
+                and backend == "metal"
+            )
+            data["setup_supported"] = bool(data.get("install_supported") or native_macos)
+            data["setup_mode"] = "native-macos" if native_macos else "compute-pool"
             check(
                 "accelerator",
                 bool(accelerators),
@@ -732,12 +745,14 @@ class ClusterSetupService:
             )
             check(
                 "platform",
-                data.get("install_supported", False),
-                f"{data.get('os') or platform_name} · {kind}",
+                data["setup_supported"],
                 (
-                    "Automated installation currently supports apt-based Linux with NVIDIA GPUs. "
-                    "For macOS, Windows or ROCm, connect a separately configured runtime "
-                    "through an existing pool controller."
+                    f"{data.get('os') or platform_name} · {kind}"
+                    + (" · native Metal host" if native_macos else "")
+                ),
+                (
+                    "Use Apple Silicon with Metal, or an apt-based Linux host with NVIDIA GPUs. "
+                    "Windows and ROCm hosts still require a separately configured runtime."
                 ),
             )
             minimum_memory = 100 if kind == "dgx-spark" else 8
@@ -786,6 +801,24 @@ class ClusterSetupService:
                 abs(time.time() - data["clock"]) < 60,
                 "System clock is synchronized",
                 "Enable NTP and correct the system clock.",
+            )
+        native_nodes = [
+            node
+            for node in request.nodes
+            if facts.get(node.address, {}).get("setup_mode") == "native-macos"
+        ]
+        if native_nodes and (len(native_nodes) != 1 or len(request.nodes) != 1):
+            checks.append(
+                SetupCheck(
+                    node="cluster",
+                    code="native-topology",
+                    status="error",
+                    message="Register one native macOS host at a time",
+                    remedy=(
+                        "Create this Metal host first, then repeat the flow for another Mac. "
+                        "Native hosts do not join the Linux k3s topology."
+                    ),
+                )
             )
         self.last_machine_facts = facts
         distributed_dgx = (
@@ -961,7 +994,10 @@ class ClusterSetupService:
             if job is None:
                 raise KeyError(job_id)
             self._no_active_job()
-            if job.mode != self.mode or job.status not in {"blocked", "failed"}:
+            compatible_mode = job.mode == self.mode or (
+                self.mode == "ssh" and job.mode == "native-macos"
+            )
+            if not compatible_mode or job.status not in {"blocked", "failed"}:
                 raise SetupFailure(
                     "Only an interrupted or failed setup in the same mode can resume"
                 )
@@ -985,16 +1021,58 @@ class ClusterSetupService:
         try:
             job.status = "running"
             self.save(job)
-            for current in job.steps:
+            current = job.steps[0]
+            current.status = "running"
+            self.log(job, current.label)
+            job.checks = await self._preflight(job.request)
+            job.hardware_topology = self.last_hardware_topology
+            if any(check.status == "error" for check in job.checks):
+                job.status = "blocked"
+                raise SetupFailure("Resolve the highlighted diagnostics, then resume setup")
+            current.status = "done"
+            current.message = "Simulated" if self.mode == "demo" else "Verified"
+            self.save(job)
+
+            native_macos = (
+                self.mode != "demo"
+                and len(job.request.nodes) == 1
+                and self.last_machine_facts.get(job.request.nodes[0].address, {}).get("setup_mode")
+                == "native-macos"
+            )
+            if native_macos:
+                job.mode = "native-macos"
+                job.steps[0].label = NATIVE_MAC_STEPS[0][1]
+                job.steps = [
+                    job.steps[0],
+                    SetupStep(id=NATIVE_MAC_STEPS[1][0], label=NATIVE_MAC_STEPS[1][1]),
+                ]
+                current = job.steps[1]
+                current.status = "running"
+                self.log(job, current.label, job.request.nodes[0].address)
+                if not self.on_native_host_ready:
+                    raise SetupFailure("Native macOS host registration is unavailable")
+                await self.on_native_host_ready(job.request.name, job.request.nodes[0])
+                current.status = "done"
+                current.message = "SSH and platform verified"
+                job.dashboard_url = "#runtimes"
+                job.status = "ready"
+                self.log(
+                    job,
+                    "Mac registered. Choose and install a compatible native Metal runtime package.",
+                    job.request.nodes[0].address,
+                )
+                return
+
+            if [step.id for step in job.steps] != [key for key, _ in STEPS]:
+                job.mode = self.mode
+                job.steps = [
+                    job.steps[0],
+                    *(SetupStep(id=key, label=label) for key, label in STEPS[1:]),
+                ]
+            for current in job.steps[1:]:
                 current.status = "running"
                 self.log(job, current.label)
-                if current.id == "preflight":
-                    job.checks = await self._preflight(job.request)
-                    job.hardware_topology = self.last_hardware_topology
-                    if any(check.status == "error" for check in job.checks):
-                        job.status = "blocked"
-                        raise SetupFailure("Resolve the highlighted diagnostics, then resume setup")
-                elif self.mode == "demo":
+                if self.mode == "demo":
                     await asyncio.sleep(0.15)
                 else:
                     await self._apply(job, current.id)

@@ -145,14 +145,16 @@ class RuntimeLibrary:
         }
 
     async def register_host(self, request: RuntimeHostRequest) -> dict:
+        hosts = await asyncio.to_thread(self.store.runtime_objects, "host")
+        existing = next((item for item in hosts if item.get("address") == request.address), None)
         host = RuntimeHost(
-            id=f"host-{uuid4().hex[:12]}",
+            id=existing["id"] if existing else f"host-{uuid4().hex[:12]}",
             name=request.name.strip(),
             address=request.address,
             username=request.username,
             fingerprint=request.fingerprint,
             platform="linux/amd64",  # Replaced by the authenticated platform probe below.
-            created_at=datetime.now(UTC).isoformat(),
+            created_at=existing["created_at"] if existing else datetime.now(UTC).isoformat(),
         )
         await self.prerequisites.setup.transport.trust([host])
         host.platform = await self._detect_host_platform(host)

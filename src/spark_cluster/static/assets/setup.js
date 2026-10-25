@@ -13,6 +13,26 @@ let setupDiscoveryState = 'idle';
 const setupAuth = () => window.adminAuthHeaders();
 const setupPayload = () => ({name: $('setup-name').value.trim(), topology: $('setup-topology').value, nodes: [...setupSelection.values()].map(node => ({address: node.address, username: node.username || '', fingerprint: node.fingerprint, role: node.role || 'worker', fabric_address: node.fabric_address || null}))});
 
+function isNativeMacSetup() {
+  const nodes = [...setupSelection.values()];
+  return nodes.length === 1 && nodes[0].setup_mode === 'native-macos';
+}
+function updateSetupPlanCopy() {
+  const nativeMac = isNativeMacSetup();
+  $('setup-config-title').textContent = nativeMac ? 'Configure native Mac' : 'Configure machines';
+  $('setup-config-note').textContent = nativeMac
+    ? 'Keep the verified SSH connection. The controller will register this Apple Silicon Mac as a trusted native runtime host.'
+    : 'Select the coordinator, then run one command on each machine. Access is verified automatically.';
+  $('setup-review-title').textContent = nativeMac ? 'Review Mac registration' : 'Review the installation';
+  $('setup-install-description').textContent = nativeMac
+    ? 'The Mac will be registered with its pinned SSH identity and detected darwin/arm64 platform. No Linux, k3s or NVIDIA commands will run.'
+    : 'The installation plan will adapt to the detected machine type. Unsupported platforms are never given Linux or DGX-specific commands.';
+  $('setup-approve-label').textContent = nativeMac
+    ? 'Register this Mac as a trusted native runtime host.'
+    : 'Install the proposed services on the selected machines.';
+  if (setupStage === 2) $('setup-next').textContent = nativeMac ? 'Register Mac →' : 'Install compute pool →';
+}
+
 function requiresDgxFabric() {
   return setupSelection.size > 1 && [...setupSelection.values()].every(node => node.machine_kind === 'dgx-spark');
 }
@@ -31,10 +51,14 @@ function adaptSetupForMachines() {
     : nodes.length === 1 ? 'One machine, one or more GPUs: no cluster fabric is required.'
     : 'Machines share a compute pool. Model placement depends on available runtimes; combining GPU memory requires a compatible distributed runtime.';
   const labels = {'dgx-spark':'DGX Spark', 'linux-nvidia':'Linux · NVIDIA', 'linux-amd':'Linux · AMD', 'mac-apple-silicon':'Apple Silicon', 'windows-gpu':'Windows · GPU'};
-  const instructions = {'metal-agent':'macOS: automatic installation is not available. Connect a separately configured Metal runtime through an existing pool controller.', 'windows-agent':'Windows: automatic installation is not available. Connect a separately configured runtime through an existing pool controller.', 'docker-rocm':'ROCm: automatic installation is not available. Connect a separately configured ROCm runtime through an existing pool controller.'};
-  const summary = nodes.map(node => `<article class="setup-diagnostic ${node.install_supported === false ? 'warning' : 'pass'}"><span>⬡</span><div><b>${escapeHtml(node.hostname || node.address)} · ${escapeHtml(labels[node.machine_kind] || node.machine_kind || 'Hardware not inspected')}</b><small>${escapeHtml(node.platform || 'OS detected during readiness check')} · ${escapeHtml(node.architecture || 'architecture pending')}${node.accelerator_backend ? ` · ${escapeHtml(node.accelerator_backend.toUpperCase())}` : ''}</small><p>${escapeHtml((node.accelerators || []).join(', ') || 'GPU detection pending')}${node.memory_gib ? ` · ${Math.round(node.memory_gib)} GiB system/unified memory` : ''}</p><small>${escapeHtml(instructions[node.setup_strategy] || (node.install_supported ? 'Linux NVIDIA provisioning · k3s and GPU runtime' : node.machine_kind ? 'Automatic provisioning is unavailable for this platform.' : 'Run readiness checks to detect the platform and installation path.'))}</small></div></article>`).join('');
+  const instructions = {'metal-agent':'macOS · trusted native host registration and verified Metal runtime packages.', 'windows-agent':'Windows: automatic installation is not available. Connect a separately configured runtime through an existing pool controller.', 'docker-rocm':'ROCm: automatic installation is not available. Connect a separately configured ROCm runtime through an existing pool controller.'};
+  const summary = nodes.map(node => {
+    const supported = node.setup_supported ?? node.install_supported;
+    return `<article class="setup-diagnostic ${supported === false ? 'warning' : 'pass'}"><span>⬡</span><div><b>${escapeHtml(node.hostname || node.address)} · ${escapeHtml(labels[node.machine_kind] || node.machine_kind || 'Hardware not inspected')}</b><small>${escapeHtml(node.platform || 'OS detected during readiness check')} · ${escapeHtml(node.architecture || 'architecture pending')}${node.accelerator_backend ? ` · ${escapeHtml(node.accelerator_backend.toUpperCase())}` : ''}</small><p>${escapeHtml((node.accelerators || []).join(', ') || 'GPU detection pending')}${node.memory_gib ? ` · ${Math.round(node.memory_gib)} GiB system/unified memory` : ''}</p><small>${escapeHtml(instructions[node.setup_strategy] || (node.install_supported ? 'Linux NVIDIA provisioning · k3s and GPU runtime' : node.machine_kind ? 'Automatic provisioning is unavailable for this platform.' : 'Run readiness checks to detect the platform and installation path.'))}</small></div></article>`;
+  }).join('');
   $('setup-machine-summary').innerHTML = summary;
   $('setup-check-machine-summary').innerHTML = summary;
+  updateSetupPlanCopy();
 }
 
 function setupError(message = '') {
@@ -56,9 +80,10 @@ function setupNavigate(stage) {
   });
   $('setup-back').hidden = stage === 0 || stage >= 3;
   $('setup-next').hidden = stage >= 3;
-  $('setup-next').textContent = ['Choose machines →', 'Check readiness →', 'Install compute pool →'][stage] || '';
+  $('setup-next').textContent = ['Choose machines →', 'Check readiness →', isNativeMacSetup() ? 'Register Mac →' : 'Install compute pool →'][stage] || '';
   $('setup-summary').textContent = `${setupSelection.size} machine${setupSelection.size === 1 ? '' : 's'} selected${setupJob ? ` · ${setupJob.status}` : ''}`;
   renderSetupDiscoveryState();
+  updateSetupPlanCopy();
   setupButtons();
 }
 function setupButtons() {
@@ -94,7 +119,7 @@ function renderSetupRoles() {
   else if ($('setup-topology').value === 'single') $('setup-topology').value = 'switch';
   if (nodes.length !== 4 && $('setup-topology').value === 'ring') $('setup-topology').value = 'switch';
   adaptSetupForMachines();
-  $('setup-roles').innerHTML = nodes.map(node => `<div class="setup-role"><div><b>${escapeHtml(node.hostname)}</b><small>${escapeHtml(node.address)}</small></div><label class="setup-checkbox"><input type="radio" name="setup-head" data-head="${escapeHtml(node.address)}" ${node.role === 'head' ? 'checked' : ''} /> Head</label><span class="setup-access-state ${node.access_status === 'ready' ? 'ready' : ''}">${node.access_status === 'ready' ? `✓ ${escapeHtml(node.username)} · SSH verified` : 'Waiting for connection'}</span>${requiresDgxFabric() ? `<label>Fabric IPv4<input data-fabric="${escapeHtml(node.address)}" aria-label="Fabric IPv4 ${escapeHtml(node.address)}" value="${escapeHtml(node.fabric_address || '')}" placeholder="Auto-detect from Sync" /></label>` : ''}</div>`).join('');
+  $('setup-roles').innerHTML = nodes.map(node => `<div class="setup-role"><div><b>${escapeHtml(node.hostname)}</b><small>${escapeHtml(node.address)}</small></div>${node.setup_mode === 'native-macos' ? '<span class="setup-access-state ready">Metal runtime host</span>' : `<label class="setup-checkbox"><input type="radio" name="setup-head" data-head="${escapeHtml(node.address)}" ${node.role === 'head' ? 'checked' : ''} /> Head</label>`}<span class="setup-access-state ${node.access_status === 'ready' ? 'ready' : ''}">${node.access_status === 'ready' ? `✓ ${escapeHtml(node.username)} · SSH verified` : 'Waiting for connection'}</span>${requiresDgxFabric() ? `<label>Fabric IPv4<input data-fabric="${escapeHtml(node.address)}" aria-label="Fabric IPv4 ${escapeHtml(node.address)}" value="${escapeHtml(node.fabric_address || '')}" placeholder="Auto-detect from Sync" /></label>` : ''}</div>`).join('');
   renderBootstrapAccess();
   renderHardwareTopology(hardwareTopology || expectedHardwareTopology());
 }
@@ -238,8 +263,9 @@ function renderSetupChecks(checks, target) {
 }
 function renderSetupJob(job) {
   setupJob = job;
+  const nativeMac = job.mode === 'native-macos';
   if (job.hardware_topology) hardwareTopology = job.hardware_topology;
-  $('setup-job-title').textContent = job.mode === 'demo' ? 'Simulated compute pool installation' : 'Installing compute pool services';
+  $('setup-job-title').textContent = job.mode === 'demo' ? 'Simulated compute pool installation' : nativeMac ? 'Registering native Mac' : 'Installing compute pool services';
   $('setup-job-status').textContent = job.status;
   $('setup-steps').innerHTML = job.steps.map((step, index) => `<div class="setup-step ${step.status}"><i>${step.status === 'done' ? '✓' : step.status === 'failed' ? '!' : index + 1}</i><div><b>${escapeHtml(step.label)}</b><small>${escapeHtml(step.message || step.status)}</small></div></div>`).join('');
   $('setup-logs').textContent = job.logs.map(log => `${new Date(log.timestamp).toLocaleTimeString()}  ${log.node}\n${log.message}`).join('\n\n');
@@ -250,8 +276,14 @@ function renderSetupJob(job) {
   $('setup-job-error').textContent = job.error || '';
   if (job.status === 'ready') {
     $('setup-open').href = job.dashboard_url || '#models';
-    $('setup-open').textContent = job.mode === 'demo' ? 'Explore demo model launcher →' : 'Open pool dashboard →';
-    document.querySelector('.setup-ready h3').textContent = job.mode === 'demo' ? 'Demo setup complete' : 'Your compute pool is ready';
+    $('setup-open').textContent = job.mode === 'demo' ? 'Explore demo model launcher →' : nativeMac ? 'Choose a Metal runtime →' : 'Open pool dashboard →';
+    document.querySelector('.setup-ready h3').textContent = job.mode === 'demo' ? 'Demo setup complete' : nativeMac ? 'Your Mac is registered' : 'Your compute pool is ready';
+    $('setup-ready-summary').textContent = nativeMac
+      ? 'SSH identity, host key, Apple Silicon and Metal support passed verification.'
+      : 'Machine registration, accelerator scheduling, telemetry and model storage passed verification.';
+    $('setup-ready-note').textContent = nativeMac
+      ? 'Next, choose a compatible native package. The controller will verify its checksum and install it in the managed user directory on this Mac.'
+      : 'Next, add a model and launch it to verify inference and the selected runtime and GPU placement under load.';
   }
   setupNavigate(job.status === 'ready' ? 4 : 3);
 }
@@ -356,7 +388,7 @@ $('setup-back').addEventListener('click', () => { setupError(); setupNavigate(se
 $('setup-next').addEventListener('click', () => setupAction(async () => {
   if (setupStage === 0) { renderSetupRoles(); setupNavigate(1); await ensureBootstrapAccess(); }
   else if (setupStage === 1) {
-    $('setup-review').textContent = `${$('setup-name').value}: ${[...setupSelection.values()].map(node => `${node.username}@${node.address} (${node.role})`).join(', ')}.`;
+    $('setup-review').textContent = `${$('setup-name').value}: ${[...setupSelection.values()].map(node => `${node.username}@${node.address} (${node.setup_mode === 'native-macos' ? 'native Metal host' : node.role})`).join(', ')}.`;
     setupNavigate(2);
   } else if (setupStage === 2) {
     const job = await api('/api/v1/setup/jobs', {method:'POST', headers:setupAuth(), body:JSON.stringify(setupPayload())});
