@@ -491,6 +491,9 @@ def test_cluster_dropdown_exposes_global_capacity_context(tmp_path):
     assert "spark-cluster.cluster-context" in app_script
     assert "window.selectedClusterContext" in app_script
     assert "cluster-context-changed" in app_script
+    assert "capacity.missing_gib == null" in pool_script
+    assert "capacity.capacity?.missing_gib == null" in pool_script
+    assert "Memory preflight unavailable for this compute pool" in pool_script
     assert "Needs ${capacity.missing_gib.toFixed(1)} GiB more" in pool_script
     assert "Fits on ${escapeHtml(alternative.cluster_name)}" in pool_script
     assert "cluster_id: window.selectedClusterContext" in pool_script

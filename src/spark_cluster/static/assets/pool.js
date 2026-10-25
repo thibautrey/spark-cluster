@@ -36,7 +36,7 @@
   }
   function capacityMarkup(context) {
     const capacity = context.capacity;
-    if (!capacity) {
+    if (!capacity || (!context.fits && capacity.missing_gib == null)) {
       const alternative = context.alternatives[0];
       return `<div class="pool-model-capacity unknown"><span>Memory preflight unavailable for this compute pool</span>${alternative ? `<small>Fits on ${escapeHtml(alternative.cluster_name)} · switch pool or choose All</small>` : ''}</div>`;
     }
@@ -88,6 +88,11 @@
       const runtimeState = runtime?.selection === 'configured' ? 'Configured' : 'Auto-detected';
       const capacity = capacityContext(model);
       const canLoad = model.loadable && capacity.fits;
+      const loadDisabledReason = canLoad ? '' : !model.loadable
+        ? 'Runtime support is required before loading this model'
+        : capacity.capacity?.missing_gib == null
+          ? 'Memory preflight unavailable for this compute pool'
+          : `${capacity.capacity.missing_gib.toFixed(1)} GiB additional memory required`;
       return `<article class="pool-model-card" data-pool-model="${escapeHtml(model.id)}">
         <div class="pool-model-heading"><h3>${escapeHtml(model.id)}</h3><span class="pill ${loaded ? 'ready' : ''}">${retained && loaded ? 'Kept loaded' : retained ? 'Retention enabled' : loaded ? 'Loaded' : 'On demand'}</span></div>
         <p>${loaded ? model.placements.map(p => escapeHtml(p.cluster_name)).join(', ') : model.preferences.cluster_id ? `Required compute pool: ${escapeHtml(state.clusters.find(c => c.id === model.preferences.cluster_id)?.name || 'unavailable')}` : 'Automatic placement in the pool'}</p>
@@ -95,7 +100,7 @@
         ${capacityMarkup(capacity)}
         ${loadProgressMarkup(visibleJob)}
         ${!visibleJob && last?.status === 'failed' ? `<p class="pool-error">${escapeHtml(last.message)}</p>` : ''}
-        <div class="pool-model-actions"><button class="primary" data-pool-action="load" ${job || !canLoad ? 'disabled' : ''} title="${!canLoad && capacity.capacity ? `${capacity.capacity.missing_gib.toFixed(1)} GiB additional memory required` : ''}">${job ? 'Waiting…' : loaded ? 'Loaded' : 'Load model'}</button><button class="secondary" data-pool-action="settings">Settings</button>${loaded ? '<button class="secondary" data-pool-action="unload">Unload</button>' : ''}</div>
+        <div class="pool-model-actions"><button class="primary" data-pool-action="load" ${job || !canLoad ? 'disabled' : ''} title="${escapeHtml(loadDisabledReason)}">${job ? 'Waiting…' : loaded ? 'Loaded' : 'Load model'}</button><button class="secondary" data-pool-action="settings">Settings</button>${loaded ? '<button class="secondary" data-pool-action="unload">Unload</button>' : ''}</div>
         ${!model.loadable ? '<small>Runtime support is required before loading this model.</small>' : ''}
       </article>`;
     }).join('') || '<div class="empty-state">Download a model or connect a compute pool to add it to the pool.</div>';
