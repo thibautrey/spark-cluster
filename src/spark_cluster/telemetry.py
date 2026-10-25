@@ -83,6 +83,7 @@ class InferenceTelemetryService:
         self.target_provider = None
         self.client = None
         self._target = None
+        self._target_previous = {}
         self.task: asyncio.Task | None = None
         self.transport: httpx.AsyncBaseTransport | None = None
         self._previous: tuple[float, dict[str, float]] | None = None
@@ -106,29 +107,54 @@ class InferenceTelemetryService:
         target = self.settings.runtime_metrics_url or (
             self.target_provider() if self.target_provider else self.url
         )
-        if target != self._target:
-            self._previous = None
-            self._target = target
-        if not target:
+        targets = target if isinstance(target, dict) else ({"runtime": target} if target else {})
+        self._target_previous = {url: previous for url, previous in self._target_previous.items()
+                                 if url in targets.values()}
+        if not targets:
             self._previous = None
             telemetry = InferenceTelemetry(
                 notes=["No active runtime to scrape; request tracking remains available."]
             )
         else:
             temporary = self.client is None
-            client = self.client or httpx.AsyncClient(
-                timeout=3, trust_env=False, transport=self.transport
-            )
+            client = self.client or httpx.AsyncClient(timeout=3, trust_env=False, transport=self.transport)
+
+            async def fetch(key, url):
+                try:
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    return key, url, response.text, None
+                except (httpx.HTTPError, ValueError) as error:
+                    return key, url, None, error
+
             try:
-                response = await client.get(target)
-                response.raise_for_status()
-                telemetry = self.from_metrics(response.text).model_copy(update={"source": target})
-            except (httpx.HTTPError, ValueError) as error:
-                self._previous = None
-                telemetry = InferenceTelemetry(
-                    source=target,
-                    notes=[f"Runtime metrics unavailable: {type(error).__name__}"],
-                )
+                responses = await asyncio.gather(*(fetch(key, url) for key, url in targets.items()))
+                samples = {}
+                for key, url, body, error in responses:
+                    if error:
+                        self._target_previous.pop(url, None)
+                        sample = InferenceTelemetry(
+                            source=url, notes=[f"Runtime metrics unavailable: {type(error).__name__}"]
+                        )
+                    else:
+                        self._previous = self._target_previous.get(url)
+                        sample = self.from_metrics(body).model_copy(update={"source": url})
+                        self._target_previous[url] = self._previous
+                    samples[key] = sample
+                if len(samples) == 1:
+                    telemetry = next(iter(samples.values())).model_copy()
+                else:
+                    telemetry = InferenceTelemetry(
+                        source="multiple runtimes", available=any(s.available for s in samples.values()),
+                        notes=["Counters and rates are summed; latency and cache ratios remain per runtime."],
+                    )
+                    for field in ("input_tokens_total", "output_tokens_total", "requests_total",
+                                  "prefill_tokens_per_second", "decode_tokens_per_second",
+                                  "cache_hits", "cache_misses", "active_requests", "queued_requests"):
+                        values = [getattr(s, field) for s in samples.values() if getattr(s, field) is not None]
+                        setattr(telemetry, field, sum(values) if values else None)
+                telemetry.runtimes = {key: value.model_dump(mode="json", exclude={"runtimes"})
+                                      for key, value in samples.items()}
             finally:
                 if temporary:
                     await client.aclose()

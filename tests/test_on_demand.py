@@ -107,7 +107,7 @@ async def test_lease_covers_stream_and_preserves_request(monkeypatch):
     p = profile()
     manager = OnDemandInference(Docker(), [p])
 
-    async def ensure(_):
+    async def ensure(_, **kwargs):
         manager.active = p
 
     monkeypatch.setattr(manager, "ensure", ensure)
@@ -117,7 +117,8 @@ async def test_lease_covers_stream_and_preserves_request(monkeypatch):
             yield b"data: test\n\ndata: [DONE]\n\n"
 
     def upstream(request):
-        assert manager.lock.locked()
+        assert not manager.lock.locked()
+        assert manager.residents[p.id].active_requests == 1
         assert request.headers["authorization"] == "Bearer test"
         assert request.url.path == "/v1/chat/completions"
         assert request.url.query == b"x=1"
@@ -142,7 +143,8 @@ async def test_lease_covers_stream_and_preserves_request(monkeypatch):
         return {"type": "http.request", "body": b'{"stream":true}', "more_body": False}
 
     async def send(message):
-        assert manager.lock.locked()
+        assert not manager.lock.locked()
+        assert manager.residents[p.id].active_requests == 1
         messages.append(message)
 
     await DemandProxy(manager, p)(scope, receive, send)
@@ -203,13 +205,18 @@ async def test_retention_survives_restart_and_blocks_eviction(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_retained_runtime_not_reaped_and_unpin_releases_waiter():
+async def test_retained_runtime_not_reaped_and_unpin_releases_waiter(monkeypatch):
     p = profile(idle_seconds=1)
     other = p.model_copy(update={"id": "other", "model": "other-model"})
     manager = OnDemandInference(Docker(), [p, other])
     manager.active = p
     manager.last_used = time.monotonic() - 10
     manager.retain(p, True)
+
+    async def start(profile, resident):
+        pass
+
+    monkeypatch.setattr(manager, "_start_runtime", start)
     entered = asyncio.Event()
 
     async def waiting_request():

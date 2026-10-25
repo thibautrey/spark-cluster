@@ -1,7 +1,7 @@
 """Opt-in, controller-owned Docker inference with stable legacy HTTP endpoints.
 
 Recipes are trusted administrator input, never client-provided Docker specifications.
-Only one runtime owns the GPU pool at a time; the lease lasts through the last byte.
+Each runtime has a device reservation; request leases last through the last byte.
 """
 
 import asyncio
@@ -11,6 +11,7 @@ import json
 import logging
 import socket
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote
 
@@ -22,6 +23,7 @@ from starlette.responses import JSONResponse, StreamingResponse
 
 from .inference_tracking import mark_dispatch, request_stream_usage
 from .local_docker import DockerEngineClient
+from .pool_memory import MemoryPlan, RuntimeResources, imported_resources, plan_memory
 
 logger = logging.getLogger(__name__)
 HOP_HEADERS = {
@@ -49,6 +51,7 @@ class InferenceProfile(BaseModel):
     idle_seconds: float = Field(default=120, ge=1)
     startup_seconds: float = Field(default=900, ge=1)
     container: dict
+    resources: RuntimeResources | None = None
 
     @model_validator(mode="after")
     def validate_ports(self):
@@ -86,6 +89,30 @@ class ListenerServer(uvicorn.Server):
         yield
 
 
+@dataclass
+class ResidentRuntime:
+    profile: InferenceProfile
+    gpu_ids: list[str]
+    budget_gib: dict[str, float]
+    fraction: float | None = None
+    exclusive: bool = False
+    last_used: float = field(default_factory=time.monotonic)
+    active_requests: int = 0
+    status: str = "starting"
+
+    def public(self):
+        return {
+            "profile_id": self.profile.id,
+            "model_id": self.profile.model_id or self.profile.model,
+            "gpu_ids": self.gpu_ids,
+            "budget_gib": self.budget_gib,
+            "gpu_memory_utilization": self.fraction,
+            "active_requests": self.active_requests,
+            "status": self.status,
+            "exclusive": self.exclusive,
+        }
+
+
 class OnDemandInference:
     def __init__(
         self,
@@ -96,8 +123,11 @@ class OnDemandInference:
         self.docker = docker
         self.profiles = profiles
         self.lock = asyncio.Lock()
-        self.active: InferenceProfile | None = None
-        self.last_used = 0.0
+        self.residents: dict[str, ResidentRuntime] = {}
+        self.profile_locks: dict[str, asyncio.Lock] = {}
+        self.resource_provider = None
+        self.usable_fraction = getattr(getattr(docker, "settings", None), "model_usable_memory_fraction", 0.82)
+        self._gpus = []
         self.servers: list[ListenerServer] = []
         self.tasks: list[asyncio.Task] = []
         self.sockets: list[socket.socket] = []
@@ -112,6 +142,8 @@ class OnDemandInference:
             state = json.loads(state_path.read_text())
             self.retained = set(state.get("retained", []))
             for item in state.get("profiles", []):
+                if item.get("launch_settings"):
+                    item["launch_settings"].setdefault("memory_budget_mode", "fixed")
                 profile = InferenceProfile.model_validate(item)
                 if not any(p.id == profile.id for p in self.profiles):
                     self.profiles.append(profile)
@@ -145,25 +177,71 @@ class OnDemandInference:
         self.persist()
         self.changed.set()
 
-    def blocked(self, profile: InferenceProfile) -> bool:
-        return bool(
-            self.active and self.active.id != profile.id and self.active.id in self.retained
+    @property
+    def active(self) -> InferenceProfile | None:
+        ready = [r.profile for r in self.residents.values() if r.status == "ready"]
+        return ready[0] if len(ready) == 1 else None
+
+    @active.setter
+    def active(self, profile):
+        # Compatibility for integrations that seed a legacy exclusive runtime.
+        self.residents.clear()
+        if profile:
+            self.residents[profile.id] = ResidentRuntime(
+                profile, ["unknown"], {"unknown": self.usable_fraction},
+                exclusive=True, status="ready",
+            )
+
+    @property
+    def last_used(self):
+        return max((r.last_used for r in self.residents.values()), default=0.0)
+
+    @last_used.setter
+    def last_used(self, value):
+        for resident in self.residents.values():
+            resident.last_used = value
+
+    async def gpu_memory(self):
+        if self.resource_provider:
+            self._gpus = await self.resource_provider()
+        elif hasattr(self.docker, "gpu_memory"):
+            self._gpus = await self.docker.gpu_memory([r.profile for r in self.residents.values()])
+        else:
+            # Adapters without device telemetry retain the safe legacy exclusive slot.
+            self._gpus = [{"id": "unknown", "index": 0, "total_gib": 1.0,
+                           "used_gib": 0.0, "managed_gib": {}}]
+        return self._gpus
+
+    def resources_for(self, profile, gpus):
+        return profile.resources or imported_resources(profile, gpus)
+
+    async def plan(self, profile, gpus=None):
+        if gpus is None:
+            gpus = await self.gpu_memory()
+        resident = self.residents.get(profile.id)
+        if resident and resident.status == "ready":
+            return MemoryPlan(resident.gpu_ids, resident.budget_gib, resident.fraction)
+        return plan_memory(
+            self.resources_for(profile, gpus), gpus, self.residents,
+            self.retained, self.usable_fraction,
         )
 
     @contextlib.asynccontextmanager
     async def lease(self, profile: InferenceProfile):
         while True:
-            await self.lock.acquire()
-            if not self.blocked(profile):
-                break
-            self.changed.clear()
-            self.lock.release()
-            await self.changed.wait()
+            await self.ensure(profile, wait=True)
+            async with self.lock:
+                resident = self.residents.get(profile.id)
+                if resident and resident.status == "ready":
+                    resident.active_requests += 1
+                    break
         try:
             yield
         finally:
-            self.lock.release()
-            self.changed.set()
+            async with self.lock:
+                resident.active_requests -= 1
+                resident.last_used = time.monotonic()
+                self.changed.set()
 
     def register(self, profile: InferenceProfile) -> None:
         if self.profile_for(profile.model_id or profile.model):
@@ -176,6 +254,9 @@ class OnDemandInference:
         return {
             "enabled": bool(self.profiles),
             "active_profile": self.active.id if self.active else None,
+            "active_profiles": [r.profile.id for r in self.residents.values() if r.status == "ready"],
+            "resident_models": [dict(r.public(), keep_loaded=r.profile.id in self.retained)
+                                for r in self.residents.values()],
             "pending_requests": self.pending,
             "last_error": self.last_error,
             "profiles": [
@@ -193,12 +274,18 @@ class OnDemandInference:
         }
 
     async def remove(self, profile: InferenceProfile) -> None:
+        async with self.lock:
+            await self._remove(profile)
+
+    async def _remove(self, profile: InferenceProfile, force=False) -> None:
+        resident = self.residents.get(profile.id)
+        if resident and resident.active_requests and not force:
+            raise RuntimeError("Wait for active requests before unloading this model")
         name = quote(profile.name, safe="")
         response = await self.docker.request("GET", f"/containers/{name}/json", allow={404})
         if response.status_code == 404:
-            if self.active and self.active.id == profile.id:
-                self.active = None
-                self.changed.set()
+            self.residents.pop(profile.id, None)
+            self.changed.set()
             return
         if (
             response.json().get("Config", {}).get("Labels", {}).get("spark-cluster.on-demand")
@@ -209,9 +296,8 @@ class OnDemandInference:
             "POST", f"/containers/{name}/stop", params={"t": 20}, allow={304, 404}, timeout=30
         )
         await self.docker.request("DELETE", f"/containers/{name}", allow={404}, timeout=30)
-        if self.active and self.active.id == profile.id:
-            self.active = None
-            self.changed.set()
+        self.residents.pop(profile.id, None)
+        self.changed.set()
 
     async def start(self) -> None:
         if not self.profiles and not self.docker.available:
@@ -229,26 +315,43 @@ class OnDemandInference:
                 sock.bind((profile.listen_host, profile.listen_port))
                 sock.listen(128)
                 sock.setblocking(False)
+            gpus = await self.gpu_memory()
             for profile in self.profiles:
                 state = await self.docker.request(
                     "GET", f"/containers/{profile.name}/json", allow={404}
                 )
-                if (
-                    profile.id in self.retained
-                    and state.status_code == 200
-                    and state.json().get("State", {}).get("Running")
-                    and state.json()
-                    .get("Config", {})
-                    .get("Labels", {})
-                    .get("spark-cluster.on-demand")
-                    == profile.id
-                ):
-                    if self.active:
-                        raise RuntimeError("Multiple retained runtimes cannot share one GPU slot")
-                    self.active = profile
-                    self.last_used = time.monotonic()
+                if state.status_code == 404:
+                    continue
+                details = state.json()
+                labels = details.get("Config", {}).get("Labels", {})
+                if labels.get("spark-cluster.on-demand") != profile.id:
+                    raise RuntimeError("Refusing to adopt an unmanaged container")
+                if not details.get("State", {}).get("Running"):
+                    await self._remove(profile)
+                    continue
+                actual = profile.model_copy(update={"container": {
+                    **details.get("Config", {}), "HostConfig": details.get("HostConfig", {})
+                }})
+                resources = imported_resources(actual, gpus)
+                allocation = json.loads(labels.get("spark-cluster.reservation", "null") or "null")
+                if allocation:
+                    budgets = allocation["budget_gib"]
+                    if not all(0 < float(budgets[device]) < float("inf") for device in allocation["gpu_ids"]):
+                        raise RuntimeError("Invalid persisted GPU reservation")
+                    resident = ResidentRuntime(
+                        profile, allocation["gpu_ids"], budgets,
+                        allocation.get("fraction"), allocation.get("exclusive", False), status="ready",
+                    )
                 else:
-                    await self.remove(profile)
+                    selected = [g for g in gpus if g["id"] in resources.gpu_ids]
+                    resident = ResidentRuntime(
+                        profile, [g["id"] for g in selected],
+                        {g["id"]: g["total_gib"] * (resources.memory_fraction
+                         if resources.mode == "fixed" else self.usable_fraction) for g in selected},
+                        resources.memory_fraction if resources.mode == "fixed" else None,
+                        resources.mode == "exclusive", status="ready",
+                    )
+                self.residents[profile.id] = resident
             listeners = [p for p in self.profiles if p.id not in self.dynamic]
             for profile, sock in zip(listeners, self.sockets, strict=True):
                 server = ListenerServer(
@@ -275,42 +378,95 @@ class OnDemandInference:
             self.tasks[-1].cancel()  # idle reaper
             await asyncio.gather(*self.tasks, return_exceptions=True)
         async with self.lock:
-            if self.active and self.active.id not in self.retained:
-                await self.remove(self.active)
+            for resident in list(self.residents.values()):
+                if resident.profile.id not in self.retained:
+                    await self._remove(resident.profile)
         for sock in self.sockets:
             sock.close()
 
     async def reap(self) -> None:
         while True:
             await asyncio.sleep(1)
-            if self.lock.locked() or not self.active:
-                continue
             async with self.lock:
-                if (
-                    self.active
-                    and self.active.id not in self.retained
-                    and time.monotonic() - self.last_used >= self.active.idle_seconds
-                ):
-                    try:
-                        await self.remove(self.active)
-                    except Exception:
-                        self.last_error = "Idle runtime cleanup failed; inspect controller logs"
-                        logger.exception("On-demand idle cleanup failed")
+                for resident in list(self.residents.values()):
+                    if (resident.status == "ready" and not resident.active_requests
+                        and resident.profile.id not in self.retained
+                        and time.monotonic() - resident.last_used >= resident.profile.idle_seconds):
+                        try:
+                            await self._remove(resident.profile)
+                        except Exception:
+                            self.last_error = "Idle runtime cleanup failed; inspect controller logs"
+                            logger.exception("On-demand idle cleanup failed")
 
-    async def ensure(self, profile: InferenceProfile) -> None:
-        if self.blocked(profile):
-            raise RuntimeError("The GPU slot is reserved by a retained model")
-        if self.active and self.active.id == profile.id:
-            state = await self.docker.request(
-                "GET", f"/containers/{profile.name}/json", allow={404}
-            )
-            if state.status_code == 200 and state.json().get("State", {}).get("Running"):
-                return
-        if self.active:
-            await self.remove(self.active)
-        await self.remove(profile)
+    async def ensure(self, profile: InferenceProfile, *, wait=False, keep_loaded=None,
+                     _profile_locked=False) -> None:
+        gate = contextlib.nullcontext() if _profile_locked else self.profile_locks.setdefault(profile.id, asyncio.Lock())
+        async with gate:
+            profile = next((p for p in self.profiles if p.id == profile.id), profile)
+            while True:
+                async with self.lock:
+                    existing = self.residents.get(profile.id)
+                    if existing and existing.status == "ready":
+                        state = await self.docker.request(
+                            "GET", f"/containers/{profile.name}/json", allow={404}
+                        )
+                        if state.status_code == 200 and state.json().get("State", {}).get("Running"):
+                            existing.last_used = time.monotonic()
+                            if keep_loaded is not None:
+                                self.retain(profile, keep_loaded)
+                            return
+                        await self._remove(profile)
+                    gpus = await self.gpu_memory()
+                    resources = self.resources_for(profile, gpus)
+                    plan = await self.plan(profile, gpus)
+                    if plan.gpu_ids:
+                        for victim in plan.evict:
+                            await self._remove(self.residents[victim].profile)
+                        await self._remove(profile)
+                        # The reservation is visible before the slow engine startup.
+                        resident = ResidentRuntime(
+                            profile, plan.gpu_ids, plan.budget_gib, plan.fraction,
+                            resources.mode == "exclusive",
+                        )
+                        self.residents[profile.id] = resident
+                        break
+                    if not plan.waiting or not wait:
+                        raise RuntimeError(plan.reason)
+                    self.changed.clear()
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self.changed.wait(), timeout=1)
+            try:
+                await self._start_runtime(profile, resident)
+                async with self.lock:
+                    resident.status = "ready"
+                    resident.last_used = time.monotonic()
+                    if keep_loaded is not None:
+                        self.retain(profile, keep_loaded)
+                    self.changed.set()
+            except BaseException:
+                async with self.lock:
+                    await self._remove(profile, force=True)
+                raise
+
+    async def _start_runtime(self, profile, resident):
         payload = copy.deepcopy(profile.container)
+        if profile.resources:
+            host = payload.setdefault("HostConfig", {})
+            host["DeviceRequests"] = [{"Driver": "nvidia", "DeviceIDs": resident.gpu_ids,
+                                      "Capabilities": [["gpu"]]}]
+            payload["Env"] = [e for e in payload.get("Env", [])
+                              if not e.startswith("NVIDIA_VISIBLE_DEVICES=")]
+            payload["Env"].append("NVIDIA_VISIBLE_DEVICES=" + ",".join(resident.gpu_ids))
+            if resident.fraction is not None:
+                command = payload.get("Cmd", [])
+                for flag in ("--gpu-memory-utilization", "--mem-fraction-static"):
+                    if flag in command:
+                        command[command.index(flag) + 1] = str(resident.fraction)
         labels = payload.setdefault("Labels", {})
+        labels["spark-cluster.reservation"] = json.dumps({
+            "gpu_ids": resident.gpu_ids, "budget_gib": resident.budget_gib,
+            "fraction": resident.fraction, "exclusive": resident.exclusive,
+        })
         labels["spark-cluster.managed"] = "true"
         labels["spark-cluster.on-demand"] = profile.id
         labels["spark-cluster.model"] = profile.model
@@ -334,8 +490,6 @@ class OnDemandInference:
                     try:
                         response = await client.get(profile.upstream + profile.readiness_path)
                         if response.status_code in {200, 401, 403}:
-                            self.active = profile
-                            self.last_used = time.monotonic()
                             self.last_error = None
                             return
                     except httpx.HTTPError:
@@ -343,7 +497,6 @@ class OnDemandInference:
                     await asyncio.sleep(1)
             raise TimeoutError("Inference runtime startup deadline exceeded")
         except BaseException:
-            await self.remove(profile)
             raise
 
 
@@ -398,7 +551,6 @@ class DemandProxy:
             async with asyncio.timeout(1800):
                 async with self.manager.lease(self.profile):
                     try:
-                        await self.manager.ensure(self.profile)
                         mark_dispatch(scope)
                         query = scope.get("query_string", b"").decode("ascii")
                         raw_path = scope.get("raw_path", path.encode()).decode("ascii")
@@ -432,7 +584,7 @@ class DemandProxy:
                                 response_started = True
                                 await response(scope, receive, send)
                     finally:
-                        self.manager.last_used = time.monotonic()
+                        pass  # The per-runtime lease updates activity after streaming completes.
         except (httpx.HTTPError, RuntimeError, TimeoutError):
             self.manager.last_error = "Inference request failed; inspect controller logs"
             logger.exception("On-demand inference failed for %s", self.profile.id)

@@ -245,7 +245,13 @@ class SnapshotStore:
             row = self._connection.execute(
                 "SELECT payload FROM model_launches WHERE id = ?", (job_id,)
             ).fetchone()
-        return ModelLaunchJob.model_validate_json(row[0]) if row else None
+        return self._stored_launch(row[0]) if row else None
+
+    @staticmethod
+    def _stored_launch(payload: str) -> ModelLaunchJob:
+        data = json.loads(payload)
+        data["request"].setdefault("memory_budget_mode", "fixed")
+        return ModelLaunchJob.model_validate(data)
 
     def list_launches(self, limit: int = 50) -> list[ModelLaunchJob]:
         with self._lock:
@@ -254,7 +260,7 @@ class SnapshotStore:
                 "ORDER BY json_extract(payload, '$.created_at') DESC LIMIT ?",
                 (limit,),
             ).fetchall()
-        return [ModelLaunchJob.model_validate_json(row[0]) for row in rows]
+        return [self._stored_launch(row[0]) for row in rows]
 
     def recover_launches(self) -> list[ModelLaunchJob]:
         # Controller startup must never replay a Kubernetes mutation. The inference

@@ -108,6 +108,24 @@ For direct links, a green result requires the expected point-to-point subnet, su
 reported tokens, pool placement and sampled memory in a bounded background journal.
 Activity survives model unloads; missing metrics and stale GPU samples are explicit.
 
+The Docker model pool keeps multiple runtimes resident and routes concurrent requests
+to each independently. Placement checks each GPU, including external processes,
+resident reservations and engines still starting. It prefers unused GPUs, then shares
+a GPU when the combined budgets fit within the configured usable-memory fraction.
+Under memory pressure it evicts idle models in least-recently-used order; retained
+models and active streams stay protected. Idle expiration applies per runtime.
+
+New pool launches use `memory_budget_mode: "auto"`: the engine budget covers weights,
+configured context and scheduler concurrency, and workspace. `gpu_memory_utilization`
+is the upper limit. Select `"fixed"` to reserve that exact fraction instead. Existing
+saved launch settings migrate to fixed mode. Imported recipes retain their GPU bindings
+and declared engine limits; an unknown budget keeps those devices exclusive.
+`/api/v1/pool` exposes `resident_models`, per-GPU availability and placement budgets;
+`/api/v1/inference/status` adds `active_profiles`. Singular active-model fields are
+populated only for a single resident. Runtime metrics include independent per-runtime
+samples; aggregate counters and rates are summed without mixing latency percentiles.
+The Kubernetes launcher keeps its existing exclusive behavior.
+
 ### Measured optimization lab
 
 The controller now turns runtime recommendations into executable, capability-checked launch plans.

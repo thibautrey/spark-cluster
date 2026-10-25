@@ -360,7 +360,8 @@
                   <div class="pool-setting-fields">
                     <label class="pool-field pool-field-wide">Served model name<input id="pool-served-name" /></label>
                     <label class="pool-field">Context tokens<input id="pool-context" type="number" min="1" max="1048576" /></label>
-                    <label class="pool-field">GPU memory utilization<input id="pool-memory" type="number" min="0.01" max="0.99" step="0.01" /></label>
+                    <label class="pool-field">Memory budget<select id="pool-memory-mode"><option value="auto">Automatic — size for this workload</option><option value="fixed">Fixed memory fraction</option></select></label>
+                    <label class="pool-field">GPU memory limit<input id="pool-memory" type="number" min="0.01" max="0.99" step="0.01" /></label>
                     <label class="pool-field">Tensor parallel<input id="pool-tensor" type="number" min="1" max="64" /></label>
                     <label class="pool-field">Pipeline parallel<input id="pool-pipeline" type="number" min="1" max="64" /></label>
                   </div>
