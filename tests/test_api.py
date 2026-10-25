@@ -610,6 +610,9 @@ def test_runtime_ui_uses_guided_prepare_launch_workflows(tmp_path):
     assert "Set up ${esc(engine.name)}" in runtime_script
     assert "Retry failed step" in runtime_script
     assert "No pinned image configured" not in runtime_script
+    assert "Native host ready" in runtime_script
+    assert "revealPackageLibrary(true)" in runtime_script
+    assert "library.hosts.length === 1" in runtime_script
 
 
 def test_cluster_dropdown_exposes_global_capacity_context(tmp_path):

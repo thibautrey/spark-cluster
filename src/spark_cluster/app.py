@@ -121,7 +121,7 @@ from .remote_cluster import (
     valid_controller_signature,
     validated_cluster_url,
 )
-from .runtime_library import RuntimeLibrary
+from .runtime_library import RuntimeHostRequest, RuntimeLibrary
 from .runtime_library_api import register_runtime_library
 from .runtime_prerequisites import RuntimePrerequisiteService
 from .runtime_workflows import RuntimeWorkflowService
@@ -299,6 +299,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await cluster_connector.attach(head.address, 30080)
 
     setup_service.on_cluster_ready = activate_cluster
+
+    async def activate_native_host(name, node):
+        return await runtime_library.register_host(
+            RuntimeHostRequest(
+                name=name,
+                address=node.address,
+                username=node.username,
+                fingerprint=node.fingerprint,
+            )
+        )
+
+    setup_service.on_native_host_ready = activate_native_host
 
     async def refresh_remote_capacity() -> None:
         if settings.remote_cluster_url:

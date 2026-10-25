@@ -139,6 +139,14 @@ Enrollment and administration tokens are passed through pinned SSH standard inpu
 dashboard state and logs. The remote cluster retains its own Kubernetes credentials as required by
 k3s; temporary enrollment files are root-only and removed on exit.
 
+An Apple Silicon Mac follows a shorter native path. After the SSH host key, `darwin/arm64`, Metal,
+memory, storage and clock checks pass, the controller registers the Mac as a trusted native runtime
+host and opens the native package library. Registration is idempotent by LAN address. Repeating it
+refreshes the verified name, account, fingerprint and platform without creating duplicate hosts. No
+Linux package-manager, k3s, NFS or NVIDIA command is sent to macOS. Native runtime archives are still
+downloaded and SHA256-verified separately before installation in the SSH user's managed directory.
+Register multiple Macs one at a time because each is an independent native runtime destination.
+
 1. Validate GB10/ARM64, unified memory, free storage, SSH, sudo, matching drivers/DGX OS releases,
    clock skew, ownership and fabric connectivity.
 2. Install the NVIDIA container toolkit and NFS client packages from the configured DGX OS apt
