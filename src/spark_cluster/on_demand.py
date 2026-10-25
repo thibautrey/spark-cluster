@@ -29,7 +29,6 @@ from .adaptive_concurrency import (
     runtime_parallelism,
     startup_capacity_failure,
 )
-from .inference_tracking import mark_dispatch, request_stream_usage
 from .inference_http import (
     INFERENCE_TIMEOUT,
     RequestTooLarge,
@@ -39,6 +38,7 @@ from .inference_http import (
     inference_error,
     read_inference_body,
 )
+from .inference_tracking import mark_dispatch, request_stream_usage
 from .local_docker import DockerEngineClient
 from .pool_memory import (
     MemoryPlan,
@@ -669,7 +669,9 @@ class OnDemandInference:
                         if not state.json().get("State", {}).get("Running"):
                             existing.status = "unhealthy"
                             self.failed_runtime(profile)
-                            raise RuntimeUnavailable(self.recovery_state(profile)["retry_after_seconds"])
+                            raise RuntimeUnavailable(
+                                self.recovery_state(profile)["retry_after_seconds"]
+                            )
                         await self._remove(profile)
                     gpus = await self.gpu_memory()
                     resources = self.resources_for(profile, gpus)
@@ -839,9 +841,7 @@ class DemandProxy:
             await self.manager.pool.infer(model_id, path.lstrip("/"), scope, receive, send)
             return
         if self.manager.pending >= 64:
-            await inference_error("Inference queue is full", retry_after=1)(
-                scope, receive, send
-            )
+            await inference_error("Inference queue is full", retry_after=1)(scope, receive, send)
             return
         scope, feedback, send = response_feedback(
             scope, self.profile.model_id or self.profile.model, path, send

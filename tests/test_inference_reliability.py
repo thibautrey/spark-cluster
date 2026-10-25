@@ -5,12 +5,16 @@ import time
 import httpx
 import pytest
 from starlette.requests import ClientDisconnect, Request
+from test_model_pool import FakePool
+from test_on_demand import Docker, profile
+from test_pool_memory import gpu, manager_for
+from test_pool_memory import profile as memory_profile
 
 from spark_cluster import inference_http
 from spark_cluster.inference_http import RequestTooLarge, RuntimeUnavailable, read_inference_body
-from spark_cluster.model_pool import PoolResponse, forward_http
+from spark_cluster.model_pool import ModelPreferences, PoolResponse, forward_http
 from spark_cluster.on_demand import DemandProxy, OnDemandInference
-from test_on_demand import Docker, profile
+from spark_cluster.pool_memory import plan_memory
 
 
 def scope(headers=(), spec="2.4"):
@@ -201,9 +205,11 @@ async def test_disconnect_while_admission_queued_releases_all_counters(monkeypat
     controller.limit = 1
     disconnected = asyncio.Event()
     async with manager.lease(p):
-        task = asyncio.create_task(DemandProxy(manager, p)(
-            scope(), receiver(disconnected=disconnected), lambda message: None
-        ))
+        task = asyncio.create_task(
+            DemandProxy(manager, p)(
+                scope(), receiver(disconnected=disconnected), lambda message: None
+            )
+        )
         async with asyncio.timeout(1):
             while not controller.queue:
                 await asyncio.sleep(0)
@@ -229,14 +235,17 @@ async def test_gateway_errors_are_openai_shaped_and_never_replay(failure, status
 
     def upstream(request):
         calls.append(request)
-        assert request.extensions["timeout"] == {
-            "connect": 5, "read": 900, "write": 30, "pool": 5
-        }
+        assert request.extensions["timeout"] == {"connect": 5, "read": 900, "write": 30, "pool": 5}
         raise failure("upstream unavailable", request=request)
 
     async def handler(scope, receive, send):
-        await forward_http("http://runtime/v1/chat/completions", scope, receive, send,
-                           transport=httpx.MockTransport(upstream))
+        await forward_http(
+            "http://runtime/v1/chat/completions",
+            scope,
+            receive,
+            send,
+            transport=httpx.MockTransport(upstream),
+        )
 
     messages = []
 
@@ -252,7 +261,7 @@ async def test_gateway_errors_are_openai_shaped_and_never_replay(failure, status
 
 @pytest.mark.asyncio
 async def test_sse_preserves_bytes_and_headers_filters_both_connection_lists():
-    chunks = [b"data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n", b"data: [DONE]\n\n"]
+    chunks = [b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n', b"data: [DONE]\n\n"]
     closed = False
 
     class Events(httpx.AsyncByteStream):
@@ -267,24 +276,42 @@ async def test_sse_preserves_bytes_and_headers_filters_both_connection_lists():
     def upstream(request):
         assert request.headers["authorization"] == "Bearer fixture"
         assert "x-private-hop" not in request.headers
-        return httpx.Response(200, stream=Events(), headers={
-            "content-type": "text/event-stream", "connection": "x-backend-hop",
-            "x-backend-hop": "private", "x-request-id": "upstream-id"
-        })
+        return httpx.Response(
+            200,
+            stream=Events(),
+            headers={
+                "content-type": "text/event-stream",
+                "connection": "x-backend-hop",
+                "x-backend-hop": "private",
+                "x-request-id": "upstream-id",
+            },
+        )
 
     async def handler(scope, receive, send):
-        await forward_http("http://runtime/v1/chat/completions", scope, receive, send,
-                           transport=httpx.MockTransport(upstream))
+        await forward_http(
+            "http://runtime/v1/chat/completions",
+            scope,
+            receive,
+            send,
+            transport=httpx.MockTransport(upstream),
+        )
 
     messages = []
 
     async def send(message):
         messages.append(message)
 
-    await PoolResponse(handler)(scope([
-        (b"authorization", b"Bearer fixture"), (b"connection", b"x-private-hop"),
-        (b"x-private-hop", b"private")
-    ]), receiver(), send)
+    await PoolResponse(handler)(
+        scope(
+            [
+                (b"authorization", b"Bearer fixture"),
+                (b"connection", b"x-private-hop"),
+                (b"x-private-hop", b"private"),
+            ]
+        ),
+        receiver(),
+        send,
+    )
     headers = dict(messages[0]["headers"])
     assert b"x-backend-hop" not in headers and headers[b"x-request-id"] == b"upstream-id"
     assert b"".join(m.get("body", b"") for m in messages) == b"".join(chunks)
@@ -310,8 +337,13 @@ async def test_midstream_failure_closes_backend_without_second_status_or_done():
         return httpx.Response(200, stream=Broken())
 
     async def handler(scope, receive, send):
-        await forward_http("http://runtime/v1/chat/completions", scope, receive, send,
-                           transport=httpx.MockTransport(upstream))
+        await forward_http(
+            "http://runtime/v1/chat/completions",
+            scope,
+            receive,
+            send,
+            transport=httpx.MockTransport(upstream),
+        )
 
     messages = []
 
@@ -323,3 +355,120 @@ async def test_midstream_failure_closes_backend_without_second_status_or_done():
     assert closed and calls == 1
     assert len([m for m in messages if m["type"] == "http.response.start"]) == 1
     assert not any(m.get("more_body") is False for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_docker_stream_failure_releases_residency_and_admission(monkeypatch):
+    p = profile()
+    manager = OnDemandInference(Docker(), [p])
+    manager.active = p
+    resident = manager.residents[p.id]
+
+    async def ensure(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(manager, "ensure", ensure)
+    closed = False
+
+    class Broken(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"data: partial\n\n"
+            raise httpx.ReadTimeout("stalled generation")
+
+        async def aclose(self):
+            nonlocal closed
+            closed = True
+
+    mock_http(monkeypatch, lambda request: httpx.Response(200, stream=Broken()))
+    messages = []
+
+    async def send(message):
+        messages.append(message)
+
+    with pytest.raises(httpx.ReadTimeout):
+        await DemandProxy(manager, p)(scope(), receiver(), send)
+    assert closed and manager.pending == resident.active_requests == 0
+    controller = manager.admission_controller(resident)
+    assert controller.running == controller.serving == 0
+    assert len([m for m in messages if m["type"] == "http.response.start"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_simultaneous_body_uploads_cannot_bypass_queue_bound():
+    p = profile()
+    manager = OnDemandInference(Docker(), [p])
+    manager.pending = 63
+    entered = asyncio.Event()
+
+    async def slow_receive():
+        entered.set()
+        await asyncio.Event().wait()
+
+    first = asyncio.create_task(DemandProxy(manager, p)(scope(), slow_receive, None))
+    await asyncio.wait_for(entered.wait(), 1)
+    messages = []
+
+    async def send(message):
+        messages.append(message)
+
+    try:
+        await DemandProxy(manager, p)(scope(), receiver(), send)
+        assert messages[0]["status"] == 503
+        assert dict(messages[0]["headers"])[b"retry-after"] == b"1"
+        assert manager.pending == 64
+    finally:
+        first.cancel()
+        await asyncio.gather(first, return_exceptions=True)
+    assert manager.pending == 63
+
+
+@pytest.mark.asyncio
+async def test_pool_controls_can_unpin_and_unload_unhealthy_and_failed_retained_models(tmp_path):
+    pool = FakePool(tmp_path)
+    pool.nodes["first"]["resident_models"] = [
+        {"model_id": "org/model", "status": "unhealthy", "keep_loaded": True}
+    ]
+    pool.nodes["second"]["models"][0]["keep_loaded"] = True  # Failed restart: no resident.
+    await pool.update_preferences("org/model", ModelPreferences(keep_loaded=False))
+    assert {c[0] for c in pool.calls if c[1] == "retain"} == {"first", "second"}
+    pool.calls.clear()
+    await pool.unload("org/model")
+    assert {c[0] for c in pool.calls if c[1] == "unload"} == {"first", "second"}
+
+
+@pytest.mark.asyncio
+async def test_unhealthy_gpu_reservation_can_be_reclaimed_but_retention_is_respected(monkeypatch):
+    old, new = memory_profile("old"), memory_profile("new", required=5)
+    manager = manager_for([old, new], [gpu()])
+
+    async def start(*args):
+        pass
+
+    monkeypatch.setattr(manager, "_start_runtime", start)
+    await manager.ensure(old)
+    resident = manager.residents[old.id]
+    resident.status = "unhealthy"
+    plan = plan_memory(new.resources, [gpu()], manager.residents, set())
+    assert plan.evict == [old.id]
+    protected = plan_memory(new.resources, [gpu()], manager.residents, {old.id})
+    assert not protected.gpu_ids and not protected.evict
+
+
+def test_global_endpoint_rejects_oversized_body_before_model_resolution(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from spark_cluster.app import create_app
+    from spark_cluster.config import Settings
+
+    monkeypatch.setattr(inference_http, "MAX_REQUEST_BYTES", 8)
+    settings = Settings(
+        mode="demo",
+        database_path=tmp_path / "state.db",
+        setup_state_path=tmp_path,
+        model_cache_path=tmp_path / "models",
+        openai_api_base="http://127.0.0.1:9/v1",
+    )
+    with TestClient(create_app(settings)) as client:
+        response = client.post("/v1/chat/completions", json={"model": "unknown"})
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "request_too_large"
