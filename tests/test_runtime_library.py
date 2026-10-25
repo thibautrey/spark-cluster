@@ -535,6 +535,79 @@ async def test_docker_archive_stream_checks_host_identity_and_embedded_errors(tm
         await docker.load_runtime_archive(archive, "linux/arm64", "a/b:v1", "sha256:" + "a" * 64)
 
 
+@pytest.mark.asyncio
+async def test_local_docker_pulls_and_verifies_exact_runtime_digest(tmp_path):
+    settings = Settings(docker_runtime_enabled=True, docker_socket_path=tmp_path / "docker.sock")
+    settings.docker_socket_path.touch()
+    docker = DockerEngineClient(settings)
+    exact = "registry.example/runtime@sha256:" + "a" * 64
+    config = "sha256:" + "b" * 64
+    installed = False
+    pulls = []
+
+    async def handle(request):
+        nonlocal installed
+        if request.url.path == "/images/create":
+            pulls.append(request.url.params["fromImage"])
+            installed = True
+            return httpx.Response(200, text='{"status":"Downloaded"}\n')
+        if request.url.path.endswith("/json"):
+            if not installed:
+                return httpx.Response(404, json={"message": "missing"})
+            return httpx.Response(
+                200,
+                json={"Id": config, "Os": "linux", "Architecture": "amd64"},
+            )
+        raise AssertionError(request.url)
+
+    docker.transport = httpx.MockTransport(handle)
+    value = await docker.ensure_runtime_image(
+        "registry.example/runtime", "sha256:" + "a" * 64, "linux/amd64", config
+    )
+    assert value["Id"] == config
+    assert pulls == [exact]
+    await docker.ensure_runtime_image(
+        "registry.example/runtime", "sha256:" + "a" * 64, "linux/amd64", config
+    )
+    assert pulls == [exact]
+
+
+@pytest.mark.asyncio
+async def test_local_docker_rejects_pull_errors_wrong_platform_and_wrong_config(tmp_path):
+    settings = Settings(docker_runtime_enabled=True, docker_socket_path=tmp_path / "docker.sock")
+    settings.docker_socket_path.touch()
+    docker = DockerEngineClient(settings)
+
+    async def pull_error(request):
+        if request.url.path.endswith("/json"):
+            return httpx.Response(404, json={"message": "missing"})
+        return httpx.Response(200, text='{"error":"denied"}\n')
+
+    docker.transport = httpx.MockTransport(pull_error)
+    with pytest.raises(ValueError, match="failed to pull"):
+        await docker.ensure_runtime_image("a/b", "sha256:" + "a" * 64, "linux/amd64", "x")
+
+    async def wrong(request):
+        return httpx.Response(
+            200,
+            json={"Id": "sha256:wrong", "Os": "linux", "Architecture": "arm64"},
+        )
+
+    docker.transport = httpx.MockTransport(wrong)
+    with pytest.raises(ValueError, match="architecture"):
+        await docker.ensure_runtime_image("a/b", "sha256:" + "a" * 64, "linux/amd64", "x")
+
+    async def wrong_config(request):
+        return httpx.Response(
+            200,
+            json={"Id": "sha256:wrong", "Os": "linux", "Architecture": "amd64"},
+        )
+
+    docker.transport = httpx.MockTransport(wrong_config)
+    with pytest.raises(ValueError, match="configuration"):
+        await docker.ensure_runtime_image("a/b", "sha256:" + "a" * 64, "linux/amd64", "x")
+
+
 def test_runtime_api_authorization_validation_and_controller_routing(tmp_path):
     settings = Settings(
         database_path=tmp_path / "db",

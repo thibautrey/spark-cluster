@@ -108,7 +108,7 @@ class RuntimePrerequisiteService:
         image: str,
         digest: str,
         platform: str,
-        artifact_id: str,
+        artifact_id: str | None,
     ) -> dict:
         if not self.registry or not self.registry.get(cluster_id):
             raise KeyError(cluster_id)

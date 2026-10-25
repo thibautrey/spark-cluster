@@ -88,6 +88,11 @@ class Library:
         self.tasks = {}
         self.artifact = {**Remote.metadata, "id": "c" * 32}
         self.jobs = {}
+        self.local_images = []
+
+    async def ensure_local_image(self, metadata):
+        self.local_images.append(metadata)
+        return {"Id": metadata["config_digest"]}
 
     async def verified_artifact_for_image(self, image):
         return self.artifact if image == self.artifact["image"] else None
@@ -125,7 +130,33 @@ async def test_guided_runtime_workflow_reuses_cache_installs_and_activates(tmp_p
     assert completed.status == "completed"
     assert completed.progress == 100
     assert all(step.status == "completed" for step in completed.steps)
+    assert service.library.local_images == [Remote.metadata]
+    assert completed.artifact_id is None
     assert prerequisites.activation("local-1", "sglang")["digest"] == Remote.metadata["digest"]
+    assert prerequisites.activation("local-1", "sglang")["artifact_id"] is None
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_local_workflow_reports_direct_docker_pull_failure(tmp_path):
+    settings = Settings(database_path=tmp_path / "state.db")
+    store = SnapshotStore(settings.database_path)
+    library = Library()
+
+    async def fail(_):
+        raise ValueError("Docker failed to pull the verified runtime image")
+
+    library.ensure_local_image = fail
+    service = RuntimeWorkflowService(
+        settings, store, Registry(), Prerequisites(), library, SimpleNamespace()
+    )
+    job = await service.create(RuntimeWorkflowRequest(cluster_id="local-1", engine_id="sglang"))
+    await service.tasks[job.id]
+    failed = await service.get(job.id)
+    assert failed.status == "failed"
+    assert failed.stage == "cache"
+    assert failed.error == "Docker failed to pull the verified runtime image"
+    assert failed.steps[1].status == "failed"
     store.close()
 
 

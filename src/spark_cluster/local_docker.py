@@ -241,6 +241,47 @@ class DockerEngineClient:
         if f"{value.get('Os')}/{architecture}" != platform:
             raise ValueError("Docker imported an image for a different architecture")
 
+    async def ensure_runtime_image(
+        self, repository: str, digest: str, platform: str, config_digest: str
+    ) -> dict:
+        """Pull an immutable image directly into the local daemon and verify its identity."""
+        if not self.available:
+            raise ValueError("Docker runtime access is not configured")
+        exact = f"{repository}@{digest}"
+
+        async def inspect():
+            response = await self.request(
+                "GET", f"/images/{quote(exact, safe='')}/json", allow={404}, timeout=30
+            )
+            return response.json() if response.status_code == 200 else None
+
+        value = await inspect()
+        if value is None:
+            async with httpx.AsyncClient(
+                base_url="http://docker", transport=self._transport(), timeout=7200
+            ) as client:
+                async with client.stream(
+                    "POST", "/images/create", params={"fromImage": exact}
+                ) as response:
+                    response.raise_for_status()
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+                        event = json.loads(line)
+                        if event.get("error") or event.get("errorDetail"):
+                            raise ValueError("Docker failed to pull the verified runtime image")
+            value = await inspect()
+        if value is None:
+            raise ValueError("Docker did not retain the verified runtime image")
+        architecture = {"x86_64": "amd64", "aarch64": "arm64"}.get(
+            value.get("Architecture"), value.get("Architecture")
+        )
+        if f"{value.get('Os')}/{architecture}" != platform:
+            raise ValueError("Docker pulled an image for a different architecture")
+        if value.get("Id") != config_digest:
+            raise ValueError("Docker image configuration does not match the resolved digest")
+        return value
+
     async def ping(self) -> bool:
         try:
             response = await self.request("GET", "/_ping", timeout=3)

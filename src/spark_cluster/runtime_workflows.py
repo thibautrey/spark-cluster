@@ -292,6 +292,35 @@ class RuntimeWorkflowService:
                 await self._step(job, "cache", "completed", "Verified controller cache reused")
                 await self._step(job, "install", "completed", "Exact image already present")
                 await self._step(job, "activate", "completed", "Existing activation reused")
+            elif self._target(job.request.cluster_id).kind == "local-docker":
+                current = "cache"
+                await self._step(
+                    job, current, "running", "Pulling the immutable image into local Docker"
+                )
+                await self.library.ensure_local_image(metadata)
+                await self._step(job, current, "completed", "Exact image verified in local Docker")
+                await self._step(job, "install", "completed", "Local Docker image is ready")
+                current = "activate"
+                await self._step(
+                    job, current, "running", "Activating this image for future launches"
+                )
+                await self.prerequisites.activate(
+                    cluster_id=job.request.cluster_id,
+                    engine_id=job.engine_id,
+                    version=job.version,
+                    image=job.image,
+                    digest=job.digest,
+                    platform=job.platform,
+                    artifact_id=None,
+                )
+                report = await self.prerequisites.inspect(
+                    job.request.model_id or f"engine:{job.engine_id}",
+                    job.engine_id,
+                    job.request.cluster_id,
+                )
+                if not report.ready:
+                    raise ValueError(report.message)
+                await self._step(job, current, "completed", "Runtime prepared and activated")
             else:
                 current = "cache"
                 await self._step(job, current, "running", "Looking for a verified controller copy")
