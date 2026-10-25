@@ -85,6 +85,10 @@ class ModelPreferences(BaseModel):
     last_settings: ModelLaunchRequest | None = None
 
 
+class ModelRetentionRequest(BaseModel):
+    keep_loaded: bool
+
+
 class PoolLoadRequest(BaseModel):
     model_id: str = Field(min_length=1, max_length=200)
     settings: ModelLaunchRequest | None = None
@@ -893,6 +897,11 @@ class ModelPool:
         self.save()
         self.cache = None
         return preferences
+
+    async def update_retention(self, model_id: str, keep_loaded: bool):
+        preferences = self.preferences.get(model_id, ModelPreferences()).model_copy(deep=True)
+        preferences.keep_loaded = keep_loaded
+        return await self.update_preferences(model_id, preferences)
 
     async def enqueue(self, request):
         for job in self.jobs:

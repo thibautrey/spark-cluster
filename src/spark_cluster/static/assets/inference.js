@@ -2,9 +2,46 @@
 (() => {
   let activity = null;
   let pending = false;
+  let retainedModels = new Set();
+  let menuModel = null;
+  let menuTrigger = null;
+  const menu = $('inference-row-menu');
+  const keepMemory = $('inference-keep-memory');
+  const menuError = $('inference-menu-error');
   const number = value => value == null ? '—' : formatNumber(value);
   const milliseconds = value => value == null ? '—' : `${Math.round(value).toLocaleString()} ms`;
   const cell = value => `<td>${escapeHtml(String(value))}</td>`;
+  const actionCell = modelId => `<td class="inference-action-cell"><button type="button" class="inference-menu-trigger" data-inference-model="${escapeHtml(modelId)}" aria-label="Actions for ${escapeHtml(modelId)}" aria-haspopup="menu" aria-expanded="false">⋮</button></td>`;
+
+  function closeMenu({restoreFocus = false} = {}) {
+    if (menu.hidden) return;
+    menu.hidden = true;
+    menuTrigger?.setAttribute('aria-expanded', 'false');
+    if (restoreFocus && menuTrigger?.isConnected) menuTrigger.focus();
+    menuModel = null;
+    menuTrigger = null;
+  }
+
+  function openMenu(trigger) {
+    closeMenu();
+    menuModel = trigger.dataset.inferenceModel;
+    menuTrigger = trigger;
+    menuError.hidden = true;
+    menuError.textContent = '';
+    keepMemory.setAttribute('aria-checked', String(retainedModels.has(menuModel)));
+    trigger.setAttribute('aria-expanded', 'true');
+    menu.hidden = false;
+    const triggerBox = trigger.getBoundingClientRect();
+    const menuBox = menu.getBoundingClientRect();
+    const margin = 8;
+    const left = Math.min(window.innerWidth - menuBox.width - margin, Math.max(margin, triggerBox.right - menuBox.width));
+    const below = triggerBox.bottom + 4;
+    const top = below + menuBox.height <= window.innerHeight - margin
+      ? below : Math.max(margin, triggerBox.top - menuBox.height - 4);
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    keepMemory.focus();
+  }
 
   function render() {
     if (!activity) return;
@@ -39,14 +76,16 @@
     drawSparkline(Array.from({length: 40}, (_, index) => buckets.get(minute - (39 - index) * 60) || 0));
     $('throughput-spark').title = 'Reported output tokens per second, averaged over each minute';
     const poolNames = new Map(activity.pools.map(pool => [pool.id, pool.name]));
+    retainedModels = new Set(activity.retained_models || []);
     const active = activity.active.map(request => ({...request, outcome: request.state, duration_ms: request.elapsed_ms}));
     const rows = [...active, ...activity.recent].slice(0, 12);
-    $('inference-recent').innerHTML = rows.length ? rows.map(request => {
+    const recentMarkup = rows.length ? rows.map(request => {
       const memory = request.memory_end || request.memory_start;
       const pool = poolNames.get(request.cluster_id) || request.cluster_id || 'Unassigned';
       const memoryText = memory ? `${memory.used_gib.toFixed(1)} / ${memory.total_gib.toFixed(1)} GiB` : 'Unavailable';
-      return `<tr>${cell(new Date(request.started_at * 1000).toLocaleTimeString())}${cell(`${request.model_id} · ${pool}`)}${cell(request.outcome)}${cell(milliseconds(request.duration_ms))}${cell(`${number(request.input_tokens)} / ${number(request.output_tokens)}`)}${cell(memoryText)}</tr>`;
-    }).join('') : '<tr><td colspan="6">Tracking is ready. Requests appear here as clients use the pool endpoints.</td></tr>';
+      return `<tr>${cell(new Date(request.started_at * 1000).toLocaleTimeString())}${cell(`${request.model_id} · ${pool}`)}${cell(request.outcome)}${cell(milliseconds(request.duration_ms))}${cell(`${number(request.input_tokens)} / ${number(request.output_tokens)}`)}${cell(memoryText)}${actionCell(request.model_id)}</tr>`;
+    }).join('') : '<tr><td colspan="7">Tracking is ready. Requests appear here as clients use the pool endpoints.</td></tr>';
+    if (menu.hidden) $('inference-recent').innerHTML = recentMarkup;
     $('inference-pools').innerHTML = activity.pools.map(pool => {
       const machines = pool.machines;
       const used = machines.reduce((sum, machine) => sum + (machine.memory_used_gib || 0), 0);
@@ -57,6 +96,48 @@
     const persistence = activity.persistence;
     $('inference-tracking-note').textContent = `${activity.coverage} Memory is a shared pool sample, not per-request allocation. Records retain no prompts, responses or credentials. ${persistence.healthy ? 'Journal healthy' : 'Journal write failing; retry pending'} · ${persistence.pending} pending · ${persistence.dropped} dropped.`;
   }
+
+  $('inference-recent').addEventListener('click', event => {
+    const trigger = event.target.closest('.inference-menu-trigger');
+    if (!trigger) return;
+    if (trigger === menuTrigger && !menu.hidden) closeMenu({restoreFocus: true});
+    else openMenu(trigger);
+  });
+  keepMemory.addEventListener('click', async () => {
+    if (!menuModel) return;
+    const modelId = menuModel;
+    const shouldRetain = !retainedModels.has(modelId);
+    keepMemory.disabled = true;
+    menuError.hidden = true;
+    try {
+      await api(`/api/v1/pool/models/${encodeURIComponent(modelId)}/retention`, {
+        method: 'PATCH',
+        headers: window.adminAuthHeaders(),
+        body: JSON.stringify({keep_loaded: shouldRetain}),
+      });
+      if (shouldRetain) retainedModels.add(modelId);
+      else retainedModels.delete(modelId);
+      keepMemory.setAttribute('aria-checked', String(shouldRetain));
+      $('inference-action-status').textContent = shouldRetain
+        ? `${modelId} will be kept in memory.`
+        : `${modelId} may now be unloaded when the pool needs memory.`;
+      closeMenu({restoreFocus: true});
+      void refresh();
+    } catch (error) {
+      menuError.textContent = error.message;
+      menuError.hidden = false;
+    } finally {
+      keepMemory.disabled = false;
+    }
+  });
+  document.addEventListener('click', event => {
+    if (!menu.hidden && !menu.contains(event.target) && !event.target.closest('.inference-menu-trigger')) closeMenu();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !menu.hidden) closeMenu({restoreFocus: true});
+  });
+  window.addEventListener('resize', () => closeMenu());
+  window.addEventListener('scroll', () => closeMenu(), true);
 
   window.renderTrackedInference = render;
   async function refresh() {

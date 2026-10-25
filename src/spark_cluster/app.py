@@ -69,6 +69,7 @@ from .model_manager import (
 from .model_pool import (
     ModelPool,
     ModelPreferences,
+    ModelRetentionRequest,
     NodeLoadRequest,
     PoolLoadRequest,
     PoolNode,
@@ -797,6 +798,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {
             **inference_tracker.summary(limit),
             "runtime_metrics": telemetry_service.latest.model_dump(mode="json"),
+            "retained_models": sorted(
+                model_id
+                for model_id, preferences in model_pool.preferences.items()
+                if preferences.keep_loaded
+            ),
         }
 
     @app.get("/api/v1/telemetry", response_model=InferenceTelemetry)
@@ -1136,6 +1142,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def pool_preferences(model_id: str, preferences: ModelPreferences):
         try:
             return await model_pool.update_preferences(model_id, preferences)
+        except (KeyError, ValueError) as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.patch(
+        "/api/v1/pool/models/{model_id:path}/retention",
+        dependencies=[Depends(require_model_token)],
+    )
+    async def pool_retention(model_id: str, request: ModelRetentionRequest):
+        try:
+            return await model_pool.update_retention(model_id, request.keep_loaded)
         except (KeyError, ValueError) as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 

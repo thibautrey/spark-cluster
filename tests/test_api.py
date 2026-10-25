@@ -303,6 +303,21 @@ def test_pool_mutations_require_admin_and_reads_expose_no_recipes(tmp_path):
         )
         assert result.status_code == 200
         assert result.json()["keep_loaded"] is True
+        assert "org/model" in client.get("/api/v1/inference/activity").json()["retained_models"]
+        assert (
+            client.patch(
+                "/api/v1/pool/models/org/model/retention", json={"keep_loaded": False}
+            ).status_code
+            == 401
+        )
+        retention = client.patch(
+            "/api/v1/pool/models/org/model/retention",
+            json={"keep_loaded": False},
+            headers={"Authorization": "Bearer test-admin"},
+        )
+        assert retention.status_code == 200
+        assert retention.json()["keep_loaded"] is False
+        assert "org/model" not in client.get("/api/v1/inference/activity").json()["retained_models"]
         invalid = client.put(
             "/api/v1/pool/models/org/model/settings",
             json={"last_settings": {"model_id": "org/other", "served_model_name": "wrong"}},
