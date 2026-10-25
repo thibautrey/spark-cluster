@@ -154,6 +154,11 @@ async def test_saved_settings_are_reused_after_restart(tmp_path):
     await pool.update_preferences(
         "org/model", ModelPreferences(cluster_id="second", keep_loaded=True, last_settings=settings)
     )
+    updated = await pool.update_retention("org/model", False)
+    assert updated.cluster_id == "second"
+    assert updated.last_settings.context_length == 32768
+    assert updated.keep_loaded is False
+    await pool.update_retention("org/model", True)
     restarted = FakePool(tmp_path)
     job = await restarted.enqueue(PoolLoadRequest(model_id="org/model"))
     await finished(restarted)

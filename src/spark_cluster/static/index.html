@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=runtime-readiness-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=keep-memory-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -152,7 +152,15 @@
           </div>
           <article class="panel overview-runtime"><div class="panel-head"><h2>Inference activity</h2><a href="#launch">Manage runtime ↗</a></div><p id="overview-model">Connecting to inference tracking…</p><dl id="overview-runtime-stats"></dl>
             <p class="overview-updated" id="inference-coverage"></p>
-            <div class="overview-table-wrap"><table class="overview-table"><thead><tr><th>Recent requests</th><th>Model / pool</th><th>Result</th><th>Latency</th><th>Tokens in / out</th><th>Pool memory</th></tr></thead><tbody id="inference-recent"><tr><td colspan="6">Loading recorded activity…</td></tr></tbody></table></div>
+            <div class="overview-table-wrap"><table class="overview-table"><thead><tr><th>Recent requests</th><th>Model / pool</th><th>Result</th><th>Latency</th><th>Tokens in / out</th><th>Pool memory</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody id="inference-recent"><tr><td colspan="7">Loading recorded activity…</td></tr></tbody></table></div>
+            <div class="inference-row-menu" id="inference-row-menu" role="menu" hidden>
+              <button id="inference-keep-memory" type="button" role="menuitemcheckbox" aria-checked="false">
+                <span class="inference-menu-check" aria-hidden="true">✓</span>
+                <span><b>Keep in memory</b><small>Prevent automatic unloading and eviction.</small></span>
+              </button>
+              <p class="inference-menu-error" id="inference-menu-error" role="alert" hidden></p>
+            </div>
+            <p class="sr-only" id="inference-action-status" role="status" aria-live="polite"></p>
             <details class="inference-breakdown"><summary>Pool usage and tracking details</summary><div id="inference-pools"></div><div id="inference-groups"></div><p id="inference-tracking-note" class="overview-updated"></p></details></article>
           <article class="panel"><div class="panel-head"><h2>Node resources</h2><a href="#topology">View topology ↗</a></div><div class="overview-table-wrap"><table class="overview-table"><thead><tr><th scope="col">Node</th><th scope="col">Status</th><th scope="col">GPU load</th><th scope="col">Memory</th><th scope="col">Temperature</th></tr></thead><tbody id="overview-nodes"><tr><td colspan="5">Waiting for telemetry</td></tr></tbody></table></div><p class="overview-updated" id="overview-updated">Uses the existing telemetry stream</p></article>
         </section>
@@ -467,6 +475,6 @@
     <script src="/assets/setup.js?v=automated-ssh-bootstrap-v1"></script>
     <script src="/assets/pool.js?v=adaptive-pools-v1" defer></script>
     <script src="/assets/runtimes.js?v=runtime-readiness-v1" defer></script>
-    <script src="/assets/inference.js?v=inference-tracking-v1" defer></script>
+    <script src="/assets/inference.js?v=keep-memory-v1" defer></script>
 </body>
 </html>
