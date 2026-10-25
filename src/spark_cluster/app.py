@@ -1199,9 +1199,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
-    @app.post(
-        "/api/v1/pool/scale", status_code=202, dependencies=[Depends(require_model_token)]
-    )
+    @app.post("/api/v1/pool/scale", status_code=202, dependencies=[Depends(require_model_token)])
     async def pool_scale(request: PoolScaleRequest):
         try:
             return await model_pool.scale_instances(request)
