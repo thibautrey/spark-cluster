@@ -1,5 +1,6 @@
 import hashlib
 import json
+import time
 
 import httpx
 import pytest
@@ -46,7 +47,7 @@ async def test_docker_hub_pagination_cache_and_stale_fallback():
     assert (await registry.versions("vllm", limit=2))["cached"]
     assert len(calls) == 1
     key = ("vllm", "", 2, "linux/amd64")
-    registry.cache[key] = (0, first)
+    registry.cache[key] = (time.monotonic() - 301, first)
     offline = True
     result = await registry.versions("vllm", limit=2)
     assert result["stale"] and result["warning"]
