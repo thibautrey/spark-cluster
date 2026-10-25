@@ -18,7 +18,24 @@ from .pool_memory import command_value
 MAX_CONCURRENCY = 64  # Also bounded by the existing gateway request queue.
 
 
-def runtime_parallelism(payload: dict, *, prepare=False) -> int:
+class RuntimeCapacityError(RuntimeError):
+    pass
+
+
+def startup_capacity_failure(state: dict, logs: bytes) -> bool:
+    # Exit 137 alone can also be a liveness/manual kill; it does not prove OOM.
+    return bool(state.get("OOMKilled")) or any(
+        message in logs.lower()
+        for message in (
+            b"cuda out of memory",
+            b"cuda error: out of memory",
+            b"torch.outofmemoryerror",
+            b"no available memory for the cache blocks",
+        )
+    )
+
+
+def runtime_parallelism(payload: dict, *, prepare=False, ceiling=MAX_CONCURRENCY) -> int:
     """Only validated continuous-batching engines receive automatic launch flags."""
     command = payload.setdefault("Cmd", []) if prepare else payload.get("Cmd", [])
     evidence = str(payload.get("Image", "")) + " " + str(payload.get("Entrypoint", ""))
@@ -32,14 +49,14 @@ def runtime_parallelism(payload: dict, *, prepare=False) -> int:
     if prepare and flag:
         for index, item in enumerate(command):
             if item == flag and index + 1 < len(command):
-                command[index + 1] = str(MAX_CONCURRENCY)
+                command[index + 1] = str(ceiling)
                 break
             if isinstance(item, str) and item.startswith(flag + "="):
-                command[index] = flag + "=" + str(MAX_CONCURRENCY)
+                command[index] = flag + "=" + str(ceiling)
                 break
         else:
-            command.extend([flag, str(MAX_CONCURRENCY)])
-        return MAX_CONCURRENCY
+            command.extend([flag, str(ceiling)])
+        return ceiling
     flags = [flag] if flag else ["--parallel", "-np"]
     for candidate in flags:
         value = command_value(command, candidate)
@@ -52,6 +69,8 @@ def runtime_parallelism(payload: dict, *, prepare=False) -> int:
 
 
 def response_feedback(scope, model_id, path, send):
+    if scope.get("method") in {"GET", "HEAD", "OPTIONS", "DELETE"}:
+        return scope, None, send
     record = scope.get(SCOPE_KEY)
     if record:
         return scope, record, send
@@ -312,14 +331,17 @@ class ConcurrencyController:
             self.backoff("Sustained KV-cache pressure")
 
     def public(self):
+        runtime_limited = self.ceiling == 1 and self.state != "backoff"
         return {
             "mode": "automatic",
             "limit": self.limit,
             "running": self.running,
             "waiting": len(self.queue),
             "runtime_ceiling": self.ceiling,
-            "state": self.state,
-            "reason": self.reason,
+            "state": "runtime-limited" if runtime_limited else self.state,
+            "reason": "Runtime exposes one execution slot; requested context is preserved"
+            if runtime_limited
+            else self.reason,
             "samples": self.samples,
             "best_limit": self.best_limit,
             "throughput": self.best_score,

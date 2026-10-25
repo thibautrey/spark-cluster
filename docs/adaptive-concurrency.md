@@ -34,6 +34,10 @@ preserved. Raising the scheduler ceiling does not reserve 64 full contexts: the
 engine manages its bounded KV pool and the adaptive gate determines actual admission.
 An already running older Docker recipe is upgraded only when active streams have
 drained, including a retained runtime; streams are never interrupted for tuning.
+If the engine reports a startup memory failure, batching capacity is halved and
+retried within the same reservation. The successful ceiling is retained, so a smaller
+GPU does not repeatedly retry an oversized CUDA-graph setup. Unrelated errors and
+exit code 137 without OOM evidence do not trigger this retry policy.
 
 Other engines retain their validated scheduling settings. In particular, llama.cpp
 admission respects the configured parallel-slot count because increasing it would
