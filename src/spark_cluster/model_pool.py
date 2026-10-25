@@ -240,8 +240,10 @@ class PoolNode:
         kv = fit.resident_kv_cache_gib / launch.pipeline_parallel
         overhead = max(2.0 if settings.active_hardware == "nvidia-gpu" else 8.0, weights * 0.08)
         return RuntimeResources(
-            gpu_count=ranks, required_gib_per_gpu=weights + kv + overhead,
-            memory_fraction=launch.gpu_memory_utilization, mode=launch.memory_budget_mode,
+            gpu_count=ranks,
+            required_gib_per_gpu=weights + kv + overhead,
+            memory_fraction=launch.gpu_memory_utilization,
+            mode=launch.memory_budget_mode,
         )
 
     @staticmethod
@@ -272,7 +274,8 @@ class PoolNode:
             result.update(
                 can_load=bool(allocation.gpu_ids) or allocation.waiting,
                 missing_gib=None if not allocation.gpu_ids else 0.0,
-                context_length=self.profile_context(profile, 8192), confidence="runtime-budget",
+                context_length=self.profile_context(profile, 8192),
+                confidence="runtime-budget",
             )
             return result
         model_path = model.get("model_path")
@@ -290,7 +293,8 @@ class PoolNode:
         saved = model.get("last_settings")
         if gpus is not None and not saved:
             saved = ModelLaunchRequest(
-                model_id=model["id"], served_model_name=model["id"].rsplit("/", 1)[-1],
+                model_id=model["id"],
+                served_model_name=model["id"].rsplit("/", 1)[-1],
                 context_length=8192,
             ).model_dump()
         profile = model.get("profile")
@@ -302,7 +306,8 @@ class PoolNode:
                 bits_per_weight=launch.bits_per_weight,
                 context_length=launch.context_length,
                 concurrent_sequences=max(launch.concurrent_sequences, launch.max_num_seqs)
-                if gpus is not None else launch.concurrent_sequences,
+                if gpus is not None
+                else launch.concurrent_sequences,
                 kv_cache_dtype=launch.kv_cache_dtype,
             )
             fit = await self.models.fit_for_local(request)
@@ -333,21 +338,28 @@ class PoolNode:
         if gpus is not None:
             if not profile:
                 profile = InferenceProfile(
-                    id="capacity-preview", model=model["id"], model_id=model["id"],
-                    listen_port=18000, upstream_port=28000, container={},
+                    id="capacity-preview",
+                    model=model["id"],
+                    model_id=model["id"],
+                    listen_port=18000,
+                    upstream_port=28000,
+                    container={},
                 )
-            profile = profile.model_copy(update={
-                "resources": self.resources_for_fit(launch, fit, self.settings)
-            })
+            profile = profile.model_copy(
+                update={"resources": self.resources_for_fit(launch, fit, self.settings)}
+            )
             allocation = await self.demand.plan(profile, gpus)
             result = allocation.as_dict()
             result.update(
                 can_load=bool(allocation.gpu_ids) or allocation.waiting,
                 missing_gib=0.0 if allocation.gpu_ids else None,
-                context_length=fit.context_length, confidence=fit.confidence,
+                context_length=fit.context_length,
+                confidence=fit.confidence,
             )
             if not allocation.gpu_ids:
-                result["required_gib"] = profile.resources.required_gib_per_gpu * profile.resources.gpu_count
+                result["required_gib"] = (
+                    profile.resources.required_gib_per_gpu * profile.resources.gpu_count
+                )
             return result
         missing_gib = max(0.0, required_gib - available_gib)
         return {
@@ -396,9 +408,14 @@ class PoolNode:
     async def inventory(self) -> dict:
         ready = [r for r in self.demand.residents.values() if r.status == "ready"]
         if ready:
-            await asyncio.gather(*(self.capture_runtime_metadata(
-                r.profile.model_id or r.profile.model, r.profile.upstream
-            ) for r in ready))
+            await asyncio.gather(
+                *(
+                    self.capture_runtime_metadata(
+                        r.profile.model_id or r.profile.model, r.profile.upstream
+                    )
+                    for r in ready
+                )
+            )
         elif self.native.get("model_id"):
             await self.capture_runtime_metadata(
                 self.native["model_id"],
@@ -430,7 +447,8 @@ class PoolNode:
                 **models.get(key, {}),
                 "id": key,
                 "loadable": True,
-                "loaded": p.id in self.demand.residents and self.demand.residents[p.id].status == "ready",
+                "loaded": p.id in self.demand.residents
+                and self.demand.residents[p.id].status == "ready",
                 "keep_loaded": p.id in self.demand.retained,
                 "last_settings": p.launch_settings or None,
                 "editable_settings": p.id in self.demand.dynamic,
@@ -442,23 +460,37 @@ class PoolNode:
                 "runtime": profile_runtime(p),
                 "profile": p,
             }
-        resident_models = [dict(r.public(), keep_loaded=r.profile.id in self.demand.retained)
-                           for r in self.demand.residents.values()]
+        resident_models = [
+            dict(r.public(), keep_loaded=r.profile.id in self.demand.retained)
+            for r in self.demand.residents.values()
+        ]
         if not resident_models and self.native.get("model_id"):
-            resident_models = [{"model_id": self.native["model_id"], "status": "ready",
-                                "keep_loaded": self.native.get("keep_loaded", False),
-                                "active_requests": int(self.native_lock.locked())}]
+            resident_models = [
+                {
+                    "model_id": self.native["model_id"],
+                    "status": "ready",
+                    "keep_loaded": self.native.get("keep_loaded", False),
+                    "active_requests": int(self.native_lock.locked()),
+                }
+            ]
         active_id = resident_models[0]["model_id"] if len(resident_models) == 1 else None
         retained = any(r["keep_loaded"] for r in resident_models)
         cluster = self.local_cluster()
-        snapshot = await asyncio.to_thread(local_gpu_snapshot, cluster, self.settings) if cluster else None
+        snapshot = (
+            await asyncio.to_thread(local_gpu_snapshot, cluster, self.settings) if cluster else None
+        )
         gpus = await self.demand.gpu_memory() if cluster else None
         availability = gpu_availability(
             gpus or [], self.demand.residents, self.settings.model_usable_memory_fraction
         )
-        available_gib = sum(g["available_gib"] for g in availability) if gpus is not None else (
-            self.settings.fallback_node_count * self.settings.fallback_node_memory_gib
-            * self.settings.model_usable_memory_fraction
+        available_gib = (
+            sum(g["available_gib"] for g in availability)
+            if gpus is not None
+            else (
+                self.settings.fallback_node_count
+                * self.settings.fallback_node_memory_gib
+                * self.settings.model_usable_memory_fraction
+            )
         )
         for model in models.values():
             model["capacity"] = await self.model_capacity(model, available_gib, gpus)
@@ -487,11 +519,25 @@ class PoolNode:
             "active_model": active_id,
             "resident_models": resident_models,
             "multi_residency": cluster is not None,
-            "gpus": [{key: gpu[key] for key in (
-                "id", "index", "total_gib", "used_gib", "available_gib", "reserved_gib", "external_gib"
-            )} for gpu in availability],
+            "gpus": [
+                {
+                    key: gpu[key]
+                    for key in (
+                        "id",
+                        "index",
+                        "total_gib",
+                        "used_gib",
+                        "available_gib",
+                        "reserved_gib",
+                        "external_gib",
+                    )
+                }
+                for gpu in availability
+            ],
             "keep_loaded": bool(retained),
-            "busy": any(r.get("active_requests") or r["status"] == "starting" for r in resident_models),
+            "busy": any(
+                r.get("active_requests") or r["status"] == "starting" for r in resident_models
+            ),
             "machines": await asyncio.to_thread(self.machine_inventory, snapshot),
         }
 
@@ -568,9 +614,12 @@ class PoolNode:
             key = "model-" + hashlib.sha256(request.model_id.encode()).hexdigest()[:12]
             # Each resident runtime owns a separate private port.
             async with self.port_lock:
-                used_ports = {port for p in self.demand.profiles
-                              for port in (p.upstream_port, p.listen_port)}
-                used_ports.update(port for value in self.ports.values() for port in (value, value + 1000))
+                used_ports = {
+                    port for p in self.demand.profiles for port in (p.upstream_port, p.listen_port)
+                }
+                used_ports.update(
+                    port for value in self.ports.values() for port in (value, value + 1000)
+                )
                 port = profile.upstream_port if profile else self.ports.get(request.model_id)
                 if port is None:
                     port = 31000
@@ -628,8 +677,15 @@ class PoolNode:
             return {
                 "compatible": allocation is None or allocation["fits"] or allocation["waiting"],
                 "runtime": runtime,
-                **({"placement": allocation, "waiting": allocation["waiting"],
-                    "reason": allocation["reason"]} if allocation else {}),
+                **(
+                    {
+                        "placement": allocation,
+                        "waiting": allocation["waiting"],
+                        "reason": allocation["reason"],
+                    }
+                    if allocation
+                    else {}
+                ),
             }
         except (ValueError, RuntimeError) as error:
             return {"compatible": False, "reason": self.models.safe_error(error)}
@@ -644,18 +700,22 @@ class PoolNode:
                         resident = self.demand.residents.get(previous.id)
                         if resident and previous.launch_settings != profile.launch_settings:
                             if previous.id in self.demand.retained:
-                                raise ValueError("Unload the retained model before changing its runtime settings")
+                                raise ValueError(
+                                    "Unload the retained model before changing its runtime settings"
+                                )
                             await self.demand._remove(previous)
                         self.demand.profiles[self.demand.profiles.index(previous)] = profile
                         self.demand.persist()
                     else:
                         self.demand.register(profile)
                 async with asyncio.timeout(1800):
-                    await self.demand.ensure(profile, wait=True, keep_loaded=request.keep_loaded,
-                                             _profile_locked=True)
+                    await self.demand.ensure(
+                        profile, wait=True, keep_loaded=request.keep_loaded, _profile_locked=True
+                    )
             await self.capture_runtime_metadata(request.model_id, profile.upstream)
             return {
-                "model_id": request.model_id, "status": "ready",
+                "model_id": request.model_id,
+                "status": "ready",
                 "settings": profile.launch_settings or None,
             }
         # Physical Kubernetes bridge: the existing validated launcher owns the runtime.
@@ -695,8 +755,10 @@ class PoolNode:
         profile = self.demand.profile_for(model_id)
         if profile:
             async with self.demand.lock:
-                if retained and (profile.id not in self.demand.residents
-                                 or self.demand.residents[profile.id].status != "ready"):
+                if retained and (
+                    profile.id not in self.demand.residents
+                    or self.demand.residents[profile.id].status != "ready"
+                ):
                     raise ValueError("The model was unloaded; load it again before retaining it")
                 self.demand.retain(profile, retained)
         async with self.native_lock:
@@ -729,11 +791,20 @@ class PoolNode:
 
 def node_resident(node, model_id):
     if "resident_models" in node:
-        return next((r for r in node["resident_models"]
-                     if r["model_id"] == model_id and r.get("status", "ready") == "ready"), None)
+        return next(
+            (
+                r
+                for r in node["resident_models"]
+                if r["model_id"] == model_id and r.get("status", "ready") == "ready"
+            ),
+            None,
+        )
     if node.get("active_model") == model_id:
-        return {"model_id": model_id, "active_requests": int(node.get("busy", False)),
-                "keep_loaded": node.get("keep_loaded", False)}
+        return {
+            "model_id": model_id,
+            "active_requests": int(node.get("busy", False)),
+            "keep_loaded": node.get("keep_loaded", False),
+        }
     return None
 
 
@@ -903,8 +974,17 @@ class ModelPool:
                             "cluster_id": node["id"],
                             "cluster_name": node["name"],
                             "keep_loaded": m.get("keep_loaded", False),
-                            **{key: value for key, value in (node_resident(node, m["id"]) or {}).items()
-                               if key in {"gpu_ids", "budget_gib", "active_requests", "gpu_memory_utilization"}},
+                            **{
+                                key: value
+                                for key, value in (node_resident(node, m["id"]) or {}).items()
+                                if key
+                                in {
+                                    "gpu_ids",
+                                    "budget_gib",
+                                    "active_requests",
+                                    "gpu_memory_utilization",
+                                }
+                            },
                         }
                     )
         for m in models.values():
@@ -942,9 +1022,14 @@ class ModelPool:
         ]
         if not residents:
             return None
-        idle = sorted((node for node in residents
-                       if not node_resident(node, model_id).get("active_requests")),
-                      key=lambda node: node["id"])
+        idle = sorted(
+            (
+                node
+                for node in residents
+                if not node_resident(node, model_id).get("active_requests")
+            ),
+            key=lambda node: node["id"],
+        )
         choices = idle or sorted(residents, key=lambda node: node["id"])
         cursor = self._routing_cursor.get(model_id, 0)
         selected = choices[cursor % len(choices)]
@@ -1101,13 +1186,19 @@ class ModelPool:
                     compatible = False
                     for node in candidates:
                         shared = node.get("multi_residency", False)
-                        if (node["id"] in self.reserved
+                        if (
+                            node["id"] in self.reserved
                             or (node["id"], request.model_id) in self.reserved
-                            or (not shared and node["busy"])):
+                            or (not shared and node["busy"])
+                        ):
                             compatible = True
                             reasons.append(node["name"] + ": another request is active")
                             continue
-                        if not shared and node["keep_loaded"] and node["active_model"] != request.model_id:
+                        if (
+                            not shared
+                            and node["keep_loaded"]
+                            and node["active_model"] != request.model_id
+                        ):
                             compatible = True
                             reasons.append(node["name"] + ": retained model reserves the resources")
                             continue
@@ -1124,7 +1215,11 @@ class ModelPool:
                             continue
                         compatible = True
                         if plan.get("waiting"):
-                            reasons.append(node["name"] + ": " + (plan.get("reason") or "Waiting for GPU memory"))
+                            reasons.append(
+                                node["name"]
+                                + ": "
+                                + (plan.get("reason") or "Waiting for GPU memory")
+                            )
                             continue
                         selected = cluster
                         job["runtime"] = plan.get("runtime")
@@ -1262,8 +1357,11 @@ class ModelPool:
             if request.delta < 0:
                 if len(instances) == 1:
                     raise ValueError("At least one model instance must remain loaded")
-                idle = [node for node in instances
-                        if not node_resident(node, request.model_id).get("active_requests")]
+                idle = [
+                    node
+                    for node in instances
+                    if not node_resident(node, request.model_id).get("active_requests")
+                ]
                 if not idle:
                     raise ValueError(
                         "Wait for an active request to finish before removing an instance"

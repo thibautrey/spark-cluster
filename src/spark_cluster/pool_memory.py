@@ -53,9 +53,7 @@ def imported_resources(profile, gpus: list[dict]) -> RuntimeResources:
     host = profile.container.get("HostConfig", {})
     requests = host.get("DeviceRequests") or []
     devices = [str(d) for r in requests for d in r.get("DeviceIDs", [])]
-    env = dict(
-        item.split("=", 1) for item in profile.container.get("Env", []) if "=" in item
-    )
+    env = dict(item.split("=", 1) for item in profile.container.get("Env", []) if "=" in item)
     visible = env.get("NVIDIA_VISIBLE_DEVICES") or env.get("CUDA_VISIBLE_DEVICES")
     if not devices and visible:
         devices = visible.split(",")
@@ -71,8 +69,10 @@ def imported_resources(profile, gpus: list[dict]) -> RuntimeResources:
                 fraction = float(value)
                 if math.isfinite(fraction) and 0 < fraction < 1:
                     return RuntimeResources(
-                        gpu_count=max(1, len(devices)), gpu_ids=devices,
-                        memory_fraction=fraction, mode="fixed",
+                        gpu_count=max(1, len(devices)),
+                        gpu_ids=devices,
+                        memory_fraction=fraction,
+                        mode="fixed",
                     )
             except ValueError:
                 pass
@@ -87,17 +87,24 @@ def gpu_availability(gpus, residents, usable_fraction, exclude=()):
         managed = gpu.get("managed_gib", {})
         external = max(0.0, gpu["used_gib"] - sum(managed.get(r.profile.id, 0) for r in owners))
         remaining = [r for r in owners if r.profile.id not in exclude]
-        reserved = sum(max(r.budget_gib[gpu["id"]], managed.get(r.profile.id, 0)) for r in remaining)
+        reserved = sum(
+            max(r.budget_gib[gpu["id"]], managed.get(r.profile.id, 0)) for r in remaining
+        )
         usable = gpu["total_gib"] * usable_fraction
         free = max(0.0, usable - external - reserved)
         # Missing process attribution cannot safely support sharing a live device.
         if remaining and not gpu.get("accounting_complete", True):
             free = 0.0
-        result.append({
-            **gpu, "external_gib": external, "reserved_gib": reserved,
-            "available_gib": free, "occupied": bool(remaining),
-            "exclusive": any(r.exclusive for r in remaining),
-        })
+        result.append(
+            {
+                **gpu,
+                "external_gib": external,
+                "reserved_gib": reserved,
+                "available_gib": free,
+                "occupied": bool(remaining),
+                "exclusive": any(r.exclusive for r in remaining),
+            }
+        )
     return result
 
 
@@ -110,9 +117,10 @@ def _allocate(resources, availability):
         allowed.sort(key=lambda g: (-g["available_gib"], g["id"]))
         if len(allowed) < resources.gpu_count:
             return None
-        chosen = allowed[:resources.gpu_count]
+        chosen = allowed[: resources.gpu_count]
         return MemoryPlan(
-            [g["id"] for g in chosen], {g["id"]: g["available_gib"] for g in chosen},
+            [g["id"] for g in chosen],
+            {g["id"]: g["available_gib"] for g in chosen},
             available_gib=sum(g["available_gib"] for g in chosen),
         )
     allowed = [g for g in allowed if not g["exclusive"]]
@@ -122,28 +130,39 @@ def _allocate(resources, availability):
             return None
         # Each possible smallest rank determines a common engine fraction. This
         # avoids a combinatorial GPU-subset search on heterogeneous hardware.
-        fractions = sorted({
-            math.ceil(resources.required_gib_per_gpu / g["total_gib"] * 10000) / 10000
-            for g in allowed if g["total_gib"] > 0
-        })
+        fractions = sorted(
+            {
+                math.ceil(resources.required_gib_per_gpu / g["total_gib"] * 10000) / 10000
+                for g in allowed
+                if g["total_gib"] > 0
+            }
+        )
     choices = []
     for fraction in fractions:
         if fraction > resources.memory_fraction + 1e-9:
             continue
-        eligible = [g for g in allowed if (
-            g["total_gib"] * fraction <= g["available_gib"] + 1e-6
-            and (resources.required_gib_per_gpu is None
-                 or g["total_gib"] * fraction + 1e-6 >= resources.required_gib_per_gpu)
-        )]
+        eligible = [
+            g
+            for g in allowed
+            if (
+                g["total_gib"] * fraction <= g["available_gib"] + 1e-6
+                and (
+                    resources.required_gib_per_gpu is None
+                    or g["total_gib"] * fraction + 1e-6 >= resources.required_gib_per_gpu
+                )
+            )
+        ]
         eligible.sort(key=lambda g: (g["occupied"], -g["available_gib"], g["id"]))
         if len(eligible) < resources.gpu_count:
             continue
-        chosen = eligible[:resources.gpu_count]
+        chosen = eligible[: resources.gpu_count]
         budget = {g["id"]: g["total_gib"] * fraction for g in chosen}
         plan = MemoryPlan(
             list(budget), budget, fraction, available_gib=sum(g["available_gib"] for g in chosen)
         )
-        choices.append((sum(g["occupied"] for g in chosen), sum(budget.values()), plan.gpu_ids, plan))
+        choices.append(
+            (sum(g["occupied"] for g in chosen), sum(budget.values()), plan.gpu_ids, plan)
+        )
     return min(choices, key=lambda item: item[:3])[-1] if choices else None
 
 
@@ -155,9 +174,14 @@ def plan_memory(resources, gpus, residents, retained, usable_fraction=0.82):
     if plan:
         return plan
     victims = sorted(
-        (r for r in residents.values() if r.profile.id not in retained
-         and not r.active_requests and r.status == "ready"
-         and (not resources.gpu_ids or set(r.gpu_ids) & set(resources.gpu_ids))),
+        (
+            r
+            for r in residents.values()
+            if r.profile.id not in retained
+            and not r.active_requests
+            and r.status == "ready"
+            and (not resources.gpu_ids or set(r.gpu_ids) & set(resources.gpu_ids))
+        ),
         key=lambda r: (r.last_used, r.profile.id),
     )
     evict = []
@@ -168,12 +192,23 @@ def plan_memory(resources, gpus, residents, retained, usable_fraction=0.82):
             plan.evict = list(evict)
             plan.reason = "Free memory by unloading idle models: " + ", ".join(evict)
             return plan
-    empty = [{**g, "available_gib": g["total_gib"] * usable_fraction,
-              "occupied": False, "exclusive": False} for g in gpus]
+    empty = [
+        {
+            **g,
+            "available_gib": g["total_gib"] * usable_fraction,
+            "occupied": False,
+            "exclusive": False,
+        }
+        for g in gpus
+    ]
     possible = _allocate(resources, empty)
     return MemoryPlan(
         waiting=possible is not None,
-        reason=("Waiting for GPU memory: retained models, active requests, starting runtimes or external use"
-                if possible else "Model budget or parallelism exceeds the assigned GPU capacity"),
+        reason=(
+            "Waiting for GPU memory: retained models, active requests, "
+            "starting runtimes or external use"
+            if possible
+            else "Model budget or parallelism exceeds the assigned GPU capacity"
+        ),
         available_gib=sum(g["available_gib"] for g in available),
     )

@@ -4,24 +4,49 @@ import time
 
 import httpx
 import pytest
-
-from spark_cluster.on_demand import DemandProxy, InferenceProfile, OnDemandInference, ResidentRuntime
-from spark_cluster.pool_memory import RuntimeResources, gpu_availability, imported_resources, plan_memory
-
 from test_on_demand import Docker
+
+from spark_cluster.cluster_registry import ClusterTarget, GPUDevice
+from spark_cluster.config import Settings
+from spark_cluster.local_docker import DockerEngineClient
+from spark_cluster.model_pool import NodeLoadRequest, PoolNode
+from spark_cluster.models import LocalModel, ModelLaunchRequest
+from spark_cluster.on_demand import (
+    DemandProxy,
+    InferenceProfile,
+    OnDemandInference,
+    ResidentRuntime,
+)
+from spark_cluster.pool_memory import (
+    RuntimeResources,
+    gpu_availability,
+    imported_resources,
+    plan_memory,
+)
 
 
 def gpu(index=0, total=8.0, used=0.0, managed=None):
-    return {"id": f"gpu-{index}", "index": index, "total_gib": total,
-            "used_gib": used, "managed_gib": managed or {}, "accounting_complete": True}
+    return {
+        "id": f"gpu-{index}",
+        "index": index,
+        "total_gib": total,
+        "used_gib": used,
+        "managed_gib": managed or {},
+        "accounting_complete": True,
+    }
 
 
 def profile(name, required=2.0, devices=None, ranks=1):
     return InferenceProfile(
-        id=name, model=name, model_id=f"org/{name}", listen_port=18000, upstream_port=28000,
+        id=name,
+        model=name,
+        model_id=f"org/{name}",
+        listen_port=18000,
+        upstream_port=28000,
         container={"Image": "test", "Cmd": ["--gpu-memory-utilization", "0.82"]},
-        resources=RuntimeResources(gpu_count=ranks, gpu_ids=devices or [],
-                                   required_gib_per_gpu=required, mode="auto"),
+        resources=RuntimeResources(
+            gpu_count=ranks, gpu_ids=devices or [], required_gib_per_gpu=required, mode="auto"
+        ),
     )
 
 
@@ -48,7 +73,10 @@ def test_budget_counts_external_use_without_counting_managed_memory_twice():
     assert state["reserved_gib"] == 2.5
     assert state["available_gib"] == pytest.approx(3.06)
     devices[0]["managed_gib"]["first"] = 3.0
-    assert gpu_availability(devices, {"first": resident(first, amount=2.5)}, 0.82)[0]["reserved_gib"] == 3.0
+    assert (
+        gpu_availability(devices, {"first": resident(first, amount=2.5)}, 0.82)[0]["reserved_gib"]
+        == 3.0
+    )
 
 
 def test_sum_of_free_memory_does_not_make_a_single_gpu_model_fit():
@@ -58,8 +86,12 @@ def test_sum_of_free_memory_does_not_make_a_single_gpu_model_fit():
 
 
 def test_heterogeneous_parallel_ranks_use_the_same_fraction_without_overbooking():
-    plan = plan_memory(profile("parallel", required=3, ranks=2).resources,
-                       [gpu(total=8), gpu(1, total=16)], {}, set())
+    plan = plan_memory(
+        profile("parallel", required=3, ranks=2).resources,
+        [gpu(total=8), gpu(1, total=16)],
+        {},
+        set(),
+    )
     assert set(plan.gpu_ids) == {"gpu-0", "gpu-1"}
     assert plan.fraction == 0.375
     assert plan.budget_gib == {"gpu-1": 6.0, "gpu-0": 3.0}
@@ -79,10 +111,15 @@ def test_lru_eviction_protects_retained_busy_and_starting_runtimes():
 
 
 def test_imported_recipe_keeps_affinity_and_declared_budget():
-    p = profile("imported").model_copy(update={"resources": None, "container": {
-        "Cmd": ["--gpu-memory-utilization=0.4"],
-        "HostConfig": {"DeviceRequests": [{"DeviceIDs": ["1"]}]},
-    }})
+    p = profile("imported").model_copy(
+        update={
+            "resources": None,
+            "container": {
+                "Cmd": ["--gpu-memory-utilization=0.4"],
+                "HostConfig": {"DeviceRequests": [{"DeviceIDs": ["1"]}]},
+            },
+        }
+    )
     resources = imported_resources(p, [gpu(), gpu(1)])
     assert resources.gpu_ids == ["gpu-1"]
     assert resources.mode == "fixed"
@@ -97,8 +134,9 @@ def test_unknown_budget_only_reserves_its_assigned_gpu():
     items = {p.id: resident(p, exclusive=True, amount=6.56)}
     plan = plan_memory(profile("other").resources, [gpu(), gpu(1)], items, {p.id})
     assert plan.gpu_ids == ["gpu-1"]
-    unavailable = plan_memory(profile("other", devices=["gpu-0"]).resources,
-                              [gpu(), gpu(1)], items, {p.id})
+    unavailable = plan_memory(
+        profile("other", devices=["gpu-0"]).resources, [gpu(), gpu(1)], items, {p.id}
+    )
     assert unavailable.waiting
 
 
@@ -123,8 +161,8 @@ def manager_for(profiles, devices, path=None):
 async def test_two_residents_survive_with_actual_engine_caps_and_targeted_unload(readiness):
     first, second = profile("first"), profile("second")
     manager = manager_for([first, second], [gpu()])
-    await manager.ensure(first)
-    await manager.ensure(second)
+    await manager.ensure(first, keep_loaded=True)
+    await manager.ensure(second, keep_loaded=True)
     assert set(manager.residents) == {"first", "second"}
     assert manager.active is None
     assert manager.status()["active_profiles"] == ["first", "second"]
@@ -132,9 +170,13 @@ async def test_two_residents_survive_with_actual_engine_caps_and_targeted_unload
         payload = manager.docker.containers[p.name]["Config"]
         assert payload["HostConfig"]["DeviceRequests"][0]["DeviceIDs"] == ["gpu-0"]
         assert payload["Cmd"] == ["--gpu-memory-utilization", "0.25"]
-    await manager.remove(first)
+    node = PoolNode.__new__(PoolNode)
+    node.demand = manager
+    await node.unload(first.model_id)
     assert manager.active is second
     assert second.name in manager.docker.containers
+    assert first.id not in manager.retained
+    assert second.id in manager.retained
 
 
 @pytest.mark.asyncio
@@ -209,8 +251,9 @@ async def test_two_streams_run_concurrently_and_pin_their_own_models(monkeypatch
     await manager.ensure(second)
 
     async def infer(p):
-        async with original(transport=httpx.ASGITransport(app=DemandProxy(manager, p)),
-                            base_url="http://test") as client:
+        async with original(
+            transport=httpx.ASGITransport(app=DemandProxy(manager, p)), base_url="http://test"
+        ) as client:
             return await client.post("/v1/chat/completions", json={"stream": True})
 
     responses = await asyncio.wait_for(asyncio.gather(infer(first), infer(second)), 2)
@@ -259,7 +302,125 @@ async def test_restart_adopts_multiple_retained_residents_without_recreating(rea
         await restored.start()
         assert set(restored.residents) == {p.id for p in profiles}
         assert restored.status()["active_profile"] is None
-        assert not any(method in {"POST", "DELETE"} for method, _, _ in restored.docker.calls[count:])
+        assert not any(
+            method in {"POST", "DELETE"} for method, _, _ in restored.docker.calls[count:]
+        )
     finally:
         await restored.stop()
     assert len(restored.docker.containers) == 2
+
+
+@pytest.mark.asyncio
+async def test_docker_process_attribution_separates_external_gpu_use(tmp_path, monkeypatch):
+    import spark_cluster.local_docker as local_docker
+
+    socket = tmp_path / "docker.sock"
+    socket.touch()
+    settings = Settings(docker_runtime_enabled=True, docker_socket_path=socket)
+    docker = DockerEngineClient(settings)
+    measured = [{**gpu(used=3.0), "processes": {101: 2.0, 999: 1.0}}]
+    monkeypatch.setattr(local_docker, "gpu_process_memory", lambda devices: copy.deepcopy(measured))
+    first = profile("first")
+
+    def engine(request):
+        if request.url.path.endswith("/top"):
+            return httpx.Response(200, json={"Titles": ["PID"], "Processes": [["101"]]})
+        return httpx.Response(
+            200,
+            json={
+                "State": {"Running": True},
+                "Config": {"Labels": {"spark-cluster.on-demand": "first"}},
+            },
+        )
+
+    docker.transport = httpx.MockTransport(engine)
+    devices = await docker.gpu_memory(
+        [first], ClusterTarget(id="local", name="local", kind="local-docker")
+    )
+    assert devices[0]["managed_gib"] == {"first": 2.0}
+    assert "processes" not in devices[0]
+    available = gpu_availability(devices, {"first": resident(first, amount=2.5)}, 0.82)[0]
+    assert available["external_gib"] == 1.0
+    assert available["available_gib"] == pytest.approx(3.06)
+
+
+@pytest.mark.asyncio
+async def test_node_loads_assign_distinct_gpus_and_ports_without_lowering_concurrency(
+    tmp_path, readiness
+):
+    from types import SimpleNamespace
+
+    cache = tmp_path / "models"
+    cache.mkdir()
+    settings = Settings(
+        model_cache_path=cache, setup_state_path=tmp_path / "state", active_hardware="nvidia-gpu"
+    )
+    cluster = ClusterTarget(
+        id="local",
+        name="local",
+        kind="local-docker",
+        hardware="nvidia-gpu",
+        gpu_count=2,
+        gpu_memory_gib=8,
+        gpus=[GPUDevice(index=i, uuid=f"gpu-{i}", name="test", memory_gib=8) for i in range(2)],
+    )
+    manager = manager_for([], [gpu(), gpu(1)])
+    manager.docker.runtime_payload = DockerEngineClient(settings).runtime_payload
+
+    async def image_present(image):
+        return True
+
+    manager.docker.image_present = image_present
+    requests = []
+
+    async def managed_model(model_id):
+        return LocalModel(
+            id=model_id, source="managed", path=str(cache / model_id), revision="main"
+        )
+
+    async def fit_for_local(request):
+        requests.append(request)
+        await asyncio.sleep(0)
+        return SimpleNamespace(fits=True, resident_weights_gib=1.0, resident_kv_cache_gib=0.5)
+
+    async def launches():
+        return []
+
+    plan = SimpleNamespace(
+        executable=True,
+        image="test",
+        engine_id="vllm",
+        engine_name="vLLM",
+        warnings=[],
+        blockers=[],
+    )
+    models = SimpleNamespace(
+        settings=settings, managed_model=managed_model, fit_for_local=fit_for_local
+    )
+    deployments = SimpleNamespace(launches=launches, execution_plan=lambda *args: plan)
+    registry = SimpleNamespace(list=lambda: [cluster])
+    node = PoolNode(settings, registry, models, deployments, manager)
+    jobs = [
+        NodeLoadRequest(
+            model_id=f"org/{name}",
+            settings=ModelLaunchRequest(
+                model_id=f"org/{name}",
+                served_model_name=name,
+                max_num_seqs=7,
+                context_length=4096,
+            ),
+        )
+        for name in ("first", "second")
+    ]
+    results = await asyncio.gather(*(node.load(job) for job in jobs))
+    assert all(result["status"] == "ready" for result in results)
+    assert [r.concurrent_sequences for r in requests] == [7, 7]
+    assert len(manager.residents) == 2
+    assert {tuple(r.gpu_ids) for r in manager.residents.values()} == {("gpu-0",), ("gpu-1",)}
+    ports = set()
+    for r in manager.residents.values():
+        ports.update([r.profile.upstream_port, r.profile.listen_port])
+        command = manager.docker.containers[r.profile.name]["Config"]["Cmd"]
+        assert command[command.index("--max-num-seqs") + 1] == "7"
+        assert command[command.index("--max-model-len") + 1] == "4096"
+    assert len(ports) == 4
