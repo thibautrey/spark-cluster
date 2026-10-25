@@ -58,6 +58,7 @@ from .cluster_registry import (
 from .cluster_setup import ClusterSetupService, SetupFailure
 from .config import Settings
 from .inference_tracking import InferenceTracker
+from .inference_http import RequestTooLarge, inference_error, read_inference_body
 from .local_docker import DockerEngineClient, detect_nvidia_gpus, local_gpu_snapshot
 from .mcp_server import SparkClusterMCP
 from .model_manager import (
@@ -1363,7 +1364,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def global_openai_inference(request: Request, path: str):
         request.scope["spark.arrival"] = (time.time(), time.perf_counter())
         request.scope["spark.client_request"] = request
-        body = await request.body()
+        try:
+            body = await read_inference_body(request)
+        except RequestTooLarge as error:
+            return inference_error(str(error), status=413)
         content_type = request.headers.get("content-type", "")
         reference = request.headers.get("x-spark-model") or request.query_params.get("model")
         json_body = None

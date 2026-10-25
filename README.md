@@ -133,6 +133,9 @@ and periodically retests as conditions change. No user settings or synthetic war
 requests are needed. Docker and Kubernetes requests can overlap while active streams
 protect their model from unloads. Placement status shows the learned limit and queue.
 
+[Inference reliability](docs/inference-reliability.md) adds managed Docker readiness
+supervision, bounded recovery backoff and gateway safeguards for real model calls.
+
 ### Measured optimization lab
 
 The controller now turns runtime recommendations into executable, capability-checked launch plans.

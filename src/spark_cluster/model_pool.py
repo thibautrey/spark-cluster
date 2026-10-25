@@ -19,9 +19,17 @@ from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from .adaptive_concurrency import MAX_CONCURRENCY, fingerprint, response_feedback
 from .inference_tracking import mark_dispatch, request_stream_usage
+from .inference_http import (
+    INFERENCE_TIMEOUT,
+    RequestTooLarge,
+    RuntimeUnavailable,
+    forwarded_headers,
+    inference_error,
+    read_inference_body,
+)
 from .local_docker import local_gpu_snapshot
 from .models import ModelFitPlan, ModelFitRequest, ModelLaunchRequest
-from .on_demand import HOP_HEADERS, DemandProxy, InferenceProfile
+from .on_demand import DemandProxy, InferenceProfile
 from .pool_memory import RuntimeResources, gpu_availability
 from .remote_cluster import signed_controller_headers
 
@@ -1477,7 +1485,7 @@ class ModelPool:
 
     async def _infer_queued(self, model_id, path, scope, receive, send):
         if self.pending_requests >= 64:
-            await JSONResponse({"error": "Pool inference queue is full"}, status_code=503)(
+            await inference_error("Pool inference queue is full", retry_after=1)(
                 scope, receive, send
             )
             return
@@ -1526,35 +1534,24 @@ class ModelPool:
 
 async def forward_http(url, scope, receive, send, token=None, transport=None):
     request = Request(scope, receive)
-    body = bytearray()
-    async for chunk in request.stream():
-        body.extend(chunk)
-        if len(body) > 64 * 1024 * 1024:
-            await JSONResponse({"error": "Request exceeds 64 MiB"}, status_code=413)(
-                scope, receive, send
-            )
-            return
+    body = await read_inference_body(request)
     query = scope.get("query_string", b"").decode()
     if query:
         url += "?" + query
     body = request_stream_usage(body, request.headers.get("content-type", ""), request.url.path)
-    headers = {
-        k.decode(): v.decode()
-        for k, v in scope["headers"]
-        if k.lower() not in HOP_HEADERS | {b"content-length"}
-    }
+    headers = httpx.Headers(forwarded_headers(scope["headers"], request=True))
     if token:
         parsed = httpx.URL(url)
         target = parsed.raw_path.decode()
         headers.update(signed_controller_headers(token, request.method, target, bytes(body)))
-    async with httpx.AsyncClient(timeout=1800, trust_env=False, transport=transport) as client:
+    async with httpx.AsyncClient(
+        timeout=INFERENCE_TIMEOUT, trust_env=False, transport=transport
+    ) as client:
         async with client.stream(
             request.method, url, content=bytes(body), headers=headers
         ) as upstream:
             response = StreamingResponse(upstream.aiter_raw(), status_code=upstream.status_code)
-            response.raw_headers = [
-                (k, v) for k, v in upstream.headers.raw if k.lower() not in HOP_HEADERS
-            ]
+            response.raw_headers = forwarded_headers(upstream.headers.raw)
             await response(scope, receive, send)
 
 
@@ -1574,9 +1571,21 @@ class PoolResponse(Response):
 
         try:
             await self.handler(scope, receive, tracked_send)
-        except (ValueError, RuntimeError, TimeoutError, httpx.HTTPError):
+        except RequestTooLarge as error:
             if started:
                 raise
-            await JSONResponse(
-                {"error": "Pool inference unavailable; inspect the load queue"}, status_code=503
+            await inference_error(str(error), status=413)(scope, receive, send)
+        except RuntimeUnavailable as error:
+            if started:
+                raise
+            await inference_error(str(error), retry_after=error.retry_after)(scope, receive, send)
+        except (TimeoutError, httpx.TimeoutException):
+            if started:
+                raise
+            await inference_error("Inference upstream timed out", status=504)(scope, receive, send)
+        except (ValueError, RuntimeError, httpx.HTTPError):
+            if started:
+                raise
+            await inference_error(
+                "Pool inference unavailable; inspect the load queue", retry_after=1
             )(scope, receive, send)
