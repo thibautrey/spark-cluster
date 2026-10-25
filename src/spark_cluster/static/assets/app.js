@@ -18,6 +18,8 @@ let runtimeInstallJob = null;
 let runtimeInstallTimer = null;
 let pendingLaunchPayload = null;
 let runtimeTerminalSocket = null;
+let runtimeGuide = null;
+let runtimeWorkflow = null;
 let hfTokenStatus = null;
 let hfTokenSaving = false;
 let hfTokenSheetOpener = null;
@@ -912,7 +914,7 @@ async function checkLaunchFit() {
     launchFit = fit;
     const requestedNodes = payload.tensor_parallel * payload.pipeline_parallel;
     const parallelFits = requestedNodes >= launchFit.minimum_nodes && requestedNodes <= launchFit.cluster_nodes;
-    const canLaunch = launchFit.fits && parallelFits && launchPerformance?.engine_executable !== false;
+    const canLaunch = launchFit.fits && parallelFits;
     $('launch-fit').className = `fit-result ${canLaunch ? 'fit' : 'no-fit'}`;
     const accelerators = count => `${count} accelerator${count === 1 ? '' : 's'}`;
     let decision = `Fits on ${accelerators(requestedNodes)}`;
@@ -936,7 +938,7 @@ async function checkLaunchFit() {
     $('launch-fit').innerHTML = `<span class="fit-symbol">${canLaunch ? '✓' : '!'}</span><div><b>${escapeHtml(decision)}</b><small>${escapeHtml(detail)}</small></div>`;
     launchFit.parallel_fits = parallelFits;
     $('launch-fit').hidden = false;
-    button.textContent = 'Launch on cluster';
+    button.textContent = launchPerformance?.engine_executable === false ? 'Prepare and launch' : 'Launch on cluster';
     button.disabled = !canLaunch || !payload.served_model_name;
   } catch (error) {
     if (request !== launchFitRequest) return;
@@ -994,9 +996,79 @@ function closeRuntimeReadinessSheet() {
   document.body.classList.remove('bottom-sheet-open');
   setTimeout(() => {
     $('runtime-sheet').hidden = true;
+    runtimeGuide = null;
+    runtimeWorkflow = null;
     const opener = $($('runtime-sheet').dataset.opener);
     if (opener) opener.focus({preventScroll: true});
   }, 220);
+}
+
+function renderRuntimeGuide(guide) {
+  runtimeGuide = guide;
+  runtimeWorkflow = null;
+  $('runtime-sheet-title').textContent = guide.model_id ? 'Prepare and launch' : `Set up ${guide.engine_name}`;
+  $('runtime-name').textContent = guide.engine_name;
+  $('runtime-message').textContent = guide.summary;
+  $('runtime-version').textContent = guide.version || 'Unavailable';
+  $('runtime-node-grid').innerHTML = guide.steps.map((step, index) => `
+    <article class="runtime-node pending">
+      <i>${index + 1}</i><div><b>${escapeHtml(step.title)}</b><small>${escapeHtml(step.description)}</small></div><span>pending</span>
+    </article>`).join('');
+  $('runtime-install-progress').hidden = true;
+  $('runtime-sheet-error').hidden = guide.compatible;
+  $('runtime-sheet-error').textContent = guide.compatible ? '' : [...guide.blockers, ...guide.alternatives].join(' ');
+  $('runtime-install').disabled = !guide.compatible;
+  $('runtime-install').textContent = guide.model_id ? 'Prepare and launch' : guide.update_available ? 'Update runtime' : `Set up ${guide.engine_name}`;
+  $('runtime-install-logs').innerHTML = guide.digest
+    ? `<div class="runtime-install-log"><b>Immutable image</b><span>${escapeHtml(guide.image)}@${escapeHtml(guide.digest)}</span></div>`
+    : '<span>Technical details will appear here.</span>';
+}
+
+function openRuntimeGuideSheet(guide, payload, opener) {
+  pendingLaunchPayload = payload;
+  renderRuntimeGuide(guide);
+  $('runtime-technical').hidden = true;
+  $('runtime-technical-toggle').textContent = 'Open technical details';
+  $('runtime-sheet').hidden = false;
+  document.body.classList.add('bottom-sheet-open');
+  requestAnimationFrame(() => {
+    $('runtime-sheet').classList.add('open');
+    (guide.compatible ? $('runtime-install') : $('runtime-sheet-close')).focus({preventScroll: true});
+  });
+  $('runtime-sheet').dataset.opener = opener?.id || '';
+}
+
+function renderRuntimeWorkflow(job) {
+  runtimeWorkflow = job;
+  $('runtime-install-progress').hidden = false;
+  $('runtime-install-bar').style.width = `${job.progress}%`;
+  $('runtime-install-label').textContent = `${job.status} · ${job.progress.toFixed(0)}%`;
+  $('runtime-node-grid').innerHTML = job.steps.map((step, index) => `
+    <article class="runtime-node ${escapeHtml(step.status)}">
+      <i>${step.status === 'completed' ? '✓' : index + 1}</i><div><b>${escapeHtml(step.title)}</b><small>${escapeHtml(step.message)}</small></div><span>${escapeHtml(step.status)}</span>
+    </article>`).join('');
+  $('runtime-install').disabled = ['queued', 'running', 'completed'].includes(job.status);
+  $('runtime-install').textContent = job.status === 'failed' ? 'Retry failed step' : job.status === 'completed' ? 'Ready' : 'Preparing…';
+  $('runtime-sheet-error').hidden = !job.error;
+  $('runtime-sheet-error').textContent = job.error || '';
+  if (job.status === 'completed') {
+    $('runtime-message').textContent = job.response_preview
+      ? `Ready. Test response: ${job.response_preview}`
+      : 'Runtime prepared and activated on this compute pool.';
+  }
+}
+
+async function pollRuntimeWorkflow() {
+  if (!runtimeWorkflow || $('runtime-sheet').hidden) return;
+  try {
+    const job = await api(`/api/v1/runtime-management/workflows/${encodeURIComponent(runtimeWorkflow.id)}`, {headers: launchAuthHeaders()});
+    renderRuntimeWorkflow(job);
+    if (['queued', 'running'].includes(job.status)) runtimeInstallTimer = setTimeout(pollRuntimeWorkflow, 1000);
+    if (job.status === 'completed') await refreshLibrary();
+  } catch (error) {
+    $('runtime-sheet-error').textContent = error.message;
+    $('runtime-sheet-error').hidden = false;
+  }
 }
 
 function renderRuntimeInstallJob(job) {
@@ -1040,6 +1112,32 @@ async function pollRuntimeInstall() {
 }
 
 async function installRuntimeOnNodes() {
+  if (runtimeGuide) {
+    const button = $('runtime-install');
+    button.disabled = true;
+    try {
+      runtimeWorkflow = runtimeWorkflow?.status === 'failed'
+        ? await api(`/api/v1/runtime-management/workflows/${encodeURIComponent(runtimeWorkflow.id)}/retry`, {method: 'POST', headers: launchAuthHeaders()})
+        : await api('/api/v1/runtime-management/workflows', {
+          method: 'POST',
+          headers: launchAuthHeaders(),
+          body: JSON.stringify({
+            cluster_id: runtimeGuide.cluster_id,
+            engine_id: runtimeGuide.engine_id,
+            model_id: pendingLaunchPayload?.model_id || null,
+            launch: pendingLaunchPayload || null,
+          }),
+        });
+      renderRuntimeWorkflow(runtimeWorkflow);
+      runtimeInstallTimer = setTimeout(pollRuntimeWorkflow, 500);
+    } catch (error) {
+      $('runtime-sheet-error').textContent = error.message;
+      $('runtime-sheet-error').hidden = false;
+      button.disabled = false;
+      button.textContent = runtimeGuide.model_id ? 'Prepare and launch' : `Set up ${runtimeGuide.engine_name}`;
+    }
+    return;
+  }
   if (runtimeReadiness?.ready) {
     closeRuntimeReadinessSheet();
     await queueModelLaunch(pendingLaunchPayload);
@@ -1669,12 +1767,16 @@ $('launch-form').addEventListener('submit', async event => {
   const button = $('launch-model-button');
   button.disabled = true;
   try {
-    await window.loadModelInPool(launchPayload());
-    button.textContent = 'Load queued';
+    const payload = launchPayload();
+    const clusterId = launchClusterId();
+    if (!clusterId) throw new Error('Choose one compute pool before preparing a runtime.');
+    const guide = await api(`/api/v1/runtime-management/guide?cluster_id=${encodeURIComponent(clusterId)}&model_id=${encodeURIComponent(payload.model_id)}&engine_id=${encodeURIComponent(payload.engine_id)}`, {headers: launchAuthHeaders()});
+    openRuntimeGuideSheet(guide, payload, button);
+    button.textContent = guide.compatible ? 'Review preparation' : 'Runtime unavailable';
   } catch (error) {
     $('launch-fit').hidden = false;
     $('launch-fit').textContent = error.message;
-    button.textContent = 'Load model';
+    button.textContent = 'Prepare and launch';
   } finally { button.disabled = false; }
 });
 $('runtime-install').addEventListener('click', installRuntimeOnNodes);

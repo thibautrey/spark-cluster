@@ -12,7 +12,7 @@
     'windows/arm64': 'Windows · ARM64',
   };
   const stateLabels = {
-    ready: 'Ready',
+    ready: 'Prepared',
     needs_preparation: 'Needs preparation',
     partial: 'Partial',
     unreachable: 'Unreachable',
@@ -27,6 +27,8 @@
   let versionSequence = 0;
   let refreshing = false;
   let timer = null;
+  let guides = {};
+  let guidedWorkflow = null;
 
   const visible = () => location.hash === '#runtimes' && !document.hidden;
   const packageTarget = () => field('target').value;
@@ -68,23 +70,40 @@
   }
 
   function engineCard(engine) {
-    const status = stateLabels[engine.state] || engine.state;
+    const guide = guides[engine.id];
+    const displayState = guide?.compatible && engine.state === 'blocked' ? 'needs_preparation' : engine.state;
+    const status = guide?.compatible && engine.state === 'blocked'
+      ? 'Setup available'
+      : stateLabels[engine.state] || engine.state;
     const count = engine.nodes_total
       ? `${engine.nodes_ready}/${engine.nodes_total} node${engine.nodes_total === 1 ? '' : 's'} ready`
+      : guide?.compatible ? 'Guided setup available'
       : engine.state === 'blocked' ? 'Preparation unavailable' : 'No managed nodes';
-    const action = engine.active_job_id
+    const action = guidedWorkflow?.engine_id === engine.id && ['queued', 'running'].includes(guidedWorkflow.status)
       ? '<button class="primary" type="button" disabled>Preparing…</button>'
-      : engine.ready
+      : guidedWorkflow?.engine_id === engine.id && guidedWorkflow.status === 'failed'
+        ? `<button class="primary" type="button" data-retry-workflow="${esc(guidedWorkflow.id)}">Retry failed step</button>`
+      : engine.active_job_id
+      ? '<button class="primary" type="button" disabled>Preparing…</button>'
+      : engine.ready && !guide?.update_available
         ? '<a class="primary" href="#launch">Open Launch</a>'
+        : guide?.compatible
+          ? `<button class="primary" type="button" data-guide-engine="${esc(engine.id)}">${guide.update_available ? 'Update runtime' : `Set up ${esc(engine.name)}`}</button>`
         : engine.prepare_supported
           ? `<button class="primary" type="button" data-prepare-engine="${esc(engine.id)}">Prepare on this pool</button>`
-          : '';
+          : '<a class="secondary" href="#launch">Choose compatible model</a>';
     const nodes = engine.nodes.length ? `<details class="runtime-engine-nodes"><summary>${esc(count)}</summary><div class="runtime-node-status-list">${engine.nodes.map(node => `<span><b>${esc(node.address)}</b><i>${esc(node.status.replaceAll('_', ' '))}</i></span>`).join('')}</div></details>` : '';
     const progress = engine.active_job_id ? `<div class="runtime-engine-progress"><div><i style="width:${Number(engine.active_job_progress || 0)}%"></i></div><span>${Number(engine.active_job_progress || 0).toFixed(0)}%</span></div>` : '';
+    const workflow = guidedWorkflow?.engine_id === engine.id
+      ? `<div class="runtime-guide-progress">${guidedWorkflow.steps.map(step => `<span class="${esc(step.status)}"><i></i><b>${esc(step.title)}</b><small>${esc(step.message)}</small></span>`).join('')}</div>${guidedWorkflow.error ? `<p class="runtime-guide-error">${esc(guidedWorkflow.error)}</p>` : ''}`
+      : '';
+    const technical = guide?.digest ? `<details class="runtime-guide-technical"><summary>Technical details</summary><code>${esc(guide.image)}@${esc(guide.digest)}</code></details>` : '';
+    const message = guide?.summary || engine.message;
+    const version = guide?.version ? `${guide.version} · stable recommendation` : engine.image || 'Configuration required';
     return `<article class="runtime-engine-card" data-engine="${esc(engine.id)}">
-      <div class="runtime-engine-head"><div class="runtime-engine-title"><b>${esc(engine.name)}</b><code>${esc(engine.image || 'No pinned image configured')}</code></div><span class="runtime-engine-status ${esc(engine.state)}">${esc(status)}</span></div>
-      <div class="runtime-engine-body"><div class="runtime-engine-copy"><p>${esc(engine.message)}</p><small>${esc(count)}</small></div><div class="runtime-engine-actions">${action}</div></div>
-      ${progress}${nodes}
+      <div class="runtime-engine-head"><div class="runtime-engine-title"><b>${esc(engine.name)}</b><code>${esc(version)}</code></div><span class="runtime-engine-status ${esc(displayState)}">${esc(status)}</span></div>
+      <div class="runtime-engine-body"><div class="runtime-engine-copy"><p>${esc(message)}</p><small>${esc(count)}</small></div><div class="runtime-engine-actions">${action}</div></div>
+      ${progress}${workflow}${nodes}${technical}
     </article>`;
   }
 
@@ -225,6 +244,9 @@
       }
       engines = await api(`${management}/engines?cluster_id=${encodeURIComponent(selectedCluster.id)}`, {promptForAdmin: interactive});
       library = await api(base, {promptForAdmin: false});
+      const managed = engines.engines.filter(engine => engine.capability === 'managed_launch');
+      const results = await Promise.allSettled(managed.map(engine => api(`${management}/guide?cluster_id=${encodeURIComponent(selectedCluster.id)}&engine_id=${encodeURIComponent(engine.id)}`, {promptForAdmin: false})));
+      guides = Object.fromEntries(results.flatMap((result, index) => result.status === 'fulfilled' ? [[managed[index].id, result.value]] : []));
       renderEngines();
       renderLibrary();
     } catch (error) {
@@ -244,6 +266,30 @@
     if (event.target.closest('[data-runtime-retry]')) void refresh(false);
   });
   document.getElementById('runtime-engine-list').addEventListener('click', async event => {
+    const guided = event.target.closest('[data-guide-engine]');
+    const retry = event.target.closest('[data-retry-workflow]');
+    if (retry) {
+      retry.disabled = true;
+      guidedWorkflow = await api(`${management}/workflows/${encodeURIComponent(retry.dataset.retryWorkflow)}/retry`, {method: 'POST'});
+      renderEngines();
+      timer = setTimeout(pollGuidedWorkflow, 500);
+      return;
+    }
+    if (guided && selectedCluster) {
+      const guide = guides[guided.dataset.guideEngine];
+      const detail = `${guide.engine_name} ${guide.version} will be downloaded, verified, installed and activated on ${guide.cluster_name}.`;
+      if (!window.confirm(`${detail}\n\nContinue?`)) return;
+      guided.disabled = true;
+      try {
+        guidedWorkflow = await api(`${management}/workflows`, {method: 'POST', body: JSON.stringify({cluster_id: selectedCluster.id, engine_id: guide.engine_id})});
+        renderEngines();
+        timer = setTimeout(pollGuidedWorkflow, 500);
+      } catch (error) {
+        guide.summary = error.message;
+        renderEngines();
+      }
+      return;
+    }
     const button = event.target.closest('[data-prepare-engine]');
     if (!button || !selectedCluster) return;
     button.disabled = true;
@@ -257,6 +303,23 @@
       renderEngines();
     }
   });
+
+  async function pollGuidedWorkflow() {
+    if (!guidedWorkflow || !visible()) return;
+    try {
+      guidedWorkflow = await api(`${management}/workflows/${encodeURIComponent(guidedWorkflow.id)}`, {promptForAdmin: false});
+      renderEngines();
+      if (['queued', 'running'].includes(guidedWorkflow.status)) {
+        timer = setTimeout(pollGuidedWorkflow, 1000);
+      } else if (guidedWorkflow.status === 'completed') {
+        await refresh();
+      }
+    } catch (error) {
+      const guide = guides[guidedWorkflow.engine_id];
+      if (guide) guide.summary = error.message;
+      renderEngines();
+    }
+  }
   document.getElementById('runtime-library-advanced').addEventListener('toggle', event => {
     if (!event.currentTarget.open || selectedRuntime || !library.runtimes.length) return;
     const platform = targetPlatform();

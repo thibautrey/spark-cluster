@@ -20,7 +20,6 @@ from .local_docker import local_gpu_snapshot
 from .models import ModelFitPlan, ModelFitRequest, ModelLaunchRequest
 from .on_demand import HOP_HEADERS, DemandProxy, InferenceProfile
 from .remote_cluster import signed_controller_headers
-from .runtime_engines import build_execution_plan
 
 
 def profile_runtime(profile: InferenceProfile) -> dict:
@@ -425,7 +424,9 @@ class PoolNode:
                     context_length=8192,
                 )
             )
-            plan = build_execution_plan(launch, model["model_path"], self.settings)
+            plan = self.deployments.execution_plan(
+                launch, model["model_path"], self.local_cluster(), self.settings
+            )
             model["runtime"] = execution_runtime(plan, launch.engine_id)
         for model in models.values():
             model["runtime_models"] = self.metadata_for(model["id"])
@@ -502,13 +503,11 @@ class PoolNode:
         )
         if not fit.fits:
             raise ValueError("This model and its saved settings do not fit this cluster")
-        plan = build_execution_plan(launch, local.path, settings)
+        plan = self.deployments.execution_plan(launch, local.path, self.local_cluster(), settings)
         if not plan.executable or not plan.image:
             raise ValueError("This cluster has no executable engine for these settings")
         cluster = self.local_cluster()
         if cluster:
-            if plan.engine_id != "vllm":
-                raise ValueError("The Docker adapter requires vLLM for this model")
             if not await self.demand.docker.image_present(plan.image):
                 raise ValueError("Required runtime image is not installed on this cluster")
             key = "model-" + hashlib.sha256(request.model_id.encode()).hexdigest()[:12]
@@ -522,6 +521,7 @@ class PoolNode:
             cluster = cluster.model_copy(update={"runtime_port": port})
             payload = self.demand.docker.runtime_payload(
                 cluster=cluster,
+                engine_id=plan.engine_id,
                 image=plan.image,
                 model_path=local.path,
                 served_model_name=launch.served_model_name,

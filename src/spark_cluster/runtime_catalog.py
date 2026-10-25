@@ -16,6 +16,7 @@ import httpx
 
 TAG = r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}"
 DIGEST = r"sha256:[a-f0-9]{64}"
+STABLE_VERSION = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:-cu(\d+))?$")
 SUPPORTED_PLATFORMS = (
     "linux/amd64",
     "linux/arm64",
@@ -184,6 +185,20 @@ def catalog_entries() -> list[dict]:
     return [asdict(item) for item in CATALOG.values()]
 
 
+def newest_stable_version(versions: list[dict], platform: str) -> str | None:
+    """Choose a final semantic release and prefer the generic image over CUDA variants."""
+    candidates = []
+    for item in versions:
+        version = str(item.get("version", ""))
+        match = STABLE_VERSION.fullmatch(version)
+        platforms = item.get("platforms") or []
+        if not match or (platforms and platform not in platforms):
+            continue
+        major, minor, patch, cuda = match.groups()
+        candidates.append(((int(major), int(minor), int(patch)), cuda is None, version))
+    return max(candidates)[2] if candidates else None
+
+
 class RuntimeRegistry:
     def __init__(self, transport=None):
         self.transport = transport
@@ -315,6 +330,25 @@ class RuntimeRegistry:
                 raise RegistryError(
                     "Registry unavailable or access/rate limited; retry later"
                 ) from error
+
+    async def latest_stable(self, runtime_id: str, platform: str) -> dict:
+        """Resolve the newest final semantic release to immutable OCI metadata."""
+        cursor = ""
+        seen: list[dict] = []
+        stale = False
+        for _ in range(5):
+            page = await self.versions(runtime_id, cursor=cursor, limit=100, platform=platform)
+            seen.extend(page["versions"])
+            stale = stale or bool(page.get("stale"))
+            version = newest_stable_version(seen, platform)
+            if version:
+                metadata = await self.resolve(runtime_id, version, platform)
+                metadata["stale"] = stale
+                return metadata
+            cursor = page.get("next_cursor") or ""
+            if not cursor:
+                break
+        raise RegistryError("No stable semantic release is published for this platform")
 
     async def _native_versions(
         self, runtime: CatalogRuntime, cursor: str, limit: int, platform: str

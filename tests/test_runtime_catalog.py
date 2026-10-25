@@ -5,12 +5,30 @@ import time
 import httpx
 import pytest
 
-from spark_cluster.runtime_catalog import CATALOG, RegistryError, RuntimeRegistry
+from spark_cluster.runtime_catalog import (
+    CATALOG,
+    RegistryError,
+    RuntimeRegistry,
+    newest_stable_version,
+)
 
 
 def encoded(value):
     content = json.dumps(value).encode()
     return content, "sha256:" + hashlib.sha256(content).hexdigest()
+
+
+def test_newest_stable_version_filters_channels_and_prefers_generic_release():
+    versions = [
+        {"version": "nightly-20261025", "platforms": ["linux/amd64"]},
+        {"version": "v0.6.0-rc1", "platforms": ["linux/amd64"]},
+        {"version": "v0.5.22-cu130", "platforms": ["linux/amd64"]},
+        {"version": "v0.5.22", "platforms": ["linux/amd64", "linux/arm64"]},
+        {"version": "v0.5.21", "platforms": ["linux/amd64"]},
+        {"version": "v9.0.0", "platforms": ["linux/arm64"]},
+    ]
+    assert newest_stable_version(versions, "linux/amd64") == "v0.5.22"
+    assert newest_stable_version(versions, "linux/s390x") is None
 
 
 @pytest.mark.asyncio

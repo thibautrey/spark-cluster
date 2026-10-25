@@ -2,11 +2,14 @@ import asyncio
 import json
 import time
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
 
 from spark_cluster.app import create_app
+from spark_cluster.cluster_registry import GPUDevice
 from spark_cluster.config import Settings
+from spark_cluster.models import RuntimeGuide, RuntimeWorkflowJob, RuntimeWorkflowRequest
 from spark_cluster.simulator import ClusterSimulator
 from spark_cluster.store import SnapshotStore
 
@@ -23,6 +26,76 @@ def make_client(tmp_path):
         )
     )
     return TestClient(app)
+
+
+def test_guided_runtime_api_contract_and_authentication(tmp_path):
+    app = create_app(
+        Settings(
+            mode="demo",
+            database_path=tmp_path / "guide.db",
+            setup_state_path=tmp_path / "setup",
+            model_cache_path=tmp_path / "models",
+            model_admin_token="guide-admin",
+        )
+    )
+    pool = app.state.cluster_registry.add_local(
+        name="Local GPUs",
+        host_address="192.168.1.20",
+        runtime_port=30000,
+        gpus=[GPUDevice(index=0, name="GPU", uuid="GPU-0", memory_gib=24)],
+        model_storage_path=str(tmp_path / "models"),
+    )
+    guide = RuntimeGuide(
+        cluster_id=pool.id,
+        cluster_name=pool.name,
+        engine_id="sglang",
+        engine_name="SGLang",
+        compatible=True,
+        platform="linux/amd64",
+        version="v0.5.22",
+        image="docker.io/lmsysorg/sglang:v0.5.22",
+        digest="sha256:" + "a" * 64,
+        summary="Ready to prepare",
+    )
+    request = RuntimeWorkflowRequest(cluster_id=pool.id, engine_id="sglang")
+    workflow = RuntimeWorkflowJob(
+        id="b" * 32,
+        request=request,
+        engine_id="sglang",
+        engine_name="SGLang",
+        version="v0.5.22",
+        image=guide.image,
+        digest=guide.digest,
+        platform=guide.platform,
+    )
+    app.state.runtime_workflows.guide = AsyncMock(return_value=guide)
+    app.state.runtime_workflows.create = AsyncMock(return_value=workflow)
+    app.state.runtime_workflows.get = AsyncMock(return_value=workflow)
+    app.state.runtime_workflows.retry = AsyncMock(return_value=workflow)
+    headers = {"Authorization": "Bearer guide-admin"}
+    with TestClient(app) as client:
+        path = f"/api/v1/runtime-management/guide?cluster_id={pool.id}&engine_id=sglang"
+        assert client.get(path).status_code == 401
+        assert client.get(path, headers=headers).json()["version"] == "v0.5.22"
+        created = client.post(
+            "/api/v1/runtime-management/workflows",
+            headers=headers,
+            json=request.model_dump(mode="json"),
+        )
+        assert created.status_code == 202
+        assert created.json()["id"] == workflow.id
+        assert (
+            client.get(
+                f"/api/v1/runtime-management/workflows/{workflow.id}", headers=headers
+            ).status_code
+            == 200
+        )
+        assert (
+            client.post(
+                f"/api/v1/runtime-management/workflows/{workflow.id}/retry", headers=headers
+            ).status_code
+            == 202
+        )
 
 
 def test_dashboard_and_live_snapshot(tmp_path):
@@ -518,6 +591,19 @@ def test_admin_token_is_origin_scoped_and_requested_in_a_sheet(tmp_path):
     assert "window.adminAuthHeaders()" in setup
     assert "loadSetup(true, false)" in setup
     assert "promptForAdmin = true" in script
+
+
+def test_runtime_ui_uses_guided_prepare_launch_workflows(tmp_path):
+    with make_client(tmp_path) as client:
+        page = client.get("/").text
+        app_script = client.get("/assets/app.js").text
+        runtime_script = client.get("/assets/runtimes.js").text
+    assert "runtime-guide-v1" in page
+    assert "Prepare and launch" in app_script
+    assert "/api/v1/runtime-management/workflows" in app_script
+    assert "Set up ${esc(engine.name)}" in runtime_script
+    assert "Retry failed step" in runtime_script
+    assert "No pinned image configured" not in runtime_script
 
 
 def test_cluster_dropdown_exposes_global_capacity_context(tmp_path):

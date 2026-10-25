@@ -218,11 +218,7 @@ class DockerEngineClient:
 
     async def loaded_models_by_gpu(self, cluster: ClusterTarget) -> dict[int, list[str]]:
         """Read model-to-GPU placement from running Spark Cluster containers."""
-        filters = json.dumps(
-            {
-                "label": ["spark-cluster.managed=true"]
-            }
-        )
+        filters = json.dumps({"label": ["spark-cluster.managed=true"]})
         try:
             response = await self.request(
                 "GET", "/containers/json", params={"filters": filters}, timeout=10
@@ -240,16 +236,12 @@ class DockerEngineClient:
                 if not details.get("State", {}).get("Running"):
                     continue
                 labels = details.get("Config", {}).get("Labels", {})
-                model = labels.get("spark-cluster.model-id") or labels.get(
-                    "spark-cluster.model"
-                )
+                model = labels.get("spark-cluster.model-id") or labels.get("spark-cluster.model")
                 if not model:
                     continue
                 requests = details.get("HostConfig", {}).get("DeviceRequests") or []
                 device_ids = [
-                    device
-                    for request in requests
-                    for device in (request.get("DeviceIDs") or [])
+                    device for request in requests for device in (request.get("DeviceIDs") or [])
                 ]
                 if "all" in device_ids:
                     device_ids = list(known_devices)
@@ -309,6 +301,7 @@ class DockerEngineClient:
         self,
         *,
         cluster: ClusterTarget,
+        engine_id: str = "vllm",
         image: str,
         model_path: str,
         served_model_name: str,
@@ -324,45 +317,77 @@ class DockerEngineClient:
     ) -> dict:
         if tensor_parallel * pipeline_parallel > cluster.gpu_count:
             raise ValueError("Requested parallelism exceeds GPUs assigned to this cluster")
+        if engine_id not in {"vllm", "sglang"}:
+            raise ValueError(f"The local Docker adapter cannot launch {engine_id}")
+        if engine_id == "sglang" and pipeline_parallel != 1:
+            raise ValueError("The local SGLang adapter does not support pipeline parallelism")
+        if engine_id == "sglang" and expert_parallel:
+            raise ValueError("The local SGLang adapter does not expose expert parallelism")
         controller_root = self.settings.model_cache_path.resolve()
         resolved_model = Path(model_path).resolve()
         if controller_root not in resolved_model.parents:
             raise ValueError("Model path is outside managed model storage")
         relative = resolved_model.relative_to(controller_root).as_posix()
         runtime_model = f"/models/{relative}"
-        command = [
-            runtime_model,
-            "--served-model-name",
-            served_model_name,
-            "--host",
-            "0.0.0.0",
-            "--port",
-            str(cluster.runtime_port),
-            "--tensor-parallel-size",
-            str(tensor_parallel),
-            "--pipeline-parallel-size",
-            str(pipeline_parallel),
-            "--max-model-len",
-            str(context_length),
-            "--gpu-memory-utilization",
-            str(gpu_memory_utilization),
-            "--max-num-seqs",
-            str(max_num_seqs),
-            "--max-num-batched-tokens",
-            str(max_num_batched_tokens),
-        ]
-        if kv_cache_dtype != "auto":
-            command.extend(["--kv-cache-dtype", kv_cache_dtype])
-        if expert_parallel:
-            command.append("--enable-expert-parallel")
-        if chunked_prefill:
-            command.append("--enable-chunked-prefill")
+        if engine_id == "sglang":
+            entrypoint = ["python3", "-m", "sglang.launch_server"]
+            command = [
+                "--model-path",
+                runtime_model,
+                "--served-model-name",
+                served_model_name,
+                "--host",
+                "0.0.0.0",
+                "--port",
+                str(cluster.runtime_port),
+                "--tp",
+                str(tensor_parallel),
+                "--context-length",
+                str(context_length),
+                "--mem-fraction-static",
+                str(gpu_memory_utilization),
+                "--max-running-requests",
+                str(max_num_seqs),
+            ]
+            if kv_cache_dtype != "auto":
+                command.extend(["--kv-cache-dtype", kv_cache_dtype])
+            if chunked_prefill:
+                command.extend(["--chunked-prefill-size", str(max_num_batched_tokens)])
+        else:
+            entrypoint = ["vllm", "serve"]
+            command = [
+                runtime_model,
+                "--served-model-name",
+                served_model_name,
+                "--host",
+                "0.0.0.0",
+                "--port",
+                str(cluster.runtime_port),
+                "--tensor-parallel-size",
+                str(tensor_parallel),
+                "--pipeline-parallel-size",
+                str(pipeline_parallel),
+                "--max-model-len",
+                str(context_length),
+                "--gpu-memory-utilization",
+                str(gpu_memory_utilization),
+                "--max-num-seqs",
+                str(max_num_seqs),
+                "--max-num-batched-tokens",
+                str(max_num_batched_tokens),
+            ]
+            if kv_cache_dtype != "auto":
+                command.extend(["--kv-cache-dtype", kv_cache_dtype])
+            if expert_parallel:
+                command.append("--enable-expert-parallel")
+            if chunked_prefill:
+                command.append("--enable-chunked-prefill")
         device_ids = [
             str(item.index) for item in cluster.gpus[: tensor_parallel * pipeline_parallel]
         ]
         payload = {
             "Image": image,
-            "Entrypoint": ["vllm", "serve"],
+            "Entrypoint": entrypoint,
             "Cmd": command,
             "Env": [f"NVIDIA_VISIBLE_DEVICES={','.join(device_ids)}"],
             "HostConfig": {
@@ -384,6 +409,7 @@ class DockerEngineClient:
                 "spark-cluster.managed": "true",
                 "spark-cluster.cluster-id": cluster.id,
                 "spark-cluster.model": served_model_name,
+                "spark-cluster.engine": engine_id,
             },
         }
         return payload
@@ -392,6 +418,7 @@ class DockerEngineClient:
         self,
         *,
         cluster: ClusterTarget,
+        engine_id: str = "vllm",
         image: str,
         model_path: str,
         model_id: str,
@@ -418,6 +445,7 @@ class DockerEngineClient:
             )
         payload = self.runtime_payload(
             cluster=cluster,
+            engine_id=engine_id,
             image=image,
             model_path=model_path,
             served_model_name=served_model_name,

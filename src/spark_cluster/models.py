@@ -554,6 +554,77 @@ class RuntimeEngineCollection(BaseModel):
     engines: list[RuntimeEngineStatus]
 
 
+class RuntimeGuideStep(BaseModel):
+    id: Literal["resolve", "cache", "install", "activate", "launch", "verify"]
+    title: str
+    description: str
+
+
+class RuntimeGuide(BaseModel):
+    cluster_id: str
+    cluster_name: str
+    engine_id: RuntimeEngineId
+    engine_name: str
+    model_id: str | None = None
+    compatible: bool
+    prepared: bool = False
+    update_available: bool = False
+    platform: str
+    version: str | None = None
+    image: str | None = None
+    digest: str | None = None
+    size_bytes: int | None = None
+    summary: str
+    blockers: list[str] = Field(default_factory=list)
+    alternatives: list[str] = Field(default_factory=list)
+    steps: list[RuntimeGuideStep] = Field(default_factory=list)
+
+
+class RuntimeWorkflowRequest(BaseModel):
+    cluster_id: str = Field(min_length=1, max_length=80)
+    engine_id: Literal["auto", "vllm", "sglang", "tensorfold", "deepinfer"] = "auto"
+    model_id: str | None = Field(default=None, min_length=1, max_length=200)
+    launch: ModelLaunchRequest | None = None
+
+    @model_validator(mode="after")
+    def launch_matches_model(self):
+        if self.launch and self.model_id and self.launch.model_id != self.model_id:
+            raise ValueError("Launch settings must belong to the guided model")
+        if self.launch and not self.model_id:
+            self.model_id = self.launch.model_id
+        return self
+
+
+class RuntimeWorkflowStep(BaseModel):
+    id: Literal["resolve", "cache", "install", "activate", "launch", "verify"]
+    title: str
+    status: Literal["pending", "running", "completed", "failed", "skipped"] = "pending"
+    message: str = "Waiting"
+
+
+class RuntimeWorkflowJob(BaseModel):
+    id: str
+    request: RuntimeWorkflowRequest
+    engine_id: RuntimeEngineId
+    engine_name: str
+    version: str
+    image: str
+    digest: str
+    platform: str
+    status: Literal["queued", "running", "completed", "failed"] = "queued"
+    stage: Literal["resolve", "cache", "install", "activate", "launch", "verify"] = "resolve"
+    progress: float = Field(default=0, ge=0, le=100)
+    steps: list[RuntimeWorkflowStep] = Field(default_factory=list)
+    artifact_id: str | None = None
+    library_job_id: str | None = None
+    install_job_id: str | None = None
+    launch_job_id: str | None = None
+    response_preview: str | None = None
+    error: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class RuntimeTerminalRequest(BaseModel):
     address: str
 

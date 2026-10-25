@@ -79,17 +79,67 @@ class RuntimePrerequisiteService:
     def attach_library(self, library) -> None:
         self.library = library
 
-    def spec_for_engine(self, engine_id: str) -> RuntimeSpec:
+    def activation(self, cluster_id: str, engine_id: str) -> dict | None:
+        activation_id = f"{cluster_id}:{engine_id}"
+        return next(
+            (
+                item
+                for item in self.store.runtime_objects("activation")
+                if item.get("id") == activation_id
+            ),
+            None,
+        )
+
+    def image_overrides(self, cluster_id: str | None) -> dict[str, str]:
+        if not cluster_id:
+            return {}
+        return {
+            item["engine_id"]: item["image"]
+            for item in self.store.runtime_objects("activation")
+            if item.get("cluster_id") == cluster_id and item.get("image")
+        }
+
+    async def activate(
+        self,
+        *,
+        cluster_id: str,
+        engine_id: str,
+        version: str,
+        image: str,
+        digest: str,
+        platform: str,
+        artifact_id: str,
+    ) -> dict:
+        if not self.registry or not self.registry.get(cluster_id):
+            raise KeyError(cluster_id)
+        value = {
+            "id": f"{cluster_id}:{engine_id}",
+            "cluster_id": cluster_id,
+            "engine_id": engine_id,
+            "version": version,
+            "image": image,
+            "digest": digest,
+            "platform": platform,
+            "artifact_id": artifact_id,
+            "source": "guided",
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        await asyncio.to_thread(self.store.save_runtime_object, "activation", value)
+        return value
+
+    def spec_for_engine(self, engine_id: str, cluster_id: str | None = None) -> RuntimeSpec:
         if engine_id == "llama-cpp":
             return RuntimeSpec(
                 "llama-cpp",
                 "llama.cpp CUDA server",
-                self.settings.runtime_llama_cpp_image,
+                self.image_overrides(cluster_id).get(
+                    "llama-cpp", self.settings.runtime_llama_cpp_image
+                ),
                 False,
                 "package_only",
                 ("The managed Kubernetes launch adapter is not enabled for llama.cpp.",),
             )
-        engine = capabilities(self.settings)[engine_id]
+        engine = capabilities(self.settings, self.image_overrides(cluster_id))[engine_id]
         has_managed_adapter = engine.id in {"vllm", "sglang"}
         blockers = list(engine.blockers)
         if has_managed_adapter and not engine.image:
@@ -103,13 +153,15 @@ class RuntimePrerequisiteService:
             tuple(blockers),
         )
 
-    def spec_for(self, model_id: str, engine_id: str = "auto") -> RuntimeSpec:
+    def spec_for(
+        self, model_id: str, engine_id: str = "auto", cluster_id: str | None = None
+    ) -> RuntimeSpec:
         model = model_id.lower()
         if "gguf" in model:
-            return self.spec_for_engine("llama-cpp")
+            return self.spec_for_engine("llama-cpp", cluster_id)
         if engine_id == "auto":
             engine_id, _ = recommended_engine(model_id, self.settings)
-        return self.spec_for_engine(engine_id)
+        return self.spec_for_engine(engine_id, cluster_id)
 
     def target(self, cluster_id: str | None = None) -> ClusterTarget | None:
         if not self.registry:
@@ -136,15 +188,16 @@ class RuntimePrerequisiteService:
     async def inspect(
         self, model_id: str, engine_id: str = "auto", cluster_id: str | None = None
     ) -> RuntimeReadiness:
-        spec = self.spec_for(model_id, engine_id)
-        return await self._inspect_spec(model_id, spec, self.target(cluster_id))
+        target = self.target(cluster_id)
+        spec = self.spec_for(model_id, engine_id, target.id if target else None)
+        return await self._inspect_spec(model_id, spec, target)
 
     async def inspect_engines(self, cluster_id: str) -> RuntimeEngineCollection:
         target = self.target(cluster_id)
         if target is None:
             raise KeyError(cluster_id)
         specs = [
-            self.spec_for_engine(engine_id)
+            self.spec_for_engine(engine_id, target.id)
             for engine_id in ("vllm", "sglang", "llama-cpp", "tensorfold", "deepinfer")
         ]
         reports = await asyncio.gather(
@@ -166,7 +219,10 @@ class RuntimePrerequisiteService:
 
     async def _target_platform(self, target: ClusterTarget) -> str | None:
         if target.kind == "local-docker":
-            return await self.docker.platform()
+            platform = await self.docker.platform()
+            if platform:
+                return platform
+            return "linux/arm64" if target.hardware == "dgx-spark" else "linux/amd64"
         nodes = self.nodes(target)
         if nodes:
             try:
@@ -409,12 +465,14 @@ class RuntimePrerequisiteService:
     async def install(
         self, model_id: str, engine_id: str = "auto", cluster_id: str | None = None
     ) -> RuntimeInstallJob:
-        spec = self.spec_for(model_id, engine_id)
-        return await self._install_spec(model_id, spec, self.target(cluster_id))
+        target = self.target(cluster_id)
+        spec = self.spec_for(model_id, engine_id, target.id if target else None)
+        return await self._install_spec(model_id, spec, target)
 
     async def prepare(self, cluster_id: str, engine_id: str) -> RuntimeInstallJob:
-        spec = self.spec_for_engine(engine_id)
-        return await self._install_spec(f"engine:{engine_id}", spec, self.target(cluster_id))
+        target = self.target(cluster_id)
+        spec = self.spec_for_engine(engine_id, target.id if target else None)
+        return await self._install_spec(f"engine:{engine_id}", spec, target)
 
     async def _install_spec(
         self, model_id: str, spec: RuntimeSpec, target: ClusterTarget | None

@@ -1,10 +1,16 @@
 # Runtime library
 
-Open **Runtimes** in the dashboard. The default view answers whether the pinned,
-executable inference engines are present on every machine in one explicitly selected
-compute pool. **Prepare on this pool** freezes that destination, installs the configured
-image and verifies it on every managed node. The Launch flow uses the same readiness
-service and therefore reports the same result.
+Open **Runtimes** in the dashboard. The default view recommends the newest stable
+runtime compatible with the selected compute pool. **Set up** resolves the release to
+an immutable digest, caches it, installs it, activates it for that pool and verifies the
+result in one resumable workflow. A model launch uses the same workflow and continues
+through a real inference request before reporting **Ready**.
+
+The active image is stored per compute pool and engine. It takes precedence over the
+legacy environment setting without rewriting deployment configuration or requiring a
+controller restart. Existing environment images remain available until an administrator
+chooses the guided update. Stable selection accepts final semantic releases and excludes
+development, nightly, main and release-candidate channels.
 
 The **Advanced runtime packages** disclosure is a separate distribution tool. Spark
 maintains a curated catalogue of public runtimes, discovers their image versions,
@@ -15,8 +21,9 @@ installation.
 
 Runtime readiness has five states:
 
-- **Ready**: the exact configured image is present on every target node and the engine
-  has an executable Spark adapter.
+- **Prepared**: the exact configured image is present on every target node and the engine
+  has an executable Spark adapter. **Ready** is reserved for a launched model that returned
+  a real inference response.
 - **Needs preparation**: every managed node is reachable, but the image is missing or
   outdated.
 - **Partial**: nodes disagree, an installation failed, or only part of the pool is
@@ -69,6 +76,10 @@ Platform information absent from a version page is resolved before downloading.
 Version pages are cached for five minutes; an expired page returned during a
 registry outage is explicitly marked stale. Registry errors are never an empty
 successful version list.
+
+The guided path chooses the most recent final semantic release automatically. The
+advanced package view continues to expose every published channel for deliberate manual
+testing.
 
 ## Controller download
 

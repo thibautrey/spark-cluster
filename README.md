@@ -326,6 +326,10 @@ The complete setup-specific reference is in [docs/cluster-setup.md](docs/cluster
 | `WS /api/v1/logs/stream` | Live runtime log stream. |
 | `POST /api/v1/launches` | Validate and launch a managed model. |
 | `POST /api/v1/runtime-management/readiness` | Inspect required runtime versions across managed nodes. |
+| `GET /api/v1/runtime-management/guide` | Recommend a compatible stable runtime and explain the guided steps. |
+| `POST /api/v1/runtime-management/workflows` | Resolve, cache, install, activate, launch and verify a runtime goal. |
+| `GET /api/v1/runtime-management/workflows/{id}` | Follow a persisted guided runtime workflow. |
+| `POST /api/v1/runtime-management/workflows/{id}/retry` | Resume a guided workflow from its failed stage. |
 | `POST /api/v1/runtime-management/install` | Install or update the pinned runtime image on every node. |
 | `GET /api/v1/runtime-management/install/{id}` | Read per-node installation state and logs. |
 | `POST /api/v1/runtime-management/terminal-ticket` | Issue a short-lived ticket for a trusted-node WebTTY. |

@@ -310,6 +310,29 @@ class RuntimeDeploymentService:
         self.mode = configured if configured != "auto" else self._auto_mode()
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.worker: asyncio.Task | None = None
+        self.prerequisites = None
+
+    def attach_prerequisites(self, prerequisites) -> None:
+        self.prerequisites = prerequisites
+
+    def execution_plan(
+        self,
+        request: ModelLaunchRequest,
+        model_path: str,
+        target=None,
+        settings: Settings | None = None,
+    ):
+        target = target or (self.registry.active() if self.registry else None)
+        images = (
+            self.prerequisites.image_overrides(target.id) if self.prerequisites and target else {}
+        )
+        return build_execution_plan(
+            request,
+            model_path,
+            settings or self.settings,
+            image_overrides=images,
+            cluster_kind=target.kind if target else None,
+        )
 
     def _auto_mode(self) -> str:
         if self.docker.available:
@@ -357,10 +380,10 @@ class RuntimeDeploymentService:
         requested_nodes = request.tensor_parallel * request.pipeline_parallel
         if requested_nodes < fit.minimum_nodes or requested_nodes > fit.cluster_nodes:
             raise InvalidParallelism(requested_nodes, fit.minimum_nodes, fit.cluster_nodes)
-        execution_plan = build_execution_plan(request, local.path, self.settings)
+        active_cluster = self.registry.active() if self.registry else None
+        execution_plan = self.execution_plan(request, local.path, active_cluster)
         if not execution_plan.executable:
             raise EngineNotExecutable(execution_plan.engine_name, execution_plan.blockers)
-        active_cluster = self.registry.active() if self.registry else None
         job = ModelLaunchJob(
             id=uuid4().hex,
             request=request,
@@ -459,11 +482,10 @@ class RuntimeDeploymentService:
         plan = job.execution_plan
         if not plan or not plan.executable or not plan.image:
             raise RuntimeError("Launch has no executable inference-engine plan")
-        if plan.engine_id != "vllm":
-            raise RuntimeError("The local Docker adapter currently launches vLLM models")
         await self._update(job, "starting-runtime", 45, "Creating NVIDIA runtime container")
         await self.docker.launch(
             cluster=cluster,
+            engine_id=plan.engine_id,
             image=plan.image,
             model_path=job.model_path,
             model_id=job.request.model_id,

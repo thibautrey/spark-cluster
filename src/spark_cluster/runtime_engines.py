@@ -25,7 +25,10 @@ class EngineCapability:
     blockers: tuple[str, ...] = ()
 
 
-def capabilities(settings: Settings) -> dict[str, EngineCapability]:
+def capabilities(
+    settings: Settings, image_overrides: dict[str, str] | None = None
+) -> dict[str, EngineCapability]:
+    images = image_overrides or {}
     vllm_speculation = tuple(
         method.strip()
         for method in settings.runtime_vllm_speculative_methods.split(",")
@@ -35,8 +38,8 @@ def capabilities(settings: Settings) -> dict[str, EngineCapability]:
         "vllm": EngineCapability(
             id="vllm",
             name="vLLM V1 for NVIDIA GPUs",
-            image=settings.runtime_vllm_image,
-            executable=bool(settings.runtime_vllm_image),
+            image=images.get("vllm", settings.runtime_vllm_image),
+            executable=bool(images.get("vllm", settings.runtime_vllm_image)),
             supports_multi_node=True,
             speculative_methods=vllm_speculation or ("off",),
             supports_expert_parallel=True,
@@ -45,16 +48,12 @@ def capabilities(settings: Settings) -> dict[str, EngineCapability]:
         "sglang": EngineCapability(
             id="sglang",
             name="SGLang",
-            image=settings.runtime_sglang_image,
-            executable=bool(settings.runtime_sglang_image),
+            image=images.get("sglang", settings.runtime_sglang_image),
+            executable=bool(images.get("sglang", settings.runtime_sglang_image)),
             supports_multi_node=False,
-            speculative_methods=("off", "auto", "mtp", "eagle3"),
-            supports_expert_parallel=True,
+            speculative_methods=("off", "auto"),
+            supports_expert_parallel=False,
             supports_lmcache=False,
-            blockers=(
-                "This control plane currently supports SGLang on one Spark; distributed rank "
-                "bootstrap needs an explicitly validated image and launcher.",
-            ),
         ),
         "tensorfold": EngineCapability(
             id="tensorfold",
@@ -107,9 +106,13 @@ def recommended_engine(model_id: str, settings: Settings) -> tuple[str, list[str
 
 
 def build_execution_plan(
-    request: ModelLaunchRequest, model_path: str, settings: Settings
+    request: ModelLaunchRequest,
+    model_path: str,
+    settings: Settings,
+    image_overrides: dict[str, str] | None = None,
+    cluster_kind: str | None = None,
 ) -> RuntimeExecutionPlan:
-    matrix = capabilities(settings)
+    matrix = capabilities(settings, image_overrides)
     engine_id = request.engine_id
     warnings: list[str] = []
     if engine_id == "auto":
@@ -129,7 +132,9 @@ def build_execution_plan(
     ranks = request.tensor_parallel * request.pipeline_parallel
     if not engine.image:
         blockers.append(f"No pinned {engine.name} image is configured.")
-    if ranks > 1 and not engine.supports_multi_node:
+    if request.pipeline_parallel > 1 and engine_id == "sglang":
+        blockers.append("The managed SGLang adapter does not support pipeline parallelism.")
+    elif ranks > 1 and not engine.supports_multi_node and cluster_kind != "local-docker":
         blockers.append(f"{engine.name} is enabled only for a single Spark in this release.")
     if request.speculative_method not in engine.speculative_methods:
         blockers.append(

@@ -197,6 +197,55 @@ async def test_local_docker_engine_overview_and_prepare(tmp_path):
     store.close()
 
 
+@pytest.mark.asyncio
+async def test_guided_activation_overrides_legacy_image_per_pool(tmp_path):
+    class FakeDocker:
+        available = True
+
+        async def image_present(self, image):
+            return image == "docker.io/lmsysorg/sglang:v0.5.22"
+
+        async def platform(self):
+            return "linux/amd64"
+
+    settings = Settings(
+        database_path=tmp_path / "state.db",
+        setup_state_path=tmp_path / "setup",
+        runtime_sglang_image=None,
+    )
+    store = SnapshotStore(settings.database_path)
+    registry = ClusterRegistry(settings)
+    pool = registry.add_local(
+        name="Local GPUs",
+        host_address="192.168.1.2",
+        runtime_port=30000,
+        gpus=[GPUDevice(index=0, name="GPU", uuid="GPU-0", memory_gib=24)],
+        model_storage_path=str(tmp_path / "models"),
+    )
+    service = RuntimePrerequisiteService(
+        settings,
+        store,
+        ClusterSetupService(settings, store),
+        registry=registry,
+        docker=FakeDocker(),
+    )
+    await service.activate(
+        cluster_id=pool.id,
+        engine_id="sglang",
+        version="v0.5.22",
+        image="docker.io/lmsysorg/sglang:v0.5.22",
+        digest="sha256:" + "a" * 64,
+        platform="linux/amd64",
+        artifact_id="b" * 32,
+    )
+    assert service.image_overrides(pool.id)["sglang"].endswith(":v0.5.22")
+    report = await service.inspect_engines(pool.id)
+    sglang = next(engine for engine in report.engines if engine.id == "sglang")
+    assert sglang.ready is True
+    assert sglang.state == "ready"
+    store.close()
+
+
 def test_terminal_tickets_are_short_lived_and_single_use(tmp_path):
     settings = Settings(database_path=tmp_path / "state.db", setup_state_path=tmp_path / "setup")
     store = SnapshotStore(settings.database_path)

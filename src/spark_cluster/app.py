@@ -98,6 +98,7 @@ from .models import (
     NodeSnapshot,
     RuntimeEndpoint,
     RuntimeEngineCollection,
+    RuntimeGuide,
     RuntimeInstallJob,
     RuntimeLog,
     RuntimePrepareRequest,
@@ -105,6 +106,8 @@ from .models import (
     RuntimeReadinessRequest,
     RuntimeTerminalRequest,
     RuntimeTerminalTicket,
+    RuntimeWorkflowJob,
+    RuntimeWorkflowRequest,
 )
 from .on_demand import OnDemandInference, load_profiles
 from .optimization_lab import OptimizationLab
@@ -120,6 +123,7 @@ from .remote_cluster import (
 from .runtime_library import RuntimeLibrary
 from .runtime_library_api import register_runtime_library
 from .runtime_prerequisites import RuntimePrerequisiteService
+from .runtime_workflows import RuntimeWorkflowService
 from .setup_models import (
     BootstrapConfirmRequest,
     BootstrapCreateRequest,
@@ -209,6 +213,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings, runtime.store, runtime_prerequisites, cluster_registry, docker_engine
     )
     runtime_prerequisites.attach_library(runtime_library)
+    deployment_service.attach_prerequisites(runtime_prerequisites)
+    runtime_workflows = RuntimeWorkflowService(
+        settings,
+        runtime.store,
+        cluster_registry,
+        runtime_prerequisites,
+        runtime_library,
+        deployment_service,
+        model_pool,
+    )
     inference_tracker = InferenceTracker(settings)
     model_pool.tracker = pool_node.tracker = inference_tracker
 
@@ -321,17 +335,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     async def model_performance_plan(request: PerformancePlanRequest) -> PerformancePlan:
+        plan_settings = settings.model_copy(deep=True)
+        active = cluster_registry.active()
+        if active:
+            for engine_id, image in runtime_prerequisites.image_overrides(active.id).items():
+                attribute = f"runtime_{engine_id.replace('-', '_')}_image"
+                if hasattr(plan_settings, attribute):
+                    setattr(plan_settings, attribute, image)
         available_nodes = (
             sum(node.status != "offline" for node in runtime.latest.nodes)
             if runtime.latest and runtime.latest.nodes
             else settings.fallback_node_count
         )
-        if request.topology == "auto" and settings.active_hardware == "dgx-spark":
+        if request.topology == "auto" and plan_settings.active_hardware == "dgx-spark":
             setup_jobs = await asyncio.to_thread(runtime.store.list_setup_jobs)
             configured = next((job for job in setup_jobs if job.status == "ready"), None)
             if configured:
                 request = request.model_copy(update={"topology": configured.request.topology})
-        return build_performance_plan(request, available_nodes, settings)
+        return build_performance_plan(request, available_nodes, plan_settings)
 
     async def enqueue_model_download(
         request: ModelDownloadRequest, request_base_url: str
@@ -409,6 +430,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await deployment_service.start()
         await setup_service.start()
         await runtime_library.start()
+        await runtime_workflows.start()
         await on_demand.start()
         await pool_node.start()
         try:
@@ -417,6 +439,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             await model_pool.close()
             await pool_node.close()
             await on_demand.stop()
+            await runtime_workflows.stop()
         if local_monitor:
             local_monitor.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -442,6 +465,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.setup_service = setup_service
     app.state.runtime_prerequisites = runtime_prerequisites
     app.state.runtime_library = runtime_library
+    app.state.runtime_workflows = runtime_workflows
     app.state.telemetry_service = telemetry_service
     app.state.inference_tracker = inference_tracker
     app.state.optimization_lab = optimization_lab
@@ -1372,6 +1396,62 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Compute pool not found") from error
+
+    @app.get(
+        "/api/v1/runtime-management/guide",
+        response_model=RuntimeGuide,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def runtime_guide(
+        cluster_id: str,
+        model_id: str | None = None,
+        engine_id: Literal["auto", "vllm", "sglang", "tensorfold", "deepinfer"] = "auto",
+    ) -> RuntimeGuide:
+        try:
+            return await runtime_workflows.guide(cluster_id, model_id, engine_id)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404, detail="Compute pool or runtime not found"
+            ) from error
+
+    @app.post(
+        "/api/v1/runtime-management/workflows",
+        response_model=RuntimeWorkflowJob,
+        status_code=202,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def create_runtime_workflow(request: RuntimeWorkflowRequest) -> RuntimeWorkflowJob:
+        try:
+            return await runtime_workflows.create(request)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404, detail="Compute pool or runtime not found"
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.get(
+        "/api/v1/runtime-management/workflows/{job_id}",
+        response_model=RuntimeWorkflowJob,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def runtime_workflow(job_id: str) -> RuntimeWorkflowJob:
+        try:
+            return await runtime_workflows.get(job_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Runtime workflow not found") from error
+
+    @app.post(
+        "/api/v1/runtime-management/workflows/{job_id}/retry",
+        response_model=RuntimeWorkflowJob,
+        status_code=202,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def retry_runtime_workflow(job_id: str) -> RuntimeWorkflowJob:
+        try:
+            return await runtime_workflows.retry(job_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Runtime workflow not found") from error
 
     @app.get(
         "/api/v1/runtime-management/engines",

@@ -64,6 +64,31 @@ def test_unvalidated_engines_are_visible_but_cannot_be_launched():
     assert any("SM121" in blocker for blocker in deepinfer.blockers)
 
 
+def test_local_sglang_accepts_tensor_parallel_but_rejects_unwired_options():
+    baseline = build_execution_plan(
+        request(engine_id="sglang", tensor_parallel=2),
+        "/models/acme/model",
+        Settings(),
+        image_overrides={"sglang": "lmsysorg/sglang:v0.5.22"},
+        cluster_kind="local-docker",
+    )
+    assert baseline.executable is True
+    speculative = build_execution_plan(
+        request(
+            engine_id="sglang",
+            tensor_parallel=2,
+            speculative_method="mtp",
+            speculative_tokens=2,
+        ),
+        "/models/acme/model",
+        Settings(),
+        image_overrides={"sglang": "lmsysorg/sglang:v0.5.22"},
+        cluster_kind="local-docker",
+    )
+    assert speculative.executable is False
+    assert any("mtp" in blocker.casefold() for blocker in speculative.blockers)
+
+
 def test_launch_validation_rejects_invalid_speculation_moe_and_rank_plans():
     with pytest.raises(ValidationError, match="DSpark"):
         request(speculative_method="dspark", speculative_tokens=1)

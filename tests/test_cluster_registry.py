@@ -208,6 +208,58 @@ async def test_docker_runtime_launch_uses_selected_gpus_and_shared_models(tmp_pa
     assert payload["HostConfig"]["Binds"] == [f"{config.docker_host_model_path}:/models:ro"]
 
 
+def test_sglang_payload_uses_engine_command_and_rejects_unsupported_options(tmp_path):
+    config = settings(tmp_path)
+    config.model_cache_path.mkdir(parents=True)
+    model = config.model_cache_path / "acme" / "model"
+    model.mkdir(parents=True)
+    cluster = ClusterRegistry(config).add_local(
+        name="Local GPUs",
+        host_address="192.168.1.149",
+        runtime_port=30000,
+        gpus=gpus(),
+        model_storage_path=str(config.docker_host_model_path),
+    )
+    docker = DockerEngineClient(config)
+    payload = docker.runtime_payload(
+        cluster=cluster,
+        engine_id="sglang",
+        image="lmsysorg/sglang:v0.5.22",
+        model_path=str(model),
+        served_model_name="test-model",
+        context_length=8192,
+        tensor_parallel=2,
+        pipeline_parallel=1,
+        gpu_memory_utilization=0.8,
+        kv_cache_dtype="auto",
+        max_num_seqs=4,
+        max_num_batched_tokens=2048,
+        expert_parallel=False,
+        chunked_prefill=True,
+    )
+    assert payload["Entrypoint"] == ["python3", "-m", "sglang.launch_server"]
+    assert payload["Cmd"][:2] == ["--model-path", "/models/acme/model"]
+    assert payload["Cmd"][payload["Cmd"].index("--tp") + 1] == "2"
+    assert payload["Labels"]["spark-cluster.engine"] == "sglang"
+    with pytest.raises(ValueError, match="pipeline parallelism"):
+        docker.runtime_payload(
+            cluster=cluster,
+            engine_id="sglang",
+            image="lmsysorg/sglang:v0.5.22",
+            model_path=str(model),
+            served_model_name="test-model",
+            context_length=8192,
+            tensor_parallel=1,
+            pipeline_parallel=2,
+            gpu_memory_utilization=0.8,
+            kv_cache_dtype="auto",
+            max_num_seqs=4,
+            max_num_batched_tokens=2048,
+            expert_parallel=False,
+            chunked_prefill=True,
+        )
+
+
 def test_cluster_api_lists_and_switches_targets_with_admin_auth(tmp_path):
     from fastapi.testclient import TestClient
 
