@@ -1,9 +1,10 @@
 # Spark Cluster
 
-The [runtime library](docs/runtime-library.md) lists ten inference runtimes with live
-version discovery, controller-side caching, OCI imports for managed Linux pools, and
-SHA256-verified native packages for supported macOS and Windows hosts. Open
-**Runtimes** in the dashboard to prepare a selected version and platform.
+The [runtime readiness screen](docs/runtime-library.md) verifies the configured engine
+image on every node of an explicitly selected pool and can prepare missing or outdated
+nodes before launch. Its advanced package library lists ten inference runtimes with
+live version discovery, controller-side caching, OCI imports for managed Linux pools,
+and SHA256-verified native packages for supported macOS and Windows hosts.
 
 <p align="center">
   <strong>A visual control plane for NVIDIA DGX Spark clusters.</strong><br>

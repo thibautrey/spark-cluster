@@ -200,6 +200,17 @@ class DockerEngineClient:
         except (httpx.HTTPError, RuntimeError):
             return False
 
+    async def platform(self) -> str | None:
+        try:
+            info = (await self.request("GET", "/info", timeout=10)).json()
+        except (httpx.HTTPError, RuntimeError):
+            return None
+        architecture = {"x86_64": "amd64", "aarch64": "arm64"}.get(
+            info.get("Architecture"), info.get("Architecture")
+        )
+        system = info.get("OSType")
+        return f"{system}/{architecture}" if system and architecture else None
+
     @staticmethod
     def container_name(cluster_id: str) -> str:
         return f"spark-cluster-runtime-{cluster_id}"

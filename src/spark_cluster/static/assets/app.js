@@ -129,6 +129,7 @@ async function api(path, options = {}) {
       if (!promptForAdmin) {
         const error = new Error('Administrator authentication is required.');
         error.payload = body;
+        error.status = response.status;
         throw error;
       }
       if (adminTokenVerifying) rejectAdminCandidate();
@@ -143,6 +144,7 @@ async function api(path, options = {}) {
       const detail = typeof body.detail === 'string' ? body.detail : Array.isArray(body.detail) ? body.detail.map(item => item.msg).join('; ') : body.detail?.message || `Request failed (${response.status})`;
       const error = new Error(detail);
       error.payload = body;
+      error.status = response.status;
       throw error;
     }
     if (candidate && (adminTokenVerifying || candidate !== storedAdminToken())) {
@@ -752,6 +754,11 @@ function launchAuthHeaders() {
   return adminAuthHeaders();
 }
 
+function launchClusterId() {
+  const context = selectedClusterContext();
+  return context === 'all' ? clusterState.active_cluster_id : context;
+}
+
 
 async function checkLaunchFit() {
   const request = ++launchFitRequest;
@@ -883,7 +890,7 @@ async function pollRuntimeInstall() {
     const job = await api(`/api/v1/runtime-management/install/${runtimeInstallJob.id}`, {headers: launchAuthHeaders()});
     renderRuntimeInstallJob(job);
     if (job.status === 'completed') {
-      const report = await api('/api/v1/runtime-management/readiness', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({model_id: pendingLaunchPayload.model_id, engine_id: pendingLaunchPayload.engine_id})});
+      const report = await api('/api/v1/runtime-management/readiness', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({model_id: pendingLaunchPayload.model_id, engine_id: pendingLaunchPayload.engine_id, cluster_id: launchClusterId()})});
       renderRuntimeReadiness(report);
       return;
     }
@@ -911,7 +918,7 @@ async function installRuntimeOnNodes() {
   button.disabled = true;
   button.textContent = 'Starting installation…';
   try {
-    runtimeInstallJob = await api('/api/v1/runtime-management/install', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({model_id: pendingLaunchPayload.model_id, engine_id: pendingLaunchPayload.engine_id})});
+    runtimeInstallJob = await api('/api/v1/runtime-management/install', {method: 'POST', headers: launchAuthHeaders(), body: JSON.stringify({model_id: pendingLaunchPayload.model_id, engine_id: pendingLaunchPayload.engine_id, cluster_id: launchClusterId()})});
     renderRuntimeInstallJob(runtimeInstallJob);
     runtimeInstallTimer = setTimeout(pollRuntimeInstall, 500);
   } catch (error) {

@@ -77,6 +77,19 @@ def register_runtime_library(app, library, require_model_token, settings):
         except KeyError as error:
             raise HTTPException(404, "Native host not found") from error
 
+    @router.delete(
+        "/artifacts/{artifact_id}",
+        status_code=204,
+        dependencies=[Depends(require_admin_configured)],
+    )
+    async def remove_artifact(artifact_id: str):
+        try:
+            await library.delete_artifact(artifact_id)
+        except KeyError as error:
+            raise HTTPException(404, "Controller archive not found") from error
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+
     @router.get("/jobs/{job_id}")
     async def job(job_id: str):
         try:

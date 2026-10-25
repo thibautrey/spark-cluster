@@ -96,8 +96,10 @@ from .models import (
     ModelRuntime,
     NodeSnapshot,
     RuntimeEndpoint,
+    RuntimeEngineCollection,
     RuntimeInstallJob,
     RuntimeLog,
+    RuntimePrepareRequest,
     RuntimeReadiness,
     RuntimeReadinessRequest,
     RuntimeTerminalRequest,
@@ -205,6 +207,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     runtime_library = RuntimeLibrary(
         settings, runtime.store, runtime_prerequisites, cluster_registry, docker_engine
     )
+    runtime_prerequisites.attach_library(runtime_library)
     inference_tracker = InferenceTracker(settings)
     model_pool.tracker = pool_node.tracker = inference_tracker
 
@@ -1338,7 +1341,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dependencies=[Depends(require_model_token)],
     )
     async def runtime_readiness(request: RuntimeReadinessRequest) -> RuntimeReadiness:
-        return await runtime_prerequisites.inspect(request.model_id, request.engine_id)
+        try:
+            return await runtime_prerequisites.inspect(
+                request.model_id, request.engine_id, request.cluster_id
+            )
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Compute pool not found") from error
+
+    @app.get(
+        "/api/v1/runtime-management/engines",
+        response_model=RuntimeEngineCollection,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def runtime_engines(cluster_id: str) -> RuntimeEngineCollection:
+        try:
+            return await runtime_prerequisites.inspect_engines(cluster_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Compute pool not found") from error
+
+    @app.post(
+        "/api/v1/runtime-management/prepare",
+        response_model=RuntimeInstallJob,
+        status_code=202,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def prepare_runtime(request: RuntimePrepareRequest) -> RuntimeInstallJob:
+        try:
+            return await runtime_prerequisites.prepare(request.cluster_id, request.engine_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Compute pool or engine not found") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @app.post(
         "/api/v1/runtime-management/install",
@@ -1348,7 +1381,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     async def install_runtime(request: RuntimeReadinessRequest) -> RuntimeInstallJob:
         try:
-            return await runtime_prerequisites.install(request.model_id, request.engine_id)
+            return await runtime_prerequisites.install(
+                request.model_id, request.engine_id, request.cluster_id
+            )
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Compute pool not found") from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 

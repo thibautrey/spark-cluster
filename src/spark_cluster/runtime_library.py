@@ -21,6 +21,7 @@ from .cluster_setup import SetupFailure
 from .runtime_catalog import (
     SUPPORTED_PLATFORMS,
     TAG,
+    RegistryError,
     RuntimeRegistry,
     catalog_entries,
     runtime_entry,
@@ -164,6 +165,71 @@ class RuntimeLibrary:
         if not any(host["id"] == host_id for host in hosts):
             raise KeyError(host_id)
         await asyncio.to_thread(self.store.delete_runtime_object, "host", host_id)
+
+    async def verified_artifact_for_image(self, image: str) -> dict | None:
+        """Return a healthy cache entry only after proving its immutable registry identity."""
+        artifacts = await asyncio.to_thread(self.store.runtime_objects, "artifact")
+        digest_reference = None
+        repository_reference = image
+        if "@sha256:" in image:
+            repository_reference, digest_value = image.rsplit("@", 1)
+            digest_reference = digest_value
+        for artifact in artifacts:
+            if artifact.get("artifact_kind", "oci") == "native":
+                continue
+            exact_reference = artifact.get("image") == image
+            exact_digest = (
+                digest_reference
+                and artifact.get("repository") == repository_reference
+                and artifact.get("digest") == digest_reference
+            )
+            if not exact_reference and not exact_digest:
+                continue
+            path = artifact_path(self.root, artifact)
+            if not path.is_file() or await asyncio.to_thread(file_sha256, path) != artifact["sha256"]:
+                continue
+            if exact_digest:
+                return artifact
+            try:
+                resolved = await self.remote.resolve(
+                    artifact["runtime_id"], artifact["version"], artifact["platform"]
+                )
+            except (KeyError, RegistryError):
+                continue
+            if (
+                resolved.get("image") == image
+                and resolved.get("digest") == artifact.get("digest")
+                and resolved.get("config_digest") == artifact.get("config_digest")
+            ):
+                return artifact
+        return None
+
+    async def install_cached(self, artifact_id: str, cluster_id: str) -> dict:
+        return await self.install(
+            RuntimeImportRequest(artifact_id=artifact_id, cluster_id=cluster_id)
+        )
+
+    async def delete_artifact(self, artifact_id: str) -> None:
+        artifact = await self.get_artifact(artifact_id)
+        jobs = await asyncio.to_thread(self.store.runtime_objects, "job")
+        if any(
+            job.get("status") in {"queued", "running"}
+            and job.get("request", {}).get("artifact_id") == artifact_id
+            for job in jobs
+        ):
+            raise ValueError("This controller archive is used by an active runtime job")
+        path = artifact_path(self.root, artifact)
+        tombstone = path.with_name(path.name + ".deleting")
+        if path.exists():
+            await asyncio.to_thread(path.replace, tombstone)
+        try:
+            await asyncio.to_thread(self.store.delete_runtime_object, "artifact", artifact_id)
+        except Exception:
+            if tombstone.exists():
+                await asyncio.to_thread(tombstone.replace, path)
+            raise
+        if tombstone.exists():
+            await asyncio.to_thread(tombstone.unlink)
 
     async def _detect_host_platform(self, host: RuntimeHost) -> Platform:
         transport = self.prerequisites.setup.transport

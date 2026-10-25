@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=runtime-multios-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=runtime-readiness-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -37,36 +37,48 @@
         </header>
 
         <section class="panel runtime-library" id="runtimes" data-route-view="runtimes">
-          <div class="panel-heading"><div><h2>Runtime library</h2><p>Discover versions, cache them on the controller, and prepare your machines.</p></div><button class="secondary" id="runtime-library-refresh" type="button">Refresh</button></div>
-          <p id="runtime-library-message" role="status" aria-live="polite"></p>
-          <div class="runtime-library-layout"><div id="runtime-library-list" class="runtime-library-list" aria-label="Inference runtimes"></div>
-            <div class="runtime-library-detail" id="runtime-library-detail" hidden>
-              <div><h3 id="runtime-library-name"></h3><p id="runtime-library-description"></p><a id="runtime-library-project" target="_blank" rel="noopener">Project ↗</a></div>
-              <p id="runtime-library-hardware"></p><p class="runtime-library-note" id="runtime-library-note"></p>
-              <form id="runtime-library-download">
-                <label>Version / image tag<input id="runtime-library-version" list="runtime-library-versions" placeholder="Choose a tag or enter an exact version" required pattern="[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" maxlength="128" /><datalist id="runtime-library-versions"></datalist></label>
-                <div class="runtime-version-toolbar"><small id="runtime-library-page"></small><button class="secondary" id="runtime-library-more" type="button" hidden>Next versions</button></div>
-                <label>Target platform<select id="runtime-library-platform"></select></label>
-                <button class="primary" id="runtime-library-download-button" type="submit">Download to controller</button>
-              </form>
-            </div>
+          <div class="panel-heading"><div><h2>Runtime readiness</h2><p>Prepare the engines required to launch models on this compute pool.</p></div></div>
+          <div class="runtime-readiness-state loading" id="runtime-readiness-state" role="status" aria-live="polite"><span class="runtime-state-icon" aria-hidden="true">…</span><div><b>Checking runtime readiness</b><small>Inspecting the selected compute pool.</small></div></div>
+          <div id="runtime-readiness-content" hidden>
+            <div class="runtime-engine-list" id="runtime-engine-list"></div>
+            <section class="runtime-readiness-activity" id="runtime-readiness-activity" hidden><div class="runtime-section-heading"><h3>Recent preparation</h3></div><div id="runtime-readiness-jobs"></div></section>
           </div>
-          <details class="runtime-native-hosts">
-            <summary>Native macOS &amp; Windows hosts <span id="runtime-host-count">0</span></summary>
-            <div class="runtime-host-content">
-              <p>Hosts use trusted SSH with a verified Ed25519 fingerprint. Packages install in the current user's managed Spark Cluster directory.</p>
-              <form id="runtime-host-form">
-                <label>Name<input id="runtime-host-name" required maxlength="80" placeholder="Studio Mac" /></label>
-                <label>LAN address<input id="runtime-host-address" required placeholder="192.168.1.42" /></label>
-                <label>SSH user<input id="runtime-host-username" required maxlength="64" placeholder="thibaut" /></label>
-                <label>Ed25519 fingerprint<input id="runtime-host-fingerprint" required pattern="SHA256:[A-Za-z0-9+/]{43}" placeholder="SHA256:…" /></label>
-                <button class="secondary" id="runtime-host-add" type="submit">Verify &amp; add host</button>
-              </form>
-              <div id="runtime-host-list"></div>
+          <details class="runtime-library-advanced" id="runtime-library-advanced" hidden>
+            <summary><span><b>Advanced runtime packages</b><small>Cache and distribute upstream packages without enabling a launch adapter.</small></span><i>⌄</i></summary>
+            <div class="runtime-library-advanced-content">
+              <p class="runtime-library-warning">Package installation only prepares files or images. <b>Ready to launch</b> requires the configured image and an executable Spark adapter on every target node.</p>
+              <label class="runtime-package-target">Package target<select id="runtime-library-target"><option value="">Select a compute pool or native host</option></select></label>
+              <div class="runtime-library-layout"><div id="runtime-library-list" class="runtime-library-list" aria-label="Inference runtime packages"></div>
+                <div class="runtime-library-detail" id="runtime-library-detail" hidden>
+                  <div class="runtime-library-detail-head"><div><h3 id="runtime-library-name"></h3><p id="runtime-library-description"></p></div><span class="pill" id="runtime-library-capability"></span></div>
+                  <a id="runtime-library-project" target="_blank" rel="noopener">Project ↗</a>
+                  <p id="runtime-library-hardware"></p><p class="runtime-library-note" id="runtime-library-note"></p>
+                  <form id="runtime-library-download">
+                    <label>Version / image tag<input id="runtime-library-version" list="runtime-library-versions" placeholder="Choose a tag or enter an exact version" required pattern="[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}" maxlength="128" /><datalist id="runtime-library-versions"></datalist></label>
+                    <div class="runtime-version-toolbar"><small id="runtime-library-page"></small><button class="secondary" id="runtime-library-more" type="button" hidden>Next versions</button></div>
+                    <div class="runtime-derived-platform"><small>Target platform</small><b id="runtime-library-platform-label">Select a package target</b></div>
+                    <button class="primary" id="runtime-library-download-button" type="submit">Cache on controller</button>
+                  </form>
+                </div>
+              </div>
+              <details class="runtime-native-hosts">
+                <summary>Standalone macOS &amp; Windows hosts <span id="runtime-host-count">0</span></summary>
+                <div class="runtime-host-content">
+                  <p>Hosts use trusted SSH with a verified Ed25519 fingerprint. Packages install in the current user's managed Spark Cluster directory.</p>
+                  <form id="runtime-host-form">
+                    <label>Name<input id="runtime-host-name" required maxlength="80" placeholder="Studio Mac" /></label>
+                    <label>LAN address<input id="runtime-host-address" required placeholder="192.168.1.42" /></label>
+                    <label>SSH user<input id="runtime-host-username" required maxlength="64" placeholder="thibaut" /></label>
+                    <label>Ed25519 fingerprint<input id="runtime-host-fingerprint" required pattern="SHA256:[A-Za-z0-9+/]{43}" placeholder="SHA256:…" /></label>
+                    <button class="secondary" id="runtime-host-add" type="submit">Verify &amp; add host</button>
+                  </form>
+                  <div id="runtime-host-list"></div>
+                </div>
+              </details>
+              <section class="runtime-library-cache"><div class="runtime-section-heading"><div><h3>Controller cache</h3><p>Verified archives available for explicit import.</p></div><span id="runtime-cache-total"></span></div><div id="runtime-library-artifacts"></div></section>
+              <section class="runtime-library-activity" id="runtime-library-activity" hidden><h3>Package activity</h3><div id="runtime-library-jobs"></div></section>
             </div>
           </details>
-          <div class="runtime-library-cache"><h3>Controller cache</h3><p>Choose a compute pool to import a cached image on its managed machines.</p><label>Install destination<select id="runtime-library-target"><option value="">Choose a compute pool</option></select></label><div id="runtime-library-artifacts"></div></div>
-          <div class="runtime-library-activity"><h3>Activity</h3><div id="runtime-library-jobs"></div></div>
         </section>
 
         <section class="panel setup-panel" id="setup" data-route-view="setup">
@@ -446,15 +458,15 @@
         </form>
       </section>
     </div>
-    <script src="/assets/navigation.js?v=runtime-library-v1"></script>
-    <script src="/assets/app.js?v=mia-deepseek-v1"></script>
+    <script src="/assets/navigation.js?v=runtime-readiness-v1"></script>
+    <script src="/assets/app.js?v=runtime-readiness-v1"></script>
     <script src="/assets/vendor/marked.js"></script>
     <script src="/assets/vendor/purify.min.js"></script>
     <script src="/assets/model-readme.js?v=adaptive-pools-v1"></script>
     <script src="/assets/catalog.js?v=downloaded-models-v1"></script>
     <script src="/assets/setup.js?v=automated-ssh-bootstrap-v1"></script>
     <script src="/assets/pool.js?v=adaptive-pools-v1" defer></script>
-    <script src="/assets/runtimes.js?v=runtime-multios-v1" defer></script>
+    <script src="/assets/runtimes.js?v=runtime-readiness-v1" defer></script>
     <script src="/assets/inference.js?v=inference-tracking-v1" defer></script>
 </body>
 </html>

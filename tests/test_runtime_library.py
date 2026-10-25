@@ -39,6 +39,7 @@ def library(tmp_path):
     setup = ClusterSetupService(settings, store)
     prerequisites = RuntimePrerequisiteService(settings, store, setup, registry)
     result = RuntimeLibrary(settings, store, prerequisites, registry, DockerEngineClient(settings))
+    prerequisites.attach_library(result)
     yield result
     store.close()
 
@@ -152,6 +153,51 @@ async def test_download_is_digest_pinned_deduplicated_and_cached(library, monkey
     assert (await library.job(third["id"]))["status"] == "completed"
     assert "docker://docker.io/vllm/vllm-openai@" + artifact["digest"] in calls[0]
     assert not list(library.root.glob("*.partial"))
+
+
+@pytest.mark.asyncio
+async def test_prepare_reuses_only_registry_verified_matching_archive(library):
+    artifact = await add_artifact(library)
+    library.settings.runtime_vllm_image = artifact["image"]
+    library.remote.resolve = AsyncMock(
+        return_value={
+            "image": artifact["image"],
+            "digest": artifact["digest"],
+            "config_digest": artifact["config_digest"],
+        }
+    )
+    pool = add_pool(library)
+    library.prerequisites.setup.transport.run_command = AsyncMock(return_value="Linux\naarch64\n")
+    library._import_node = AsyncMock()
+
+    job = await library.prerequisites.prepare(pool.id, "vllm")
+    await library.prerequisites.tasks[job.id]
+    result = await library.prerequisites.get_install(job.id)
+    assert result.status == "completed"
+    assert any(log.node == "controller-cache" for log in result.logs)
+    assert library._import_node.await_count == 2
+    library.remote.resolve.assert_awaited_once_with("vllm", "v1", "linux/arm64")
+
+
+@pytest.mark.asyncio
+async def test_cached_artifact_deletion_refuses_active_job_and_removes_file(library):
+    artifact = await add_artifact(library)
+    active = {
+        "id": "c" * 32,
+        "operation": "install",
+        "status": "running",
+        "request": {"artifact_id": artifact["id"]},
+    }
+    await library._save("job", active)
+    with pytest.raises(ValueError, match="active runtime job"):
+        await library.delete_artifact(artifact["id"])
+    assert (library.root / f"{artifact['id']}.tar").exists()
+
+    active["status"] = "completed"
+    await library._save("job", active)
+    await library.delete_artifact(artifact["id"])
+    assert not (library.root / f"{artifact['id']}.tar").exists()
+    assert not library.store.runtime_objects("artifact")
 
 
 @pytest.mark.asyncio
@@ -506,7 +552,29 @@ def test_runtime_api_authorization_validation_and_controller_routing(tmp_path):
         assert "windows/amd64" in llama["platforms"]
         page = client.get("/").text
         assert 'id="runtime-host-form"' in page
-        assert "Native macOS &amp; Windows hosts" in page
+        assert "Runtime readiness" in page
+        assert "Standalone macOS &amp; Windows hosts" in page
+        cluster_id = client.get("/api/v1/clusters").json()["clusters"][0]["id"]
+        assert client.get(
+            f"/api/v1/runtime-management/engines?cluster_id={cluster_id}"
+        ).status_code == 401
+        engines = client.get(
+            f"/api/v1/runtime-management/engines?cluster_id={cluster_id}", headers=headers
+        )
+        assert engines.status_code == 200
+        assert engines.json()["cluster_id"] == cluster_id
+        assert {item["id"] for item in engines.json()["engines"]} == {
+            "vllm",
+            "sglang",
+            "llama-cpp",
+            "tensorfold",
+            "deepinfer",
+        }
+        assert client.post(
+            "/api/v1/runtime-management/prepare",
+            headers=headers,
+            json={"cluster_id": cluster_id, "engine_id": "vllm"},
+        ).status_code == 409
         assert (
             client.get("/api/v1/runtime-library/jobs/missing", headers=headers).status_code == 404
         )

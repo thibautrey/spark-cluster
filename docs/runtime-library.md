@@ -1,9 +1,28 @@
 # Runtime library
 
-Open **Runtimes** in the dashboard. Spark maintains a curated catalogue of public
-inference runtimes, discovers their image versions, caches a selected image on
-the controller, and imports it on explicitly selected machines. No model is
-started, stopped, or reconfigured by an installation.
+Open **Runtimes** in the dashboard. The default view answers whether the pinned,
+executable inference engines are present on every machine in one explicitly selected
+compute pool. **Prepare on this pool** freezes that destination, installs the configured
+image and verifies it on every managed node. The Launch flow uses the same readiness
+service and therefore reports the same result.
+
+The **Advanced runtime packages** disclosure is a separate distribution tool. Spark
+maintains a curated catalogue of public runtimes, discovers their image versions,
+caches a selected image on the controller, and imports it on explicitly selected
+machines. A cached or imported package is not evidence that Spark has an executable
+launch adapter for it. No model is started, stopped, or reconfigured by a package
+installation.
+
+Runtime readiness has five states:
+
+- **Ready**: the exact configured image is present on every target node and the engine
+  has an executable Spark adapter.
+- **Needs preparation**: every managed node is reachable, but the image is missing or
+  outdated.
+- **Partial**: nodes disagree, an installation failed, or only part of the pool is
+  reachable.
+- **Unreachable**: the target cannot be inspected.
+- **Blocked**: no pinned image, managed nodes, or executable adapter is available.
 
 ## Catalogue and sources
 
@@ -107,7 +126,7 @@ Temporary files are removed, including a best-effort cleanup after disconnects.
 CRI-only machines without an accessible containerd or Docker import command are
 unsupported. Container storage and `/var/tmp` need sufficient disk capacity.
 
-macOS and Windows machines are registered separately under **Native macOS & Windows
+macOS and Windows machines are registered separately under **Standalone macOS & Windows
 hosts**. Registration accepts a private LAN address, SSH username and an Ed25519
 host-key fingerprint. Spark verifies and pins that fingerprint before its first SSH
 command, then detects the actual OS and architecture. The controller must already
@@ -136,6 +155,10 @@ does not erase successful nodes. A completed job proves image preparation only:
 it does not prove CUDA/ROCm drivers, SM121 kernels, model format support,
 TensorRT engine compilation, multi-node inference, or endpoint readiness.
 
+Cached archives can be removed from the advanced view. Deletion is refused while an
+active job references the archive. Removing the controller copy does not remove images
+or native packages already installed on target machines.
+
 The existing vLLM and single-node SGLang launch adapters remain separately
 configured using their pinned image settings. Importing a new tag does not switch
 running models or implicitly enable a launcher. Configure and validate that
@@ -148,6 +171,8 @@ All paths below are controller-local, including when a remote pool is active.
 
 | Method and path | Purpose |
 | --- | --- |
+| `GET /api/v1/runtime-management/engines?cluster_id=<id>` | Read configured engine readiness for one explicit pool |
+| `POST /api/v1/runtime-management/prepare` | Prepare a configured engine on a frozen pool target; returns HTTP 202 |
 | `GET /api/v1/runtime-library` | Catalogue, artifacts, recent jobs and downloader availability |
 | `GET /api/v1/runtime-library/runtimes/{id}/versions?cursor=&limit=50` | Paginated published tags and continuation cursor |
 | `POST /api/v1/runtime-library/resolve` | Resolve a runtime/version/platform to immutable image metadata |
@@ -155,7 +180,12 @@ All paths below are controller-local, including when a remote pool is active.
 | `POST /api/v1/runtime-library/installs` | Queue cached image import; returns HTTP 202 and durable job |
 | `POST /api/v1/runtime-library/hosts` | Verify and register a native macOS/Windows SSH host |
 | `DELETE /api/v1/runtime-library/hosts/{id}` | Remove native-host registration without changing the machine |
+| `DELETE /api/v1/runtime-library/artifacts/{id}` | Remove an unused controller archive without changing target machines |
 | `GET /api/v1/runtime-library/jobs/{id}` | Inspect phase, progress, artifact ID and per-node outcomes |
+
+Preparation JSON is `{"cluster_id":"<pool id>","engine_id":"vllm"}`. The engine
+must have both a configured image and an executable adapter. The returned job retains
+the pool ID and its frozen node list so changing the dashboard context cannot redirect it.
 
 Download/resolve JSON: `{"runtime_id":"vllm","version":"v0.9.2","platform":"linux/arm64"}`.
 The version is an example, not a compatibility recommendation. An absent platform

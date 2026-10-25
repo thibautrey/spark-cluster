@@ -9,11 +9,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from .cluster_registry import ClusterRegistry
+import httpx
+
+from .cluster_registry import ClusterRegistry, ClusterTarget
 from .cluster_setup import ClusterSetupService, SetupFailure
 from .config import Settings
 from .local_docker import DockerEngineClient
 from .models import (
+    RuntimeEngineCollection,
+    RuntimeEngineStatus,
     RuntimeInstallJob,
     RuntimeInstallLog,
     RuntimeNodeState,
@@ -30,6 +34,9 @@ class RuntimeSpec:
     id: str
     name: str
     image: str | None
+    executable: bool
+    capability: str
+    blockers: tuple[str, ...] = ()
 
     @property
     def version(self) -> str:
@@ -58,6 +65,7 @@ class RuntimePrerequisiteService:
         self.setup = setup
         self.registry = registry
         self.docker = docker or DockerEngineClient(settings)
+        self.library = None
         self.tasks: dict[str, asyncio.Task] = {}
         self.tickets: dict[str, tuple[float, SetupNode]] = {}
 
@@ -68,42 +76,203 @@ class RuntimePrerequisiteService:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
+    def attach_library(self, library) -> None:
+        self.library = library
+
+    def spec_for_engine(self, engine_id: str) -> RuntimeSpec:
+        if engine_id == "llama-cpp":
+            return RuntimeSpec(
+                "llama-cpp",
+                "llama.cpp CUDA server",
+                self.settings.runtime_llama_cpp_image,
+                False,
+                "package_only",
+                ("The managed Kubernetes launch adapter is not enabled for llama.cpp.",),
+            )
+        engine = capabilities(self.settings)[engine_id]
+        has_managed_adapter = engine.id in {"vllm", "sglang"}
+        blockers = list(engine.blockers)
+        if has_managed_adapter and not engine.image:
+            blockers.insert(0, "No pinned runtime image is configured for this engine.")
+        return RuntimeSpec(
+            engine.id,
+            engine.name,
+            engine.image,
+            bool(engine.executable),
+            "managed_launch" if has_managed_adapter else "no_launch_adapter",
+            tuple(blockers),
+        )
+
     def spec_for(self, model_id: str, engine_id: str = "auto") -> RuntimeSpec:
         model = model_id.lower()
         if "gguf" in model:
-            return RuntimeSpec(
-                "llama-cpp", "llama.cpp CUDA server", self.settings.runtime_llama_cpp_image
-            )
+            return self.spec_for_engine("llama-cpp")
         if engine_id == "auto":
             engine_id, _ = recommended_engine(model_id, self.settings)
-        engine = capabilities(self.settings)[engine_id]
-        return RuntimeSpec(engine.id, engine.name, engine.image if engine.executable else None)
+        return self.spec_for_engine(engine_id)
 
-    def nodes(self) -> list[SetupNode]:
+    def target(self, cluster_id: str | None = None) -> ClusterTarget | None:
+        if not self.registry:
+            if cluster_id:
+                raise KeyError(cluster_id)
+            return None
+        return self.registry.get(cluster_id) if cluster_id else self.registry.active()
+
+    def nodes(self, target: ClusterTarget | None = None) -> list[SetupNode]:
         for job in self.store.list_setup_jobs():
-            if job.status == "ready":
+            if job.status != "ready":
+                continue
+            if target and target.host_address:
+                if not any(
+                    node.role == "head" and node.address == target.host_address
+                    for node in job.request.nodes
+                ):
+                    continue
+                return job.request.nodes
+            if not target:
                 return job.request.nodes
         return []
 
-    async def inspect(self, model_id: str, engine_id: str = "auto") -> RuntimeReadiness:
+    async def inspect(
+        self, model_id: str, engine_id: str = "auto", cluster_id: str | None = None
+    ) -> RuntimeReadiness:
         spec = self.spec_for(model_id, engine_id)
-        active = self.registry.active() if self.registry else None
-        if active and active.kind == "local-docker":
-            present = bool(spec.image and await self.docker.image_present(spec.image))
+        return await self._inspect_spec(model_id, spec, self.target(cluster_id))
+
+    async def inspect_engines(self, cluster_id: str) -> RuntimeEngineCollection:
+        target = self.target(cluster_id)
+        if target is None:
+            raise KeyError(cluster_id)
+        specs = [
+            self.spec_for_engine(engine_id)
+            for engine_id in ("vllm", "sglang", "llama-cpp", "tensorfold", "deepinfer")
+        ]
+        reports = await asyncio.gather(
+            *(self._inspect_spec(f"engine:{spec.id}", spec, target) for spec in specs)
+        )
+        jobs = await asyncio.to_thread(self.store.list_runtime_installs)
+        engines = [
+            self._engine_status(spec, report, target, jobs) for spec, report in zip(specs, reports)
+        ]
+        platform = await self._target_platform(target)
+        return RuntimeEngineCollection(
+            cluster_id=target.id,
+            cluster_name=target.name,
+            cluster_kind=target.kind,
+            platform=platform,
+            engines=engines,
+        )
+
+    async def _target_platform(self, target: ClusterTarget) -> str | None:
+        if target.kind == "local-docker":
+            return await self.docker.platform()
+        nodes = self.nodes(target)
+        if nodes:
+            try:
+                output = await self.setup.transport.run(nodes[0], "uname -s; uname -m", timeout=30)
+                lines = [line.strip().lower() for line in output.splitlines() if line.strip()]
+                systems = {"linux": "linux"}
+                architectures = {
+                    "x86_64": "amd64",
+                    "amd64": "amd64",
+                    "aarch64": "arm64",
+                    "arm64": "arm64",
+                }
+                if len(lines) >= 2 and lines[0] in systems and lines[1] in architectures:
+                    return f"{systems[lines[0]]}/{architectures[lines[1]]}"
+            except (SetupFailure, OSError, TimeoutError):
+                pass
+        return "linux/arm64" if target.hardware == "dgx-spark" else "linux/amd64"
+
+    def _engine_status(
+        self,
+        spec: RuntimeSpec,
+        report: RuntimeReadiness,
+        target: ClusterTarget,
+        jobs: list[RuntimeInstallJob],
+    ) -> RuntimeEngineStatus:
+        statuses = [node.status for node in report.nodes]
+        ready_nodes = statuses.count("ready")
+        if not spec.executable or not spec.image:
+            state = "blocked"
+        elif report.ready:
+            state = "ready"
+        elif target.status == "offline" or (statuses and all(item == "unreachable" for item in statuses)):
+            state = "unreachable"
+        elif not statuses:
+            state = "blocked"
+        elif ready_nodes or any(item in {"unreachable", "failed"} for item in statuses):
+            state = "partial"
+        else:
+            state = "needs_preparation"
+        active = next(
+            (
+                job
+                for job in jobs
+                if job.cluster_id == target.id
+                and job.runtime_id == spec.id
+                and job.status in {"queued", "running"}
+            ),
+            None,
+        )
+        return RuntimeEngineStatus(
+            id=spec.id,
+            name=spec.name,
+            capability=spec.capability,
+            image=spec.image,
+            required_version=spec.version,
+            state=state,
+            ready=report.ready,
+            prepare_supported=report.install_supported,
+            nodes_ready=ready_nodes,
+            nodes_total=len(report.nodes),
+            nodes=report.nodes,
+            message=report.message,
+            blockers=list(spec.blockers),
+            active_job_id=active.id if active else None,
+            active_job_status=active.status if active else None,
+            active_job_progress=active.progress if active else None,
+        )
+
+    async def _inspect_spec(
+        self, model_id: str, spec: RuntimeSpec, target: ClusterTarget | None
+    ) -> RuntimeReadiness:
+        if not spec.executable:
+            return RuntimeReadiness(
+                model_id=model_id,
+                runtime_id=spec.id,
+                runtime_name=spec.name,
+                required_version=spec.version,
+                image=spec.image,
+                ready=False,
+                install_supported=False,
+                message=spec.blockers[0] if spec.blockers else "No managed launch adapter is available",
+            )
+        if target and target.kind == "local-docker":
+            reachable = self.docker.available
+            try:
+                present = bool(
+                    reachable and spec.image and await self.docker.image_present(spec.image)
+                )
+            except (httpx.HTTPError, RuntimeError):
+                reachable = False
+                present = False
             states = [
                 RuntimeNodeState(
-                    address=f"{active.host_address}/gpu/{gpu.index}",
+                    address=f"{target.host_address}/gpu/{gpu.index}",
                     role="head" if index == 0 else "worker",
-                    status="ready" if present else "missing",
+                    status="ready" if present else "missing" if reachable else "unreachable",
                     installed_version=spec.version if present else None,
                     required_version=spec.version,
                     message=(
                         "Pinned runtime image is present on the Docker host"
                         if present
                         else "Runtime image is missing from the Docker host"
+                        if reachable
+                        else "Docker host could not be inspected"
                     ),
                 )
-                for index, gpu in enumerate(active.gpus)
+                for index, gpu in enumerate(target.gpus)
             ]
             return RuntimeReadiness(
                 model_id=model_id,
@@ -112,15 +281,17 @@ class RuntimePrerequisiteService:
                 required_version=spec.version,
                 image=spec.image,
                 ready=present,
-                install_supported=bool(spec.image),
+                install_supported=bool(spec.image and target.gpus and reachable),
                 nodes=states,
                 message=(
                     "Docker runtime image is ready for every assigned GPU"
                     if present
                     else "Pull the required runtime image on the Docker host"
+                    if reachable
+                    else "Docker host is unavailable"
                 ),
             )
-        nodes = self.nodes()
+        nodes = self.nodes(target)
         if not nodes:
             return RuntimeReadiness(
                 model_id=model_id,
@@ -128,7 +299,7 @@ class RuntimePrerequisiteService:
                 runtime_name=spec.name,
                 required_version=spec.version,
                 image=spec.image,
-                install_supported=bool(spec.image),
+                install_supported=False,
                 message="No SSH-managed cluster nodes are available yet",
             )
         states = await asyncio.gather(*(self._inspect_node(node, spec) for node in nodes))
@@ -140,7 +311,7 @@ class RuntimePrerequisiteService:
             required_version=spec.version,
             image=spec.image,
             ready=ready,
-            install_supported=bool(spec.image),
+            install_supported=bool(spec.image and spec.executable),
             nodes=list(states),
             message=(
                 "Required runtime is ready on every node"
@@ -179,8 +350,26 @@ class RuntimePrerequisiteService:
                 message="Node could not be inspected over trusted SSH",
             )
         images = [line.strip() for line in output.splitlines() if line.strip()]
-        installed = next((image for image in images if spec.repository in image), None)
-        exact = next((image for image in images if spec.image in image), None)
+        normalized_expected = self._normalized_image_reference(spec.image)
+        normalized_repository = self._normalized_image_reference(spec.repository)
+        exact = next(
+            (
+                image
+                for image in images
+                if self._normalized_image_reference(image) == normalized_expected
+            ),
+            None,
+        )
+        installed = next(
+            (
+                image
+                for image in images
+                if self._normalized_image_reference(image).startswith(
+                    (normalized_repository + ":", normalized_repository + "@")
+                )
+            ),
+            None,
+        )
         if exact:
             return RuntimeNodeState(
                 address=node.address,
@@ -208,55 +397,144 @@ class RuntimePrerequisiteService:
             message="Runtime image is not present on this node",
         )
 
-    async def install(self, model_id: str, engine_id: str = "auto") -> RuntimeInstallJob:
+    @staticmethod
+    def _normalized_image_reference(image: str | None) -> str:
+        return (image or "").removeprefix("docker.io/")
+
+    async def install(
+        self, model_id: str, engine_id: str = "auto", cluster_id: str | None = None
+    ) -> RuntimeInstallJob:
         spec = self.spec_for(model_id, engine_id)
+        return await self._install_spec(model_id, spec, self.target(cluster_id))
+
+    async def prepare(self, cluster_id: str, engine_id: str) -> RuntimeInstallJob:
+        spec = self.spec_for_engine(engine_id)
+        return await self._install_spec(f"engine:{engine_id}", spec, self.target(cluster_id))
+
+    async def _install_spec(
+        self, model_id: str, spec: RuntimeSpec, target: ClusterTarget | None
+    ) -> RuntimeInstallJob:
+        if not spec.executable:
+            raise ValueError(
+                spec.blockers[0] if spec.blockers else "No managed launch adapter is available"
+            )
         if not spec.image:
             raise ValueError("Configure a pinned image before installing this specialized runtime")
-        active = self.registry.active() if self.registry else None
-        if active and active.kind == "local-docker":
+        if self.registry and target is None:
+            raise ValueError("Choose a compute pool before preparing a runtime")
+        cluster_id = target.id if target else None
+        cluster_name = target.name if target else None
+        nodes = self.nodes(target)
+        if target and target.kind == "local-docker":
             states = [
                 RuntimeNodeState(
-                    address=f"{active.host_address}/gpu/{gpu.index}",
+                    address=f"{target.host_address}/gpu/{gpu.index}",
                     role="head" if index == 0 else "worker",
                     status="installing",
                     required_version=spec.version,
                     message="Queued on Docker host",
                 )
-                for index, gpu in enumerate(active.gpus)
+                for index, gpu in enumerate(target.gpus)
             ]
-            job = RuntimeInstallJob(
-                id=uuid4().hex,
-                model_id=model_id,
-                runtime_id=spec.id,
-                nodes=states,
-            )
-            await asyncio.to_thread(self.store.save_runtime_install, job)
-            self.tasks[job.id] = asyncio.create_task(self._run_docker_install(job, spec))
-            return job.model_copy(deep=True)
-        nodes = self.nodes()
-        if not nodes:
+            if not states or not self.docker.available:
+                raise ValueError("Docker host access is not configured for this compute pool")
+        elif not nodes:
             raise ValueError("Complete cluster setup before installing runtimes")
         for existing in await asyncio.to_thread(self.store.list_runtime_installs):
-            if existing.runtime_id == spec.id and existing.status in {"queued", "running"}:
+            if (
+                existing.runtime_id == spec.id
+                and existing.cluster_id == cluster_id
+                and existing.status in {"queued", "running"}
+                and existing.nodes
+                and existing.nodes[0].required_version == spec.version
+            ):
                 return existing
         job = RuntimeInstallJob(
             id=uuid4().hex,
             model_id=model_id,
             runtime_id=spec.id,
-            nodes=[
-                RuntimeNodeState(
-                    address=node.address,
-                    role=node.role,
-                    status="installing",
-                    required_version=spec.version,
-                    message="Queued for installation",
-                )
-                for node in nodes
-            ],
+            cluster_id=cluster_id,
+            cluster_name=cluster_name,
+            nodes=(
+                states
+                if target and target.kind == "local-docker"
+                else [
+                    RuntimeNodeState(
+                        address=node.address,
+                        role=node.role,
+                        status="installing",
+                        required_version=spec.version,
+                        message="Queued for installation",
+                    )
+                    for node in nodes
+                ]
+            ),
         )
         await asyncio.to_thread(self.store.save_runtime_install, job)
-        self.tasks[job.id] = asyncio.create_task(self._run_install(job, nodes, spec))
+        self.tasks[job.id] = asyncio.create_task(self._run_prepare(job, target, nodes, spec))
         return job.model_copy(deep=True)
+
+    async def _run_prepare(
+        self,
+        job: RuntimeInstallJob,
+        target: ClusterTarget | None,
+        nodes: list[SetupNode],
+        spec: RuntimeSpec,
+    ) -> None:
+        artifact = None
+        if self.library and target:
+            try:
+                artifact = await self.library.verified_artifact_for_image(spec.image or "")
+            except (KeyError, OSError, ValueError):
+                artifact = None
+        if artifact and target:
+            await self._run_cached_install(job, target, artifact)
+        elif target and target.kind == "local-docker":
+            await self._run_docker_install(job, spec)
+        else:
+            await self._run_install(job, nodes, spec)
+
+    async def _run_cached_install(
+        self, job: RuntimeInstallJob, target: ClusterTarget, artifact: dict
+    ) -> None:
+        job.status = "running"
+        self._log(job, "controller-cache", "info", "Importing verified controller archive")
+        await asyncio.to_thread(self.store.save_runtime_install, job)
+        try:
+            library_job = await self.library.install_cached(artifact["id"], target.id)
+            task = self.library.tasks.get(library_job["id"])
+            if task:
+                await task
+            result = await self.library.job(library_job["id"])
+            if result["status"] != "completed":
+                raise ValueError(result["message"])
+            outcomes = {item["address"]: item["status"] for item in result.get("nodes", [])}
+            for index, node in enumerate(job.nodes):
+                ready = result["status"] == "completed" and (
+                    target.kind == "local-docker" or outcomes.get(node.address) == "ready"
+                )
+                job.nodes[index] = node.model_copy(
+                    update={
+                        "status": "ready" if ready else "failed",
+                        "installed_version": node.required_version if ready else None,
+                        "message": (
+                            "Verified controller archive imported"
+                            if ready
+                            else "Controller archive import failed"
+                        ),
+                    }
+                )
+            job.progress = 100
+            job.status = "completed"
+            self._log(job, "controller-cache", "success", "Runtime image is ready")
+        except (KeyError, ValueError):
+            job.status = "failed"
+            job.error = "Verified controller archive could not be imported"
+            self._log(job, "controller-cache", "error", job.error)
+        finally:
+            job.updated_at = datetime.now(UTC)
+            await asyncio.to_thread(self.store.save_runtime_install, job)
+            self.tasks.pop(job.id, None)
 
     async def _run_docker_install(self, job: RuntimeInstallJob, spec: RuntimeSpec) -> None:
         job.status = "running"
@@ -350,7 +628,9 @@ class RuntimePrerequisiteService:
         return job
 
     def issue_terminal_ticket(self, address: str) -> RuntimeTerminalTicket:
-        node = next((node for node in self.nodes() if node.address == address), None)
+        node = next(
+            (node for node in self.nodes(self.target()) if node.address == address), None
+        )
         if not node:
             raise KeyError(address)
         ticket = secrets.token_urlsafe(32)

@@ -467,7 +467,11 @@ class CachePrefixRecord(BaseModel):
     error: str | None = None
 
 
+RuntimeEngineId = Literal["vllm", "sglang", "llama-cpp", "tensorfold", "deepinfer"]
 RuntimeNodeStatus = Literal["ready", "missing", "outdated", "unreachable", "installing", "failed"]
+RuntimeReadinessState = Literal[
+    "ready", "needs_preparation", "partial", "unreachable", "blocked"
+]
 
 
 class RuntimeNodeState(BaseModel):
@@ -481,7 +485,7 @@ class RuntimeNodeState(BaseModel):
 
 class RuntimeReadiness(BaseModel):
     model_id: str
-    runtime_id: Literal["vllm", "tensorfold", "llama-cpp"]
+    runtime_id: RuntimeEngineId
     runtime_name: str
     required_version: str
     image: str | None = None
@@ -494,6 +498,12 @@ class RuntimeReadiness(BaseModel):
 class RuntimeReadinessRequest(BaseModel):
     model_id: str = Field(min_length=1, max_length=200)
     engine_id: Literal["auto", "vllm", "sglang", "tensorfold", "deepinfer"] = "auto"
+    cluster_id: str | None = Field(default=None, min_length=1, max_length=80)
+
+
+class RuntimePrepareRequest(BaseModel):
+    cluster_id: str = Field(min_length=1, max_length=80)
+    engine_id: RuntimeEngineId
 
 
 class RuntimeInstallLog(BaseModel):
@@ -506,7 +516,9 @@ class RuntimeInstallLog(BaseModel):
 class RuntimeInstallJob(BaseModel):
     id: str
     model_id: str
-    runtime_id: Literal["vllm", "tensorfold", "llama-cpp"]
+    runtime_id: RuntimeEngineId
+    cluster_id: str | None = None
+    cluster_name: str | None = None
     status: Literal["queued", "running", "completed", "failed"] = "queued"
     progress: float = Field(default=0, ge=0, le=100)
     nodes: list[RuntimeNodeState] = Field(default_factory=list)
@@ -514,6 +526,33 @@ class RuntimeInstallJob(BaseModel):
     error: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
+class RuntimeEngineStatus(BaseModel):
+    id: RuntimeEngineId
+    name: str
+    capability: Literal["managed_launch", "package_only", "no_launch_adapter"]
+    image: str | None = None
+    required_version: str
+    state: RuntimeReadinessState
+    ready: bool = False
+    prepare_supported: bool = False
+    nodes_ready: int = 0
+    nodes_total: int = 0
+    nodes: list[RuntimeNodeState] = Field(default_factory=list)
+    message: str
+    blockers: list[str] = Field(default_factory=list)
+    active_job_id: str | None = None
+    active_job_status: Literal["queued", "running"] | None = None
+    active_job_progress: float | None = None
+
+
+class RuntimeEngineCollection(BaseModel):
+    cluster_id: str
+    cluster_name: str
+    cluster_kind: Literal["remote-bridge", "local-docker"]
+    platform: str | None = None
+    engines: list[RuntimeEngineStatus]
 
 
 class RuntimeTerminalRequest(BaseModel):
