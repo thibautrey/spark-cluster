@@ -1,5 +1,6 @@
 import asyncio
 
+import httpx
 import pytest
 
 from spark_cluster.cluster_control import RuntimeDeploymentService, RuntimeLogService
@@ -55,6 +56,88 @@ def test_runtime_log_sanitizer_redacts_credentials_and_signed_urls():
     assert "secret-token" not in value
     assert "abcdefghijklmnop" not in value
     assert "X-Amz-Signature" not in value
+
+
+class DockerLogs:
+    available = True
+
+    def __init__(self, content: bytes):
+        self.content = content
+        self.requests = []
+
+    async def request(self, method, path, **kwargs):
+        self.requests.append((method, path, kwargs))
+        if path == "/containers/json":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "Id": "runtime-id",
+                        "Names": ["/spark-cluster-demand-model"],
+                        "Labels": {
+                            "spark-cluster.managed": "true",
+                            "spark-cluster.model-id": "org/model",
+                            "spark-cluster.engine": "vllm",
+                        },
+                    },
+                    {
+                        "Id": "helper-id",
+                        "Names": ["/managed-helper"],
+                        "Labels": {"spark-cluster.managed": "true"},
+                    },
+                ],
+            )
+        return httpx.Response(200, content=self.content)
+
+
+def docker_frame(stream: int, text: str) -> bytes:
+    payload = text.encode()
+    return bytes([stream, 0, 0, 0]) + len(payload).to_bytes(4, "big") + payload
+
+
+@pytest.mark.asyncio
+async def test_docker_log_service_discovers_decodes_persists_and_deduplicates(tmp_path):
+    content = docker_frame(1, "2026-10-25T12:00:00.123456Z INFO engine ready\n") + docker_frame(
+        2, "2026-10-25T12:00:01Z WARNING cache retry\n"
+    )
+    docker = DockerLogs(content)
+    settings = Settings(
+        mode="live",
+        database_path=tmp_path / "logs.db",
+        model_cache_path=tmp_path / "models",
+        runtime_logs_mode="auto",
+        runtime_log_poll_seconds=0.05,
+        docker_runtime_enabled=True,
+        docker_socket_path=tmp_path / "docker.sock",
+    )
+    settings.docker_socket_path.touch()
+    store = SnapshotStore(settings.database_path)
+    service = RuntimeLogService(settings, store, docker)
+    assert service.mode == "docker"
+    await service.start()
+    try:
+        await asyncio.sleep(0.12)
+        entries = await service.history()
+        assert len(entries) == 2
+        assert [entry.level for entry in entries] == ["info", "warning"]
+        assert all(entry.pod == "spark-cluster-demand-model" for entry in entries)
+        assert all(entry.container == "vllm" for entry in entries)
+        assert await service.instances() == ["spark-cluster-demand-model"]
+        assert any(path.endswith("/logs") for _, path, _ in docker.requests)
+        log_request = next(item for item in docker.requests if item[1].endswith("/logs"))
+        assert log_request[2]["params"]["timestamps"] == "true"
+        assert "since" not in log_request[2]["params"]
+        later = [item for item in docker.requests if item[1].endswith("/logs")][-1]
+        assert "since" in later[2]["params"]
+    finally:
+        await service.stop()
+        store.close()
+
+
+def test_docker_log_decoder_supports_multiplexed_and_tty_streams():
+    frames = docker_frame(1, "first\n") + docker_frame(2, "second\n")
+    assert RuntimeLogService._decode_docker_logs(frames) == "first\nsecond\n"
+    assert RuntimeLogService._decode_docker_logs(b"plain tty log\n") == "plain tty log\n"
 
 
 @pytest.mark.asyncio
