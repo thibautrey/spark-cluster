@@ -1,6 +1,7 @@
 """Model-centric placement across registered clusters without changing UI selection."""
 
 import asyncio
+import contextlib
 import copy
 import hashlib
 import json
@@ -16,6 +17,7 @@ from pydantic import BaseModel, Field
 from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
+from .adaptive_concurrency import MAX_CONCURRENCY, fingerprint, response_feedback
 from .inference_tracking import mark_dispatch, request_stream_usage
 from .local_docker import local_gpu_snapshot
 from .models import ModelFitPlan, ModelFitRequest, ModelLaunchRequest
@@ -137,6 +139,8 @@ class PoolNode:
         self._metadata_checked = {key: time.monotonic() for key in self.runtime_metadata}
         self.tracker = None
         self.native_lock = asyncio.Lock()
+        self.native_requests = 0
+        self.native_changed = asyncio.Event()
         self.reaper = None
         self.port_lock = asyncio.Lock()
         self.ports = {}
@@ -180,10 +184,12 @@ class PoolNode:
     async def reap_native(self):
         while True:
             await asyncio.sleep(2)
+            await self.demand.concurrency.flush()
             if (
                 self.native.get("model_id")
                 and not self.native.get("keep_loaded")
                 and not self.native_lock.locked()
+                and not self.native_requests
                 and time.time() - self.native.get("last_used", time.time()) >= 120
             ):
                 await self.unload(self.native["model_id"])
@@ -209,20 +215,56 @@ class PoolNode:
             finally:
                 await self.capture_runtime_metadata(model_id, profile.upstream)
             return
+        scope, feedback, send = response_feedback(scope, model_id, path, send)
         async with self.native_lock:
             if self.native.get("model_id") != model_id:
                 await JSONResponse(
                     {"error": "Model residency changed; retry the request"}, status_code=503
                 )(scope, receive, send)
                 return
-            try:
+            self.native_requests += 1
+            controller = self.native_controller()
+        base = self.settings.direct_runtime_base_url.removesuffix("/v1")
+        try:
+            async with controller.slot(feedback) as admission:
+                admission.begin()
                 mark_dispatch(scope)
-                base = self.settings.direct_runtime_base_url.removesuffix("/v1")
                 await forward_http(base + "/" + path, scope, receive, send)
-            finally:
-                await self.capture_runtime_metadata(model_id, base)
+        finally:
+            async with self.native_lock:
+                self.native_requests -= 1
                 self.native["last_used"] = time.time()
-                write_private(self.path, self.native)
+                self.native_changed.set()
+            await self.capture_runtime_metadata(model_id, base)
+
+    def native_controller(self):
+        identity = fingerprint(
+            {
+                "model": self.native.get("model_id"),
+                "settings": self.native.get("launch_settings"),
+                "runtime": self.settings.direct_runtime_base_url,
+                "hardware": getattr(self.settings, "active_hardware", None),
+                "nodes": getattr(self.settings, "fallback_node_count", None),
+                "memory": getattr(self.settings, "fallback_node_memory_gib", None),
+            }
+        )
+        return self.demand.concurrency.controller(
+            "runtime", identity, self.native.get("runtime_ceiling", MAX_CONCURRENCY)
+        )
+
+    @contextlib.asynccontextmanager
+    async def native_mutation(self):
+        while True:
+            await self.native_lock.acquire()
+            if not self.native_requests:
+                break
+            self.native_changed.clear()
+            self.native_lock.release()
+            await self.native_changed.wait()
+        try:
+            yield
+        finally:
+            self.native_lock.release()
 
     def local_cluster(self):
         return next((c for c in self.registry.list() if c.kind == "local-docker"), None)
@@ -460,17 +502,15 @@ class PoolNode:
                 "runtime": profile_runtime(p),
                 "profile": p,
             }
-        resident_models = [
-            dict(r.public(), keep_loaded=r.profile.id in self.demand.retained)
-            for r in self.demand.residents.values()
-        ]
+        resident_models = [self.demand.resident_state(r) for r in self.demand.residents.values()]
         if not resident_models and self.native.get("model_id"):
             resident_models = [
                 {
                     "model_id": self.native["model_id"],
                     "status": "ready",
                     "keep_loaded": self.native.get("keep_loaded", False),
-                    "active_requests": int(self.native_lock.locked()),
+                    "active_requests": self.native_requests,
+                    "concurrency": self.native_controller().public(),
                 }
             ]
         active_id = resident_models[0]["model_id"] if len(resident_models) == 1 else None
@@ -661,6 +701,7 @@ class PoolNode:
                 readiness_path="/v1/models",
                 container=payload,
                 launch_settings=launch.model_dump(),
+                model_revision=getattr(fit, "checkpoint_commit", None) or local.revision,
                 resources=self.resources_for_fit(launch, fit, settings),
             )
         return profile, launch, local, plan
@@ -719,13 +760,14 @@ class PoolNode:
                 "settings": profile.launch_settings or None,
             }
         # Physical Kubernetes bridge: the existing validated launcher owns the runtime.
-        async with self.native_lock:
+        async with self.native_mutation():
             if self.native.get("keep_loaded") and self.native.get("model_id") != request.model_id:
                 raise ValueError("The cluster is reserved by a retained model")
             if self.native.get("model_id") == request.model_id:
                 self.native.update(keep_loaded=request.keep_loaded, last_used=time.time())
             else:
-                job = await self.deployments.launch(launch)
+                actual_launch = launch.model_copy(update={"max_num_seqs": MAX_CONCURRENCY})
+                job = await self.deployments.launch(actual_launch)
                 deadline = time.monotonic() + 1200
                 while time.monotonic() < deadline:
                     current = next(j for j in await self.deployments.launches() if j.id == job.id)
@@ -743,6 +785,8 @@ class PoolNode:
                     "model_id": request.model_id,
                     "keep_loaded": request.keep_loaded,
                     "last_used": time.time(),
+                    "runtime_ceiling": MAX_CONCURRENCY,
+                    "launch_settings": actual_launch.model_dump(),
                 }
             write_private(self.path, self.native)
             return {
@@ -774,7 +818,7 @@ class PoolNode:
                     await self.demand._remove(profile)
                 self.demand.retain(profile, False)
             return
-        async with self.native_lock:
+        async with self.native_mutation():
             if self.native.get("model_id") == model_id:
                 if self.deployments.mode != "kubernetes":
                     raise ValueError("No managed Kubernetes runtime can be unloaded")
@@ -983,6 +1027,7 @@ class ModelPool:
                                     "budget_gib",
                                     "active_requests",
                                     "gpu_memory_utilization",
+                                    "concurrency",
                                 }
                             },
                         }
@@ -1022,15 +1067,18 @@ class ModelPool:
         ]
         if not residents:
             return None
-        idle = sorted(
-            (
-                node
-                for node in residents
-                if not node_resident(node, model_id).get("active_requests")
-            ),
-            key=lambda node: node["id"],
+
+        def pressure(node):
+            resident = node_resident(node, model_id)
+            adaptive = resident.get("concurrency")
+            if adaptive:
+                return (adaptive["running"] + adaptive["waiting"]) / max(1, adaptive["limit"])
+            return resident.get("active_requests", 0)
+
+        lowest = min(pressure(node) for node in residents)
+        choices = sorted(
+            (node for node in residents if pressure(node) == lowest), key=lambda node: node["id"]
         )
-        choices = idle or sorted(residents, key=lambda node: node["id"])
         cursor = self._routing_cursor.get(model_id, 0)
         selected = choices[cursor % len(choices)]
         self._routing_cursor[model_id] = cursor + 1

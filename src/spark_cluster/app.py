@@ -293,6 +293,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     inference_tracker.pool_state = pool_usage
     telemetry_service = InferenceTelemetryService(settings, runtime.store)
     telemetry_service.target_provider = metrics_target
+    telemetry_service.observer = on_demand.concurrency.telemetry
     optimization_lab = OptimizationLab(settings, runtime.store, telemetry_service)
     cluster_connector = RemoteClusterConnector(settings, cluster_registry)
 

@@ -426,7 +426,7 @@ async def test_node_loads_assign_distinct_gpus_and_ports_without_lowering_concur
     for r in manager.residents.values():
         ports.update([r.profile.upstream_port, r.profile.listen_port])
         command = manager.docker.containers[r.profile.name]["Config"]["Cmd"]
-        assert command[command.index("--max-num-seqs") + 1] == "7"
+        assert command[command.index("--max-num-seqs") + 1] == "64"
         assert command[command.index("--max-model-len") + 1] == "4096"
     assert len(ports) == 4
 

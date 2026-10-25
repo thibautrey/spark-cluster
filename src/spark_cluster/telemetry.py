@@ -81,6 +81,7 @@ class InferenceTelemetryService:
             notes=["Waiting for a runtime metrics endpoint"]
         )
         self.target_provider = None
+        self.observer = None
         self.client = None
         self._target = None
         self._target_previous = {}
@@ -183,6 +184,8 @@ class InferenceTelemetryService:
                 if temporary:
                     await client.aclose()
         self.latest = telemetry
+        if self.observer:
+            self.observer(telemetry.runtimes)
         await asyncio.to_thread(self.store.save_telemetry, telemetry)
         return telemetry
 

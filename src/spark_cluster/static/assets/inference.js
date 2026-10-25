@@ -75,7 +75,7 @@
     const pools = activity.pools.filter(pool => pool.available && pool.age_seconds < 15);
     const running = activity.active_requests;
     const queued = activity.queued_requests;
-    const loaded = pools.filter(pool => pool.active_model).length;
+    const loaded = pools.filter(pool => pool.resident_models?.length || pool.active_model).length;
     $('overview-model').textContent = running
       ? `${running} request${running === 1 ? '' : 's'} in progress · ${queued} waiting for a pool`
       : totals.requests ? `Idle · ${number(totals.requests)} requests recorded since ${new Date(activity.since * 1000).toLocaleString()}`
@@ -103,9 +103,8 @@
     retainedModels = new Set(activity.retained_models || []);
     instanceCounts = new Map();
     activity.pools.forEach(pool => {
-      if (pool.active_model) {
-        instanceCounts.set(pool.active_model, (instanceCounts.get(pool.active_model) || 0) + 1);
-      }
+      const residents = pool.resident_models || (pool.active_model ? [{model_id: pool.active_model}] : []);
+      residents.forEach(resident => instanceCounts.set(resident.model_id, (instanceCounts.get(resident.model_id) || 0) + 1));
     });
     const active = activity.active.map(request => ({...request, outcome: request.state, duration_ms: request.elapsed_ms}));
     const rows = [...active, ...activity.recent].slice(0, 12);
@@ -120,7 +119,7 @@
       const machines = pool.machines;
       const used = machines.reduce((sum, machine) => sum + (machine.memory_used_gib || 0), 0);
       const total = machines.reduce((sum, machine) => sum + (machine.memory_total_gib || 0), 0);
-      return `<p>${escapeHtml(pool.name)} · ${escapeHtml(pool.active_model || 'No model loaded')} · ${pool.age_seconds < 15 && pool.available && machines.length && machines.every(machine => machine.available !== false) ? `${used.toFixed(1)} / ${total.toFixed(1)} GiB` : 'Resource sample unavailable'} · ${pool.busy ? 'busy' : 'idle'}</p>`;
+      return `<p>${escapeHtml(pool.name)} · ${escapeHtml(pool.resident_models?.map(r => r.model_id).join(', ') || pool.active_model || 'No model loaded')} · ${pool.age_seconds < 15 && pool.available && machines.length && machines.every(machine => machine.available !== false) ? `${used.toFixed(1)} / ${total.toFixed(1)} GiB` : 'Resource sample unavailable'} · ${pool.busy ? 'busy' : 'idle'}</p>`;
     }).join('') || '<p>Pool resource samples will appear when a compute pool reports.</p>';
     $('inference-groups').innerHTML = activity.groups.map(group => `<p>${escapeHtml(group.model_id)} · ${escapeHtml(poolNames.get(group.cluster_id) || group.cluster_id || 'Unassigned')} · ${number(group.requests)} requests · ${number(group.input_tokens)} input / ${number(group.output_tokens)} output tokens</p>`).join('');
     const persistence = activity.persistence;
