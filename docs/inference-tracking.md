@@ -22,7 +22,7 @@ cannot be reconstructed. Historical records survive runtime unloads and restarts
 
 ## Cost and bounds
 
-There is no database, filesystem, network, GPU query, or additional await in the
+There is no database, filesystem, network, GPU query, or additional I/O wait in the
 request observer. After the first output it skips parsing token-only SSE frames.
 The bounded parser reads at most 64 KiB per SSE line, or 256 KiB for JSON, plus a
 64 KiB JSON tail for usage in large embedding/image responses. Binary/audio output

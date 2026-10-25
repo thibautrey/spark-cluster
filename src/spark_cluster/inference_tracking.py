@@ -313,7 +313,6 @@ class RequestRecord:
                 b'"usage"',
                 b'"error"',
                 b"response.failed",
-                b"finish_reason",
                 b".completed",
                 b".done",
             )
