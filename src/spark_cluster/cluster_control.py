@@ -24,7 +24,7 @@ from .models import (
     ModelLaunchRequest,
     RuntimeLog,
 )
-from .runtime_engines import build_execution_plan
+from .runtime_engines import build_execution_plan, container_launch_script
 from .store import SnapshotStore
 
 
@@ -604,8 +604,10 @@ class RuntimeDeploymentService:
             expert_parallel=job.request.expert_parallel,
             chunked_prefill=job.request.chunked_prefill,
         )
-        await self._update(job, "waiting-ready", 75, "Waiting for vLLM health endpoint")
-        await self.docker.wait_ready(cluster)
+        await self._update(
+            job, "waiting-ready", 75, f"Waiting for {plan.engine_name} health endpoint"
+        )
+        await self.docker.wait_ready(cluster, plan.readiness_path)
         active = self.registry.active() if self.registry else None
         if active and active.id == cluster.id:
             self.settings.runtime_model = job.request.model_id
@@ -656,6 +658,21 @@ class RuntimeDeploymentService:
             job, "starting-runtime", 55, f"Applying {plan.engine_name} execution plan"
         )
         environment = [{"name": name, "value": value} for name, value in plan.environment.items()]
+        container: dict[str, Any] = {
+            "name": "engine",
+            "image": plan.image,
+            "env": environment,
+            "readinessProbe": {
+                "httpGet": {"path": plan.readiness_path, "port": "api"},
+                "initialDelaySeconds": 10,
+                "periodSeconds": 5,
+                "failureThreshold": 360,
+            },
+        }
+        container.update(
+            command=["sh", "-lc"],
+            args=[container_launch_script(plan.engine_id)],
+        )
         await self.kubernetes.patch_deployment(
             self.settings.runtime_head_deployment,
             {
@@ -667,11 +684,7 @@ class RuntimeDeploymentService:
                                 "spark-cluster.io/launched-at": datetime.now(UTC).isoformat()
                             }
                         },
-                        "spec": {
-                            "containers": [
-                                {"name": "engine", "image": plan.image, "env": environment}
-                            ]
-                        },
+                        "spec": {"containers": [container]},
                     },
                 }
             },

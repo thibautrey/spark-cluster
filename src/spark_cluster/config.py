@@ -50,6 +50,13 @@ class Settings(BaseSettings):
     runtime_tensorfold_image: str | None = None
     runtime_deepinfer_image: str | None = None
     runtime_llama_cpp_image: str | None = None
+    runtime_ollama_image: str | None = None
+    runtime_tensorrt_llm_image: str | None = None
+    runtime_triton_image: str | None = None
+    runtime_tgi_image: str | None = None
+    runtime_lmdeploy_image: str | None = None
+    runtime_xinference_image: str | None = None
+    runtime_localai_image: str | None = None
     runtime_cache_path: Path | None = None
     runtime_metrics_url: str | None = None
     runtime_metrics_poll_seconds: float = 5

@@ -29,7 +29,10 @@ STEP_COPY = {
         "Use this verified image for future launches on the pool.",
     ),
     "launch": ("Launch the model", "Apply the recommended runtime settings."),
-    "verify": ("Verify a real response", "Check model discovery and generate a minimal response."),
+    "verify": (
+        "Verify the runtime endpoint",
+        "Generate a minimal response, or verify model-repository readiness for Triton.",
+    ),
 }
 PROGRESS = {"resolve": 5, "cache": 30, "install": 55, "activate": 70, "launch": 85, "verify": 100}
 
@@ -101,7 +104,7 @@ class RuntimeWorkflowService:
         alternatives: list[str] = []
         if not platform or platform not in catalog.platforms:
             blockers.append(f"{catalog.name} is not published for this pool platform.")
-        if not catalog.launch_adapter or engine_id not in {"vllm", "sglang"}:
+        if not catalog.launch_adapter:
             blockers.append(f"{catalog.name} has no managed launch adapter on this controller.")
         if model_id == MIA_MODEL_ID:
             blockers.append(MIA_BLOCKER)
@@ -186,6 +189,14 @@ class RuntimeWorkflowService:
         guide = await self.guide(request.cluster_id, request.model_id, request.engine_id)
         if not guide.compatible or not guide.version or not guide.image or not guide.digest:
             raise ValueError(guide.summary)
+        launch_request = (
+            request.launch.model_copy(update={"engine_id": guide.engine_id})
+            if request.launch
+            else None
+        )
+        request = request.model_copy(
+            update={"engine_id": guide.engine_id, "launch": launch_request}
+        )
         if request.launch:
             target = self._target(request.cluster_id)
             plan = build_execution_plan(
@@ -465,22 +476,39 @@ class RuntimeWorkflowService:
 
     async def _smoke(self, job: RuntimeWorkflowJob) -> str:
         target = self._target(job.request.cluster_id)
-        url = f"http://{target.host_address}:{target.runtime_port}/v1/completions"
+        engine = capabilities(self.settings, {job.engine_id: job.image})[job.engine_id]
+        path = engine.inference_path or engine.readiness_path
+        url = f"http://{target.host_address}:{target.runtime_port}{path}"
         headers = {}
         if self.settings.openai_api_key:
             headers["Authorization"] = f"Bearer {self.settings.openai_api_key}"
-        payload = {
-            "model": job.request.launch.served_model_name,
-            "prompt": "Reply with OK.",
-            "max_tokens": 2,
-            "temperature": 0,
-        }
+        payload = (
+            {
+                "model": job.request.launch.served_model_name,
+                "messages": [{"role": "user", "content": "Reply with OK."}],
+                "max_tokens": 2,
+                "temperature": 0,
+            }
+            if engine.inference_protocol == "chat"
+            else {
+                "model": job.request.launch.served_model_name,
+                "prompt": "Reply with OK.",
+                "max_tokens": 2,
+                "temperature": 0,
+            }
+        )
         try:
             async with httpx.AsyncClient(
                 transport=self.http_transport, timeout=60, trust_env=False
             ) as client:
-                response = await client.post(url, json=payload, headers=headers)
+                response = (
+                    await client.get(url, headers=headers)
+                    if engine.inference_protocol == "triton"
+                    else await client.post(url, json=payload, headers=headers)
+                )
                 response.raise_for_status()
+                if engine.inference_protocol == "triton":
+                    return "Triton model repository is ready"
                 body = response.json()
         except (httpx.HTTPError, ValueError) as error:
             raise ValueError(

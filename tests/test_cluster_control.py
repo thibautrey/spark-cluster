@@ -309,6 +309,9 @@ async def test_kubernetes_launch_patches_runtime_resources_and_waits_for_readine
         assert environment["KV_CACHE_DTYPE"] == "auto"
         assert environment["MAX_NUM_SEQS"] == "4"
         assert environment["MAX_NUM_BATCHED_TOKENS"] == "8192"
+        assert containers[0]["command"] == ["sh", "-lc"]
+        assert "vllm.entrypoints.openai.api_server" in containers[0]["args"][0]
+        assert containers[0]["readinessProbe"]["httpGet"]["path"] == "/v1/models"
         assert any("ready to serve" in entry[3] for entry in logs.entries)
     finally:
         await service.stop()

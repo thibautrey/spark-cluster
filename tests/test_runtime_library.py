@@ -644,6 +644,13 @@ def test_runtime_api_authorization_validation_and_controller_routing(tmp_path):
             "vllm",
             "sglang",
             "llama-cpp",
+            "ollama",
+            "tensorrt-llm",
+            "triton",
+            "tgi",
+            "lmdeploy",
+            "xinference",
+            "localai",
             "tensorfold",
             "deepinfer",
         }

@@ -1501,7 +1501,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def runtime_guide(
         cluster_id: str,
         model_id: str | None = None,
-        engine_id: Literal["auto", "vllm", "sglang", "tensorfold", "deepinfer"] = "auto",
+        engine_id: Literal[
+            "auto",
+            "vllm",
+            "sglang",
+            "llama-cpp",
+            "ollama",
+            "tensorrt-llm",
+            "triton",
+            "tgi",
+            "lmdeploy",
+            "xinference",
+            "localai",
+            "tensorfold",
+            "deepinfer",
+        ] = "auto",
     ) -> RuntimeGuide:
         try:
             return await runtime_workflows.guide(cluster_id, model_id, engine_id)

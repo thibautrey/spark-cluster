@@ -260,6 +260,52 @@ def test_sglang_payload_uses_engine_command_and_rejects_unsupported_options(tmp_
         )
 
 
+@pytest.mark.parametrize(
+    "engine_id,command",
+    [
+        ("llama-cpp", "llama-server"),
+        ("ollama", "ollama create"),
+        ("tensorrt-llm", "trtllm-serve"),
+        ("triton", "tritonserver"),
+        ("tgi", "text-generation-launcher"),
+        ("lmdeploy", "lmdeploy serve api_server"),
+        ("xinference", "xinference launch"),
+        ("localai", "local-ai run"),
+    ],
+)
+def test_catalogue_runtime_payloads_have_managed_commands(tmp_path, engine_id, command):
+    config = settings(tmp_path)
+    config.model_cache_path.mkdir(parents=True)
+    model = config.model_cache_path / "acme" / "model"
+    model.mkdir(parents=True)
+    cluster = ClusterRegistry(config).add_local(
+        name="Local GPUs",
+        host_address="192.168.1.149",
+        runtime_port=30000,
+        gpus=gpus(),
+        model_storage_path=str(config.docker_host_model_path),
+    )
+    payload = DockerEngineClient(config).runtime_payload(
+        cluster=cluster,
+        engine_id=engine_id,
+        image=f"example/{engine_id}:stable",
+        model_path=str(model),
+        served_model_name="test-model",
+        context_length=8192,
+        tensor_parallel=1,
+        pipeline_parallel=1,
+        gpu_memory_utilization=0.8,
+        kv_cache_dtype="auto",
+        max_num_seqs=4,
+        max_num_batched_tokens=2048,
+        expert_parallel=False,
+        chunked_prefill=True,
+    )
+    assert payload["Entrypoint"] == ["sh", "-lc"]
+    assert command in payload["Cmd"][0]
+    assert "MODEL_ID=/models/acme/model" in payload["Env"]
+
+
 def test_cluster_api_lists_and_switches_targets_with_admin_auth(tmp_path):
     from fastapi.testclient import TestClient
 

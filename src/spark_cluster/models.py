@@ -289,7 +289,21 @@ class ModelLaunchRequest(BaseModel):
     kv_cache_dtype: Literal["auto", "fp8_e4m3"] = "auto"
     max_num_seqs: int = Field(default=4, gt=0, le=1024)
     max_num_batched_tokens: int = Field(default=8192, ge=512, le=1_048_576)
-    engine_id: Literal["auto", "vllm", "sglang", "tensorfold", "deepinfer"] = "auto"
+    engine_id: Literal[
+        "auto",
+        "vllm",
+        "sglang",
+        "llama-cpp",
+        "ollama",
+        "tensorrt-llm",
+        "triton",
+        "tgi",
+        "lmdeploy",
+        "xinference",
+        "localai",
+        "tensorfold",
+        "deepinfer",
+    ] = "auto"
     speculative_method: Literal["off", "auto", "mtp", "dspark", "eagle3", "dflash"] = "auto"
     speculative_tokens: int = Field(default=0, ge=0, le=5)
     draft_model: str | None = Field(default=None, max_length=200)
@@ -345,6 +359,9 @@ class RuntimeExecutionPlan(BaseModel):
     executable: bool = False
     command: list[str] = Field(default_factory=list)
     environment: dict[str, str] = Field(default_factory=dict)
+    readiness_path: str = "/v1/models"
+    inference_path: str | None = "/v1/completions"
+    inference_protocol: Literal["completions", "chat", "triton"] = "completions"
     capabilities: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     blockers: list[str] = Field(default_factory=list)
@@ -470,7 +487,20 @@ class CachePrefixRecord(BaseModel):
     error: str | None = None
 
 
-RuntimeEngineId = Literal["vllm", "sglang", "llama-cpp", "tensorfold", "deepinfer"]
+RuntimeEngineId = Literal[
+    "vllm",
+    "sglang",
+    "llama-cpp",
+    "ollama",
+    "tensorrt-llm",
+    "triton",
+    "tgi",
+    "lmdeploy",
+    "xinference",
+    "localai",
+    "tensorfold",
+    "deepinfer",
+]
 RuntimeNodeStatus = Literal["ready", "missing", "outdated", "unreachable", "installing", "failed"]
 RuntimeReadinessState = Literal["ready", "needs_preparation", "partial", "unreachable", "blocked"]
 
@@ -498,7 +528,21 @@ class RuntimeReadiness(BaseModel):
 
 class RuntimeReadinessRequest(BaseModel):
     model_id: str = Field(min_length=1, max_length=200)
-    engine_id: Literal["auto", "vllm", "sglang", "tensorfold", "deepinfer"] = "auto"
+    engine_id: Literal[
+        "auto",
+        "vllm",
+        "sglang",
+        "llama-cpp",
+        "ollama",
+        "tensorrt-llm",
+        "triton",
+        "tgi",
+        "lmdeploy",
+        "xinference",
+        "localai",
+        "tensorfold",
+        "deepinfer",
+    ] = "auto"
     cluster_id: str | None = Field(default=None, min_length=1, max_length=80)
 
 
@@ -584,7 +628,21 @@ class RuntimeGuide(BaseModel):
 
 class RuntimeWorkflowRequest(BaseModel):
     cluster_id: str = Field(min_length=1, max_length=80)
-    engine_id: Literal["auto", "vllm", "sglang", "tensorfold", "deepinfer"] = "auto"
+    engine_id: Literal[
+        "auto",
+        "vllm",
+        "sglang",
+        "llama-cpp",
+        "ollama",
+        "tensorrt-llm",
+        "triton",
+        "tgi",
+        "lmdeploy",
+        "xinference",
+        "localai",
+        "tensorfold",
+        "deepinfer",
+    ] = "auto"
     model_id: str | None = Field(default=None, min_length=1, max_length=200)
     launch: ModelLaunchRequest | None = None
 

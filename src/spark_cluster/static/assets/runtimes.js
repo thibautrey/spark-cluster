@@ -75,13 +75,20 @@
       vllm: 'High-throughput LLM inference on NVIDIA GPUs with continuous batching.',
       sglang: 'Language and multimodal inference with prefix caching and structured generation.',
       'llama-cpp': 'Portable GGUF inference for CUDA and native hosts.',
+      ollama: 'Local model management with an OpenAI-compatible serving API.',
+      'tensorrt-llm': 'NVIDIA-optimized LLM serving through the trtllm-serve API.',
+      triton: 'Multi-framework serving for prepared Triton model repositories.',
+      tgi: 'Hugging Face text generation with continuous batching.',
+      lmdeploy: 'TurboMind and PyTorch serving with an OpenAI-compatible API.',
+      xinference: 'Multi-engine serving for models loaded from managed storage.',
+      localai: 'Local OpenAI-compatible serving for GGUF models.',
       tensorfold: 'Specialized model execution for validated sparse and hybrid layouts.',
       deepinfer: 'Experimental kernels for supported NVIDIA accelerator families.',
     })[engine.id] || engine.message;
   }
 
   function runtimeIcon(engine) {
-    return ({vllm: 'ϟ', sglang: '⌘', 'llama-cpp': 'λ', tensorfold: '◇', deepinfer: '◆'})[engine.id] || '◇';
+    return ({vllm: 'ϟ', sglang: '⌘', 'llama-cpp': 'λ', ollama: '○', 'tensorrt-llm': 'T', triton: '△', tgi: 'H', lmdeploy: 'L', xinference: 'X', localai: 'A', tensorfold: '◇', deepinfer: '◆'})[engine.id] || '◇';
   }
 
   function renderPoolOverview() {

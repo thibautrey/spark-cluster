@@ -13,6 +13,7 @@ import httpx
 from .cluster_registry import ClusterTarget, GPUDevice
 from .config import Settings
 from .models import CacheTier, ClusterSnapshot, MemoryStats, ModelRuntime, NodeSnapshot
+from .runtime_engines import MANAGED_ENGINE_IDS, container_launch_script
 
 GIB = 2**30
 
@@ -437,12 +438,17 @@ class DockerEngineClient:
     ) -> dict:
         if tensor_parallel * pipeline_parallel > cluster.gpu_count:
             raise ValueError("Requested parallelism exceeds GPUs assigned to this cluster")
-        if engine_id not in {"vllm", "sglang"}:
+        if engine_id not in MANAGED_ENGINE_IDS:
             raise ValueError(f"The local Docker adapter cannot launch {engine_id}")
-        if engine_id == "sglang" and pipeline_parallel != 1:
-            raise ValueError("The local SGLang adapter does not support pipeline parallelism")
-        if engine_id == "sglang" and expert_parallel:
-            raise ValueError("The local SGLang adapter does not expose expert parallelism")
+        tensor_engines = {"vllm", "sglang", "tensorrt-llm", "tgi", "lmdeploy"}
+        pipeline_engines = {"vllm", "tensorrt-llm"}
+        expert_engines = {"vllm", "tensorrt-llm"}
+        if tensor_parallel > 1 and engine_id not in tensor_engines:
+            raise ValueError(f"The local {engine_id} adapter does not expose tensor parallelism")
+        if pipeline_parallel > 1 and engine_id not in pipeline_engines:
+            raise ValueError(f"The local {engine_id} adapter does not expose pipeline parallelism")
+        if expert_parallel and engine_id not in expert_engines:
+            raise ValueError(f"The local {engine_id} adapter does not expose expert parallelism")
         controller_root = self.settings.model_cache_path.resolve()
         resolved_model = Path(model_path).resolve()
         if controller_root not in resolved_model.parents:
@@ -473,7 +479,7 @@ class DockerEngineClient:
                 command.extend(["--kv-cache-dtype", kv_cache_dtype])
             if chunked_prefill:
                 command.extend(["--chunked-prefill-size", str(max_num_batched_tokens)])
-        else:
+        elif engine_id == "vllm":
             entrypoint = ["vllm", "serve"]
             command = [
                 runtime_model,
@@ -502,6 +508,9 @@ class DockerEngineClient:
                 command.append("--enable-expert-parallel")
             if chunked_prefill:
                 command.append("--enable-chunked-prefill")
+        else:
+            entrypoint = ["sh", "-lc"]
+            command = [container_launch_script(engine_id)]
         device_ids = [
             str(item.index) for item in cluster.gpus[: tensor_parallel * pipeline_parallel]
         ]
@@ -509,7 +518,19 @@ class DockerEngineClient:
             "Image": image,
             "Entrypoint": entrypoint,
             "Cmd": command,
-            "Env": [f"NVIDIA_VISIBLE_DEVICES={','.join(device_ids)}"],
+            "Env": [
+                f"NVIDIA_VISIBLE_DEVICES={','.join(device_ids)}",
+                f"MODEL_ID={runtime_model}",
+                f"SERVED_MODEL_NAME={served_model_name}",
+                f"RUNTIME_PORT={cluster.runtime_port}",
+                f"MAX_MODEL_LEN={context_length}",
+                f"TENSOR_PARALLEL_SIZE={tensor_parallel}",
+                f"PIPELINE_PARALLEL_SIZE={pipeline_parallel}",
+                f"GPU_MEMORY_UTILIZATION={gpu_memory_utilization}",
+                f"KV_CACHE_DTYPE={kv_cache_dtype}",
+                f"MAX_NUM_SEQS={max_num_seqs}",
+                f"MAX_NUM_BATCHED_TOKENS={max_num_batched_tokens}",
+            ],
             "HostConfig": {
                 "NetworkMode": "host",
                 "Runtime": "nvidia",
@@ -593,8 +614,10 @@ class DockerEngineClient:
         await self.request("POST", f"/containers/{container_id}/start", timeout=30)
         return container_id
 
-    async def wait_ready(self, cluster: ClusterTarget, timeout: int = 900) -> None:
-        url = f"http://{cluster.host_address}:{cluster.runtime_port}/v1/models"
+    async def wait_ready(
+        self, cluster: ClusterTarget, readiness_path: str = "/v1/models", timeout: int = 900
+    ) -> None:
+        url = f"http://{cluster.host_address}:{cluster.runtime_port}{readiness_path}"
         deadline = asyncio.get_running_loop().time() + timeout
         async with httpx.AsyncClient(timeout=3) as client:
             while asyncio.get_running_loop().time() < deadline:

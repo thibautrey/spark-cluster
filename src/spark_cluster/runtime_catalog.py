@@ -17,6 +17,7 @@ import httpx
 TAG = r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}"
 DIGEST = r"sha256:[a-f0-9]{64}"
 STABLE_VERSION = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:-cu(\d+))?$")
+CALENDAR_VERSION = re.compile(r"^(\d{2})\.(\d{2})(?:-py3)?$")
 SUPPORTED_PLATFORMS = (
     "linux/amd64",
     "linux/arm64",
@@ -81,6 +82,11 @@ CATALOG = {
             "CPU / CUDA / Vulkan, depending on image",
             SUPPORTED_PLATFORMS,
             "ggml-org/llama.cpp",
+            launch_adapter=True,
+            note=(
+                "Managed GGUF launch is available on Linux compute pools; native packages "
+                "remain install-only."
+            ),
         ),
         CatalogRuntime(
             "ollama",
@@ -91,6 +97,8 @@ CATALOG = {
             "CPU / NVIDIA / AMD, depending on image",
             SUPPORTED_PLATFORMS,
             "ollama/ollama",
+            launch_adapter=True,
+            note="Managed launch imports the selected local model into an isolated Ollama runtime.",
         ),
         CatalogRuntime(
             "tensorrt-llm",
@@ -99,6 +107,8 @@ CATALOG = {
             "https://github.com/NVIDIA/TensorRT-LLM",
             "Optimized NVIDIA LLM inference",
             "NVIDIA; engine builds and GPU generation constraints apply",
+            launch_adapter=True,
+            note="Managed launch uses the upstream OpenAI-compatible trtllm-serve command.",
         ),
         CatalogRuntime(
             "triton",
@@ -107,6 +117,8 @@ CATALOG = {
             "https://github.com/triton-inference-server/server",
             "Multi-framework inference server",
             "NVIDIA / CPU, depending on backend",
+            launch_adapter=True,
+            note="Managed launch requires a valid Triton model repository and exposes the V2 API.",
         ),
         CatalogRuntime(
             "tgi",
@@ -115,6 +127,8 @@ CATALOG = {
             "https://github.com/huggingface/text-generation-inference",
             "Hugging Face LLM serving",
             "NVIDIA / AMD / Intel, depending on image",
+            launch_adapter=True,
+            note="Managed launch uses the upstream text-generation-launcher contract.",
         ),
         CatalogRuntime(
             "lmdeploy",
@@ -123,6 +137,8 @@ CATALOG = {
             "https://github.com/InternLM/lmdeploy",
             "TurboMind and PyTorch LLM serving",
             "NVIDIA; architecture support varies by release",
+            launch_adapter=True,
+            note="Managed launch uses LMDeploy's OpenAI-compatible API server.",
         ),
         CatalogRuntime(
             "xinference",
@@ -131,6 +147,8 @@ CATALOG = {
             "https://github.com/xorbitsai/inference",
             "Multi-engine model serving",
             "CPU / NVIDIA / other accelerators, depending on image",
+            launch_adapter=True,
+            note="Managed launch starts Xinference and loads the selected local model path.",
         ),
         CatalogRuntime(
             "localai",
@@ -141,6 +159,11 @@ CATALOG = {
             "CPU / NVIDIA / AMD / Vulkan, depending on image",
             ("linux/amd64", "linux/arm64", "darwin/arm64"),
             "mudler/LocalAI",
+            launch_adapter=True,
+            note=(
+                "Managed launch serves a selected local GGUF model; native packages remain "
+                "install-only."
+            ),
         ),
     ]
 }
@@ -185,14 +208,33 @@ def catalog_entries() -> list[dict]:
     return [asdict(item) for item in CATALOG.values()]
 
 
-def newest_stable_version(versions: list[dict], platform: str) -> str | None:
-    """Choose a final semantic release and prefer the generic image over CUDA variants."""
+def newest_stable_version(
+    versions: list[dict], platform: str, runtime_id: str | None = None
+) -> str | None:
+    """Choose a reviewed stable channel for a runtime and target platform."""
+    if runtime_id == "llama-cpp":
+        published = {
+            str(item.get("version", ""))
+            for item in versions
+            if not item.get("platforms") or platform in item.get("platforms", [])
+        }
+        for channel in ("server-cuda", "server-cuda13", "server"):
+            if channel in published:
+                return channel
     candidates = []
     for item in versions:
         version = str(item.get("version", ""))
         match = STABLE_VERSION.fullmatch(version)
         platforms = item.get("platforms") or []
-        if not match or (platforms and platform not in platforms):
+        if platforms and platform not in platforms:
+            continue
+        if runtime_id == "triton":
+            calendar = CALENDAR_VERSION.fullmatch(version)
+            if calendar:
+                year, month = calendar.groups()
+                candidates.append(((int(year), int(month), 0), True, version))
+            continue
+        if not match:
             continue
         major, minor, patch, cuda = match.groups()
         candidates.append(((int(major), int(minor), int(patch)), cuda is None, version))
@@ -333,6 +375,10 @@ class RuntimeRegistry:
 
     async def latest_stable(self, runtime_id: str, platform: str) -> dict:
         """Resolve the newest final semantic release to immutable OCI metadata."""
+        if runtime_id == "llama-cpp" and platform.startswith("linux/"):
+            metadata = await self.resolve(runtime_id, "server-cuda", platform)
+            metadata["stale"] = False
+            return metadata
         cursor = ""
         seen: list[dict] = []
         stale = False
@@ -340,7 +386,7 @@ class RuntimeRegistry:
             page = await self.versions(runtime_id, cursor=cursor, limit=100, platform=platform)
             seen.extend(page["versions"])
             stale = stale or bool(page.get("stale"))
-            version = newest_stable_version(seen, platform)
+            version = newest_stable_version(seen, platform, runtime_id)
             if version:
                 metadata = await self.resolve(runtime_id, version, platform)
                 metadata["stale"] = stale
@@ -348,7 +394,7 @@ class RuntimeRegistry:
             cursor = page.get("next_cursor") or ""
             if not cursor:
                 break
-        raise RegistryError("No stable semantic release is published for this platform")
+        raise RegistryError("No supported stable release is published for this platform")
 
     async def _native_versions(
         self, runtime: CatalogRuntime, cursor: str, limit: int, platform: str

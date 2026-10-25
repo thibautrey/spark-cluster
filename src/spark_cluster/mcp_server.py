@@ -262,7 +262,21 @@ ADMIN_TOOLS = [
                 "pipeline_parallel": {"type": "integer", "minimum": 1, "maximum": 64, "default": 1},
                 "engine_id": {
                     "type": "string",
-                    "enum": ["auto", "vllm", "sglang", "tensorfold", "deepinfer"],
+                    "enum": [
+                        "auto",
+                        "vllm",
+                        "sglang",
+                        "llama-cpp",
+                        "ollama",
+                        "tensorrt-llm",
+                        "triton",
+                        "tgi",
+                        "lmdeploy",
+                        "xinference",
+                        "localai",
+                        "tensorfold",
+                        "deepinfer",
+                    ],
                     "default": "auto",
                 },
                 "optimization_profile": {

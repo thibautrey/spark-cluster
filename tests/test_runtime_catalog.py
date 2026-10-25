@@ -31,6 +31,22 @@ def test_newest_stable_version_filters_channels_and_prefers_generic_release():
     assert newest_stable_version(versions, "linux/s390x") is None
 
 
+def test_catalogue_runtimes_have_managed_launch_channels():
+    assert all(runtime.launch_adapter for runtime in CATALOG.values())
+    versions = [
+        {"version": "server", "platforms": ["linux/amd64"]},
+        {"version": "server-cuda", "platforms": ["linux/amd64", "linux/arm64"]},
+        {"version": "server-cuda13", "platforms": ["linux/amd64"]},
+    ]
+    assert newest_stable_version(versions, "linux/arm64", "llama-cpp") == "server-cuda"
+    calendar = [
+        {"version": "26.08-py3", "platforms": ["linux/amd64"]},
+        {"version": "26.09-py3", "platforms": ["linux/amd64"]},
+        {"version": "nightly", "platforms": ["linux/amd64"]},
+    ]
+    assert newest_stable_version(calendar, "linux/amd64", "triton") == "26.09-py3"
+
+
 @pytest.mark.asyncio
 async def test_docker_hub_pagination_cache_and_stale_fallback():
     calls = []

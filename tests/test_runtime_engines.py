@@ -89,6 +89,68 @@ def test_local_sglang_accepts_tensor_parallel_but_rejects_unwired_options():
     assert any("mtp" in blocker.casefold() for blocker in speculative.blockers)
 
 
+@pytest.mark.parametrize(
+    "engine_id,setting,image,evidence,tensor_parallel,pipeline_parallel,protocol",
+    [
+        (
+            "llama-cpp",
+            "runtime_llama_cpp_image",
+            "llama:server-cuda",
+            "llama-server",
+            1,
+            1,
+            "completions",
+        ),
+        ("ollama", "runtime_ollama_image", "ollama:1.0.0", "ollama", 1, 1, "chat"),
+        (
+            "tensorrt-llm",
+            "runtime_tensorrt_llm_image",
+            "tensorrt:1.1.0",
+            "trtllm-serve",
+            2,
+            2,
+            "completions",
+        ),
+        ("triton", "runtime_triton_image", "triton:26.09-py3", "tritonserver", 1, 1, "triton"),
+        ("tgi", "runtime_tgi_image", "tgi:3.3.7", "text-generation-launcher", 2, 1, "chat"),
+        ("lmdeploy", "runtime_lmdeploy_image", "lmdeploy:0.11.0", "lmdeploy", 2, 1, "completions"),
+        (
+            "xinference",
+            "runtime_xinference_image",
+            "xinference:1.9.0",
+            "xinference",
+            1,
+            1,
+            "completions",
+        ),
+        ("localai", "runtime_localai_image", "localai:3.6.0", "local-ai", 1, 1, "completions"),
+    ],
+)
+def test_catalogue_runtime_execution_plans_are_managed(
+    engine_id,
+    setting,
+    image,
+    evidence,
+    tensor_parallel,
+    pipeline_parallel,
+    protocol,
+):
+    plan = build_execution_plan(
+        request(
+            engine_id=engine_id,
+            tensor_parallel=tensor_parallel,
+            pipeline_parallel=pipeline_parallel,
+        ),
+        "/models/acme/model",
+        Settings(**{setting: image}),
+        cluster_kind="local-docker",
+    )
+    assert plan.executable is True
+    assert plan.image == image
+    assert evidence in " ".join(plan.command)
+    assert plan.inference_protocol == protocol
+
+
 def test_launch_validation_rejects_invalid_speculation_moe_and_rank_plans():
     with pytest.raises(ValidationError, match="DSpark"):
         request(speculative_method="dspark", speculative_tokens=1)

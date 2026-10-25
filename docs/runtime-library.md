@@ -170,11 +170,14 @@ Cached archives can be removed from the advanced view. Deletion is refused while
 active job references the archive. Removing the controller copy does not remove images
 or native packages already installed on target machines.
 
-The existing vLLM and single-node SGLang launch adapters remain separately
-configured using their pinned image settings. Importing a new tag does not switch
-running models or implicitly enable a launcher. Configure and validate that
-engine's launch image separately. llama.cpp, Ollama and the other listed engines
-can be cached/imported but have no universal Spark launch adapter yet.
+Every runtime in the catalogue has a managed Linux launch contract. Importing a new
+tag still does not switch running models: the exact image must be activated for the
+selected pool first. vLLM supports the existing Ray multi-node path. The other
+contracts run on one managed host, with engine-specific local multi-GPU support where
+the upstream CLI exposes it. llama.cpp and LocalAI require GGUF, Triton requires a
+prepared model repository containing `config.pbtxt`, and native macOS/Windows package
+installation remains install-only. Spark reports these model and topology constraints
+before launch instead of substituting a different engine.
 
 ## API
 

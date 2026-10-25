@@ -2,6 +2,7 @@
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 
 from .config import Settings
 from .deepseek_mia import MANAGED_LAUNCH_BLOCKER, MODEL_ID
@@ -22,7 +23,26 @@ class EngineCapability:
     speculative_methods: tuple[str, ...]
     supports_expert_parallel: bool
     supports_lmcache: bool
+    supports_tensor_parallel: bool = False
+    supports_pipeline_parallel: bool = False
+    readiness_path: str = "/v1/models"
+    inference_path: str | None = "/v1/completions"
+    inference_protocol: str = "completions"
     blockers: tuple[str, ...] = ()
+
+
+MANAGED_ENGINE_IDS = (
+    "vllm",
+    "sglang",
+    "llama-cpp",
+    "ollama",
+    "tensorrt-llm",
+    "triton",
+    "tgi",
+    "lmdeploy",
+    "xinference",
+    "localai",
+)
 
 
 def capabilities(
@@ -34,6 +54,10 @@ def capabilities(
         for method in settings.runtime_vllm_speculative_methods.split(",")
         if method.strip() in {"off", "auto", "mtp", "dspark", "eagle3", "dflash"}
     )
+
+    def selected(runtime_id: str, configured: str | None) -> str | None:
+        return images.get(runtime_id, configured)
+
     return {
         "vllm": EngineCapability(
             id="vllm",
@@ -44,6 +68,8 @@ def capabilities(
             speculative_methods=vllm_speculation or ("off",),
             supports_expert_parallel=True,
             supports_lmcache=True,
+            supports_tensor_parallel=True,
+            supports_pipeline_parallel=True,
         ),
         "sglang": EngineCapability(
             id="sglang",
@@ -54,6 +80,102 @@ def capabilities(
             speculative_methods=("off", "auto"),
             supports_expert_parallel=False,
             supports_lmcache=False,
+            supports_tensor_parallel=True,
+        ),
+        "llama-cpp": EngineCapability(
+            id="llama-cpp",
+            name="llama.cpp CUDA server",
+            image=selected("llama-cpp", settings.runtime_llama_cpp_image),
+            executable=bool(selected("llama-cpp", settings.runtime_llama_cpp_image)),
+            supports_multi_node=False,
+            speculative_methods=("off", "auto"),
+            supports_expert_parallel=False,
+            supports_lmcache=False,
+            readiness_path="/health",
+        ),
+        "ollama": EngineCapability(
+            id="ollama",
+            name="Ollama",
+            image=selected("ollama", settings.runtime_ollama_image),
+            executable=bool(selected("ollama", settings.runtime_ollama_image)),
+            supports_multi_node=False,
+            speculative_methods=("off", "auto"),
+            supports_expert_parallel=False,
+            supports_lmcache=False,
+            readiness_path="/api/version",
+            inference_path="/v1/chat/completions",
+            inference_protocol="chat",
+        ),
+        "tensorrt-llm": EngineCapability(
+            id="tensorrt-llm",
+            name="TensorRT-LLM",
+            image=selected("tensorrt-llm", settings.runtime_tensorrt_llm_image),
+            executable=bool(selected("tensorrt-llm", settings.runtime_tensorrt_llm_image)),
+            supports_multi_node=False,
+            speculative_methods=("off", "auto"),
+            supports_expert_parallel=True,
+            supports_lmcache=False,
+            supports_tensor_parallel=True,
+            supports_pipeline_parallel=True,
+        ),
+        "triton": EngineCapability(
+            id="triton",
+            name="Triton Inference Server",
+            image=selected("triton", settings.runtime_triton_image),
+            executable=bool(selected("triton", settings.runtime_triton_image)),
+            supports_multi_node=False,
+            speculative_methods=("off", "auto"),
+            supports_expert_parallel=False,
+            supports_lmcache=False,
+            readiness_path="/v2/health/ready",
+            inference_path=None,
+            inference_protocol="triton",
+        ),
+        "tgi": EngineCapability(
+            id="tgi",
+            name="Text Generation Inference",
+            image=selected("tgi", settings.runtime_tgi_image),
+            executable=bool(selected("tgi", settings.runtime_tgi_image)),
+            supports_multi_node=False,
+            speculative_methods=("off", "auto"),
+            supports_expert_parallel=False,
+            supports_lmcache=False,
+            supports_tensor_parallel=True,
+            readiness_path="/health",
+            inference_path="/v1/chat/completions",
+            inference_protocol="chat",
+        ),
+        "lmdeploy": EngineCapability(
+            id="lmdeploy",
+            name="LMDeploy",
+            image=selected("lmdeploy", settings.runtime_lmdeploy_image),
+            executable=bool(selected("lmdeploy", settings.runtime_lmdeploy_image)),
+            supports_multi_node=False,
+            speculative_methods=("off", "auto"),
+            supports_expert_parallel=False,
+            supports_lmcache=False,
+            supports_tensor_parallel=True,
+        ),
+        "xinference": EngineCapability(
+            id="xinference",
+            name="Xinference",
+            image=selected("xinference", settings.runtime_xinference_image),
+            executable=bool(selected("xinference", settings.runtime_xinference_image)),
+            supports_multi_node=False,
+            speculative_methods=("off", "auto"),
+            supports_expert_parallel=False,
+            supports_lmcache=False,
+        ),
+        "localai": EngineCapability(
+            id="localai",
+            name="LocalAI",
+            image=selected("localai", settings.runtime_localai_image),
+            executable=bool(selected("localai", settings.runtime_localai_image)),
+            supports_multi_node=False,
+            speculative_methods=("off", "auto"),
+            supports_expert_parallel=False,
+            supports_lmcache=False,
+            readiness_path="/readyz",
         ),
         "tensorfold": EngineCapability(
             id="tensorfold",
@@ -99,9 +221,7 @@ def recommended_engine(model_id: str, settings: Settings) -> tuple[str, list[str
             "validated executable adapter; vLLM remains the runnable baseline."
         )
     if "gguf" in model:
-        notes.append(
-            "GGUF needs a llama.cpp-family runtime; the Kubernetes adapter is not enabled."
-        )
+        return "llama-cpp", ["GGUF selected the managed llama.cpp adapter."]
     return "vllm", notes
 
 
@@ -115,9 +235,16 @@ def build_execution_plan(
     matrix = capabilities(settings, image_overrides)
     engine_id = request.engine_id
     warnings: list[str] = []
+    managed_path = Path(model_path)
+    has_gguf = managed_path.is_file() and managed_path.suffix.casefold() == ".gguf"
+    if managed_path.is_dir():
+        has_gguf = any(managed_path.rglob("*.gguf"))
     if engine_id == "auto":
         engine_id, recommendations = recommended_engine(request.model_id, settings)
         warnings.extend(recommendations)
+        if has_gguf:
+            engine_id = "llama-cpp"
+            warnings.append("Managed GGUF files selected the llama.cpp adapter.")
     engine = matrix[engine_id]
     blockers = list(engine.blockers)
     if request.model_id == MODEL_ID:
@@ -132,9 +259,11 @@ def build_execution_plan(
     ranks = request.tensor_parallel * request.pipeline_parallel
     if not engine.image:
         blockers.append(f"No pinned {engine.name} image is configured.")
-    if request.pipeline_parallel > 1 and engine_id == "sglang":
-        blockers.append("The managed SGLang adapter does not support pipeline parallelism.")
-    elif ranks > 1 and not engine.supports_multi_node and cluster_kind != "local-docker":
+    if request.tensor_parallel > 1 and not engine.supports_tensor_parallel:
+        blockers.append(f"{engine.name} does not expose tensor parallelism through this adapter.")
+    if request.pipeline_parallel > 1 and not engine.supports_pipeline_parallel:
+        blockers.append(f"{engine.name} does not expose pipeline parallelism through this adapter.")
+    if ranks > 1 and not engine.supports_multi_node and cluster_kind != "local-docker":
         blockers.append(f"{engine.name} is enabled only for a single Spark in this release.")
     if request.speculative_method not in engine.speculative_methods:
         blockers.append(
@@ -149,6 +278,12 @@ def build_execution_plan(
             "This GGUF repository needs a validated llama.cpp-family adapter; the vLLM "
             "multi-node launcher is not used as an implicit fallback."
         )
+    if managed_path.exists() and engine_id in {"llama-cpp", "localai"}:
+        if not has_gguf:
+            blockers.append(f"{engine.name} requires a GGUF file in the managed model directory.")
+    if managed_path.exists() and engine_id == "triton":
+        if not any(managed_path.rglob("config.pbtxt")):
+            blockers.append("Triton requires a model repository containing config.pbtxt.")
 
     environment = {
         "ENGINE_ID": engine_id,
@@ -171,6 +306,7 @@ def build_execution_plan(
         "CACHE_DISK_GIB": str(request.cache_disk_gib),
         "RANK_ORDER": ",".join(request.rank_order),
         "ENFORCE_RANK_ORDER": "1" if request.enforce_rank_order else "0",
+        "RUNTIME_PORT": "8000",
     }
     if request.speculative_method not in {"off", "auto"}:
         speculative = {
@@ -184,7 +320,9 @@ def build_execution_plan(
         environment["SPECULATIVE_CONFIG"] = ""
 
     command = _command_preview(engine_id, request)
-    exposed = ["OpenAI-compatible API"]
+    exposed = (
+        ["Triton V2 API"] if engine.inference_protocol == "triton" else ["OpenAI-compatible API"]
+    )
     if engine.supports_multi_node:
         exposed.append("multi-node")
     if engine.supports_lmcache:
@@ -201,6 +339,9 @@ def build_execution_plan(
         executable=engine.executable and bool(engine.image) and not blockers,
         command=command,
         environment=environment,
+        readiness_path=engine.readiness_path,
+        inference_path=engine.inference_path,
+        inference_protocol=engine.inference_protocol,
         capabilities=exposed,
         warnings=warnings,
         blockers=blockers,
@@ -222,23 +363,194 @@ def _command_preview(engine_id: str, request: ModelLaunchRequest) -> list[str]:
             "--context-length",
             "$MAX_MODEL_LEN",
         ]
-    if engine_id != "vllm":
-        return []
-    command = [
-        "python3",
-        "-m",
-        "vllm.entrypoints.openai.api_server",
-        "--model",
-        "$MODEL_ID",
-        "--served-model-name",
-        "$SERVED_MODEL_NAME",
-        "--tensor-parallel-size",
-        "$TENSOR_PARALLEL_SIZE",
-        "--pipeline-parallel-size",
-        "$PIPELINE_PARALLEL_SIZE",
-    ]
-    if request.speculative_method not in {"off", "auto"}:
-        command.extend(["--speculative-config", "$SPECULATIVE_CONFIG"])
-    if request.expert_parallel:
-        command.append("--enable-expert-parallel")
-    return command
+    if engine_id == "vllm":
+        command = [
+            "python3",
+            "-m",
+            "vllm.entrypoints.openai.api_server",
+            "--model",
+            "$MODEL_ID",
+            "--served-model-name",
+            "$SERVED_MODEL_NAME",
+            "--tensor-parallel-size",
+            "$TENSOR_PARALLEL_SIZE",
+            "--pipeline-parallel-size",
+            "$PIPELINE_PARALLEL_SIZE",
+        ]
+        if request.speculative_method not in {"off", "auto"}:
+            command.extend(["--speculative-config", "$SPECULATIVE_CONFIG"])
+        if request.expert_parallel:
+            command.append("--enable-expert-parallel")
+        return command
+    commands = {
+        "llama-cpp": ["/app/llama-server", "--model", "$MODEL_ID", "--port", "$RUNTIME_PORT"],
+        "ollama": ["ollama", "serve", "+", "ollama", "create", "$SERVED_MODEL_NAME"],
+        "tensorrt-llm": [
+            "trtllm-serve",
+            "$MODEL_ID",
+            "--tp_size",
+            "$TENSOR_PARALLEL_SIZE",
+            "--pp_size",
+            "$PIPELINE_PARALLEL_SIZE",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "$RUNTIME_PORT",
+        ],
+        "triton": [
+            "tritonserver",
+            "--model-repository=$MODEL_ID",
+            "--http-port=$RUNTIME_PORT",
+        ],
+        "tgi": [
+            "text-generation-launcher",
+            "--model-id",
+            "$MODEL_ID",
+            "--port",
+            "$RUNTIME_PORT",
+            "--num-shard",
+            "$TENSOR_PARALLEL_SIZE",
+        ],
+        "lmdeploy": [
+            "lmdeploy",
+            "serve",
+            "api_server",
+            "$MODEL_ID",
+            "--server-port",
+            "$RUNTIME_PORT",
+            "--tp",
+            "$TENSOR_PARALLEL_SIZE",
+        ],
+        "xinference": [
+            "xinference-local",
+            "-p",
+            "$RUNTIME_PORT",
+            "+",
+            "xinference",
+            "launch",
+            "--model-path",
+            "$MODEL_ID",
+        ],
+        "localai": ["local-ai", "run", "$MODEL_ID"],
+    }
+    return commands.get(engine_id, [])
+
+
+def container_launch_script(engine_id: str) -> str:
+    """Return a static shell contract; launch values enter only through quoted env vars."""
+
+    def script(*lines: str) -> str:
+        return "\n".join(("set -eu", *lines))
+
+    scripts = {
+        "vllm": script(
+            "cat > /tmp/lmcache.yaml <<EOF",
+            "chunk_size: 256",
+            "local_cpu: true",
+            "max_local_cpu_size: $CACHE_CPU_GIB",
+            "local_disk: file:///var/lib/lmcache",
+            "max_local_disk_size: $CACHE_DISK_GIB",
+            "save_decode_cache: true",
+            "enable_blending: true",
+            "EOF",
+            'ray start --head --node-ip-address="$NODE_IP" --port=6379 --dashboard-host=0.0.0.0',
+            'set -- --model "$MODEL_ID" --served-model-name "$SERVED_MODEL_NAME" '
+            "--distributed-executor-backend ray "
+            '--tensor-parallel-size "$TENSOR_PARALLEL_SIZE" '
+            '--pipeline-parallel-size "$PIPELINE_PARALLEL_SIZE" '
+            '--max-model-len "$MAX_MODEL_LEN" '
+            '--gpu-memory-utilization "$GPU_MEMORY_UTILIZATION" '
+            '--kv-cache-dtype "$KV_CACHE_DTYPE" --max-num-seqs "$MAX_NUM_SEQS" '
+            '--max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS" '
+            "--enable-prefix-caching "
+            "--kv-transfer-config "
+            '\'{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"}\' '
+            '--host 0.0.0.0 --port "$RUNTIME_PORT"',
+            'if test -n "$SPECULATIVE_CONFIG"; then set -- "$@" '
+            '--speculative-config "$SPECULATIVE_CONFIG"; fi',
+            'if test "$CUDA_GRAPHS" != 1; then set -- "$@" --enforce-eager; fi',
+            'if test "$CHUNKED_PREFILL" = 1; then set -- "$@" --enable-chunked-prefill; fi',
+            'if test "$EXPERT_PARALLEL" = 1; then',
+            '  set -- "$@" --enable-expert-parallel',
+            '  if test "$ALL2ALL_BACKEND" != auto; then set -- "$@" '
+            '--all2all-backend "$ALL2ALL_BACKEND"; fi',
+            "fi",
+            'if test "$EXPERT_LOAD_BALANCING" = 1; then set -- "$@" '
+            "--enable-eplb --eplb-config "
+            '"{\\"num_redundant_experts\\":$REDUNDANT_EXPERTS}"; fi',
+            'exec python -m vllm.entrypoints.openai.api_server "$@"',
+        ),
+        "sglang": script(
+            'exec python -m sglang.launch_server --model-path "$MODEL_ID" '
+            '--served-model-name "$SERVED_MODEL_NAME" --tp "$TENSOR_PARALLEL_SIZE" '
+            '--context-length "$MAX_MODEL_LEN" '
+            '--mem-fraction-static "$GPU_MEMORY_UTILIZATION" '
+            '--host 0.0.0.0 --port "$RUNTIME_PORT"'
+        ),
+        "llama-cpp": script(
+            'if test -f "$MODEL_ID"; then model_file="$MODEL_ID"; else '
+            "model_file=$(find \"$MODEL_ID\" -type f -name '*.gguf' -print | sort | head -n 1); fi",
+            "test -n \"$model_file\" || { echo 'No GGUF file found' >&2; exit 64; }",
+            'exec /app/llama-server --model "$model_file" --alias "$SERVED_MODEL_NAME" '
+            '--host 0.0.0.0 --port "$RUNTIME_PORT" --ctx-size "$MAX_MODEL_LEN" '
+            '--parallel "$MAX_NUM_SEQS" --n-gpu-layers 999',
+        ),
+        "ollama": script(
+            'export OLLAMA_HOST="0.0.0.0:$RUNTIME_PORT"',
+            "ollama serve &",
+            "server_pid=$!",
+            "trap 'kill \"$server_pid\" 2>/dev/null || true' EXIT INT TERM",
+            "until ollama list >/dev/null 2>&1; do sleep 1; done",
+            "printf 'FROM \"%s\"\\nPARAMETER num_ctx %s\\n' "
+            '"$MODEL_ID" "$MAX_MODEL_LEN" > /tmp/Modelfile',
+            'ollama create "$SERVED_MODEL_NAME" --file /tmp/Modelfile',
+            'wait "$server_pid"',
+        ),
+        "tensorrt-llm": script(
+            'exec trtllm-serve "$MODEL_ID" --tp_size "$TENSOR_PARALLEL_SIZE" '
+            '--pp_size "$PIPELINE_PARALLEL_SIZE" --host 0.0.0.0 '
+            '--port "$RUNTIME_PORT"'
+        ),
+        "triton": script(
+            'exec tritonserver --model-repository="$MODEL_ID" --http-address=0.0.0.0 '
+            '--http-port="$RUNTIME_PORT"'
+        ),
+        "tgi": script(
+            'exec text-generation-launcher --model-id "$MODEL_ID" --hostname 0.0.0.0 '
+            '--port "$RUNTIME_PORT" --num-shard "$TENSOR_PARALLEL_SIZE" '
+            '--max-total-tokens "$MAX_MODEL_LEN" '
+            '--max-concurrent-requests "$MAX_NUM_SEQS"'
+        ),
+        "lmdeploy": script(
+            'exec lmdeploy serve api_server "$MODEL_ID" --server-name 0.0.0.0 '
+            '--server-port "$RUNTIME_PORT" --tp "$TENSOR_PARALLEL_SIZE" '
+            '--session-len "$MAX_MODEL_LEN"'
+        ),
+        "xinference": script(
+            'xinference-local -H 0.0.0.0 -p "$RUNTIME_PORT" &',
+            "server_pid=$!",
+            "trap 'kill \"$server_pid\" 2>/dev/null || true' EXIT INT TERM",
+            'until xinference list --endpoint "http://127.0.0.1:$RUNTIME_PORT" '
+            ">/dev/null 2>&1; do sleep 1; done",
+            "model_engine=transformers",
+            'if test -f "$MODEL_ID" && test "${MODEL_ID##*.}" = gguf; then '
+            "model_engine=llama.cpp; fi",
+            'if test -d "$MODEL_ID" && find "$MODEL_ID" -type f -name \'*.gguf\' '
+            "-print -quit | grep -q .; then model_engine=llama.cpp; fi",
+            'xinference launch --endpoint "http://127.0.0.1:$RUNTIME_PORT" '
+            '--model-path "$MODEL_ID" --model-engine "$model_engine" '
+            '--model-uid "$SERVED_MODEL_NAME" -n "$SERVED_MODEL_NAME"',
+            'wait "$server_pid"',
+        ),
+        "localai": script(
+            'if test -f "$MODEL_ID"; then model_file="$MODEL_ID"; else '
+            "model_file=$(find \"$MODEL_ID\" -type f -name '*.gguf' -print | sort | head -n 1); fi",
+            "test -n \"$model_file\" || { echo 'No GGUF file found' >&2; exit 64; }",
+            'export LOCALAI_ADDRESS="0.0.0.0:$RUNTIME_PORT"',
+            'exec local-ai run "$model_file"',
+        ),
+    }
+    try:
+        return scripts[engine_id]
+    except KeyError as error:
+        raise ValueError(f"No container launch command is defined for {engine_id}") from error

@@ -778,9 +778,9 @@ function renderDownloads(downloads) {
 const launchStages = [
   ['validating', 'Validate model'],
   ['scaling-workers', 'Scale Ray workers'],
-  ['starting-runtime', 'Start vLLM runtime'],
+  ['starting-runtime', 'Start inference runtime'],
   ['waiting-ready', 'Wait for readiness'],
-  ['ready', 'Serve OpenAI API'],
+  ['ready', 'Serve runtime API'],
 ];
 
 function renderLaunches(launches) {

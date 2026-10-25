@@ -121,7 +121,7 @@ async def test_engine_overview_and_prepare_are_bound_to_explicit_pool(tmp_path):
     assert next(engine for engine in overview.engines if engine.id == "sglang").state == "blocked"
     assert (
         next(engine for engine in overview.engines if engine.id == "llama-cpp").capability
-        == "package_only"
+        == "managed_launch"
     )
 
     transport.pull_gate = asyncio.Event()

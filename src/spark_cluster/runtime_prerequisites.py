@@ -24,7 +24,7 @@ from .models import (
     RuntimeReadiness,
     RuntimeTerminalTicket,
 )
-from .runtime_engines import capabilities, recommended_engine
+from .runtime_engines import MANAGED_ENGINE_IDS, capabilities, recommended_engine
 from .setup_models import SetupNode
 from .store import SnapshotStore
 
@@ -128,19 +128,8 @@ class RuntimePrerequisiteService:
         return value
 
     def spec_for_engine(self, engine_id: str, cluster_id: str | None = None) -> RuntimeSpec:
-        if engine_id == "llama-cpp":
-            return RuntimeSpec(
-                "llama-cpp",
-                "llama.cpp CUDA server",
-                self.image_overrides(cluster_id).get(
-                    "llama-cpp", self.settings.runtime_llama_cpp_image
-                ),
-                False,
-                "package_only",
-                ("The managed Kubernetes launch adapter is not enabled for llama.cpp.",),
-            )
         engine = capabilities(self.settings, self.image_overrides(cluster_id))[engine_id]
-        has_managed_adapter = engine.id in {"vllm", "sglang"}
+        has_managed_adapter = engine.id in MANAGED_ENGINE_IDS
         blockers = list(engine.blockers)
         if has_managed_adapter and not engine.image:
             blockers.insert(0, "No pinned runtime image is configured for this engine.")
@@ -198,7 +187,7 @@ class RuntimePrerequisiteService:
             raise KeyError(cluster_id)
         specs = [
             self.spec_for_engine(engine_id, target.id)
-            for engine_id in ("vllm", "sglang", "llama-cpp", "tensorfold", "deepinfer")
+            for engine_id in (*MANAGED_ENGINE_IDS, "tensorfold", "deepinfer")
         ]
         reports = await asyncio.gather(
             *(self._inspect_spec(f"engine:{spec.id}", spec, target) for spec in specs)
