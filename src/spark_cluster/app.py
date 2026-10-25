@@ -58,7 +58,6 @@ from .cluster_registry import (
 from .cluster_setup import ClusterSetupService, SetupFailure
 from .config import Settings
 from .inference_tracking import InferenceTracker
-from .performance_history import RUNTIME_FIELDS, scopes as performance_scopes
 from .local_docker import DockerEngineClient, detect_nvidia_gpus, local_gpu_snapshot
 from .mcp_server import SparkClusterMCP
 from .model_manager import (
@@ -114,6 +113,8 @@ from .models import (
 from .on_demand import OnDemandInference, load_profiles
 from .optimization_lab import OptimizationLab
 from .performance import PerformancePlan, PerformancePlanRequest, build_performance_plan
+from .performance_history import RUNTIME_FIELDS
+from .performance_history import scopes as performance_scopes
 from .prometheus import render_metrics
 from .remote_cluster import (
     RemoteClusterConnector,
@@ -292,12 +293,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     inference_tracker.resources = resource_sample
     inference_tracker.pool_state = pool_usage
-    inference_tracker.local_pool = lambda: (c.id if (c := model_pool.local_cluster()) else None)
+    inference_tracker.local_pool = lambda: c.id if (c := pool_node.local_cluster()) else None
     telemetry_service = InferenceTelemetryService(settings, runtime.store)
     telemetry_service.target_provider = metrics_target
+
     def observe_telemetry(samples):
         on_demand.concurrency.telemetry(samples)
-        local = model_pool.local_cluster()
+        local = pool_node.local_cluster()
         # Only known local runtime placements receive model/pool/GPU attribution.
         measured = []
         grouped = {}
@@ -308,7 +310,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if resident and local:
                 entities = performance_scopes(
                     resident.profile.model_id or resident.profile.model,
-                    local.id, resident.gpu_ids,
+                    local.id,
+                    resident.gpu_ids,
                 )[1:]
                 for entity in entities:
                     grouped.setdefault(entity, []).append(metrics)
@@ -318,17 +321,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             for field in RUNTIME_FIELDS:
                 values = [m[field] for m in metrics_list if m.get(field) is not None]
                 if values:
-                    combined[field] = sum(values) if field.endswith("tokens_per_second") else (
-                        sum(values) / len(values)
+                    combined[field] = (
+                        sum(values)
+                        if field.endswith("tokens_per_second")
+                        else (sum(values) / len(values))
                     )
             inference_tracker.observe_runtime(
-                [entity], telemetry_service.latest.sampled_at.timestamp(), combined,
+                [entity],
+                telemetry_service.latest.sampled_at.timestamp(),
+                combined,
             )
         if measured:
             # Use the scraper's combined sample once; never add runtime and request tokens.
             metrics = telemetry_service.latest.model_dump(mode="json")
             inference_tracker.observe_runtime(
-                [("overall", "all")], telemetry_service.latest.sampled_at.timestamp(), metrics,
+                [("overall", "all")],
+                telemetry_service.latest.sampled_at.timestamp(),
+                metrics,
             )
 
     telemetry_service.observer = observe_telemetry
@@ -893,8 +902,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         hours: int = Query(default=24, ge=1, le=24 * 730),
     ) -> dict:
         result = await asyncio.to_thread(
-            inference_tracker.journal.performance_summary, scope,
-            "all" if scope == "overall" else entity, hours,
+            inference_tracker.journal.performance_summary,
+            scope,
+            "all" if scope == "overall" else entity,
+            hours,
         )
         result["persistence"] = dict(
             healthy=not inference_tracker.persistence_error,
