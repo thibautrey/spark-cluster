@@ -26,6 +26,9 @@ let latestDownloads = [];
 let clusterState = {clusters: [], active_cluster_id: null};
 let latestSnapshot = null;
 let runtimeReady = false;
+let resourceHistoryOpener = null;
+let resourceHistoryCloseTimer = null;
+let resourceHistoryRequest = 0;
 
 const formatNumber = (value) => value >= 1e9 ? `${(value / 1e9).toFixed(1)}B` : value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : value >= 1e3 ? `${(value / 1e3).toFixed(1)}k` : `${Math.round(value)}`;
 const formatBytes = (value) => value >= 2 ** 30 ? `${(value / 2 ** 30).toFixed(1)} GiB` : value >= 2 ** 20 ? `${(value / 2 ** 20).toFixed(1)} MiB` : `${Math.round(value / 1024)} KiB`;
@@ -297,9 +300,135 @@ function renderOverviewDetails(snapshot) {
     const online = !stale && node.status !== 'offline';
     const models = online ? (node.loaded_model_ids || []) : [];
     const modelLabel = models.length ? `<small class="overview-node-model" title="${escapeHtml(models.join(', '))}">Model · ${escapeHtml(models.join(', '))}</small>` : '';
-    return `<tr><th scope="row"><span class="overview-node-name">${escapeHtml(node.hostname)}${modelLabel}</span></th><td><span class="overview-node-status ${escapeHtml(node.status)}">${stale ? 'stale' : escapeHtml(node.status)}</span></td><td>${online ? `${node.gpu_utilization.toFixed(0)}%` : '—'}</td><td>${online ? `${node.memory.used_gib.toFixed(1)} / ${node.memory.total_gib.toFixed(0)} GiB` : '—'}</td><td>${online && node.temperature_c > 0 ? `${node.temperature_c.toFixed(0)}°C` : '—'}</td></tr>`;
+    const historyButton = (metric, label, value) => `<button class="resource-metric-trigger" type="button" data-resource-node="${escapeHtml(node.id)}" data-resource-metric="${metric}" aria-label="View ${label} history for ${escapeHtml(node.hostname)}">${value}<span aria-hidden="true">↗</span></button>`;
+    return `<tr><th scope="row"><span class="overview-node-name">${escapeHtml(node.hostname)}${modelLabel}</span></th><td><span class="overview-node-status ${escapeHtml(node.status)}">${stale ? 'stale' : escapeHtml(node.status)}</span></td><td>${online ? historyButton('gpu', 'GPU load', `${node.gpu_utilization.toFixed(0)}%`) : '—'}</td><td>${online ? historyButton('memory', 'memory usage', `${node.memory.used_gib.toFixed(1)} / ${node.memory.total_gib.toFixed(0)} GiB`) : '—'}</td><td>${online && node.temperature_c > 0 ? historyButton('temperature', 'temperature', `${node.temperature_c.toFixed(0)}°C`) : '—'}</td></tr>`;
   }).join('') : '<tr><td colspan="5">No nodes in this pool yet. Add a compute pool to get started.</td></tr>';
   $('overview-updated').textContent = `Snapshot ${new Date(snapshot.timestamp).toLocaleString()}${stale ? " · stale; current resources unknown" : " · measured resource sample"}`;
+}
+
+const resourceHistoryMetrics = {
+  gpu: {
+    title: 'GPU load',
+    value: node => node.gpu_utilization,
+    max: () => 100,
+    format: value => `${value.toFixed(0)}%`,
+  },
+  memory: {
+    title: 'Memory usage',
+    value: node => node.memory.used_gib,
+    max: points => Math.max(...points.map(point => point.node.memory.total_gib), 1),
+    format: value => `${value.toFixed(1)} GiB`,
+  },
+  temperature: {
+    title: 'Temperature',
+    value: node => node.temperature_c,
+    max: points => Math.max(100, ...points.map(point => point.node.temperature_c)),
+    format: value => `${value.toFixed(0)}°C`,
+  },
+};
+
+function resourceHistoryPoints(history, nodeId, metric) {
+  const configuration = resourceHistoryMetrics[metric];
+  return history.flatMap(snapshot => {
+    const node = snapshot.nodes?.find(candidate => candidate.id === nodeId);
+    if (!node) return [];
+    const value = Number(configuration.value(node));
+    const timestamp = Date.parse(snapshot.timestamp);
+    return Number.isFinite(value) && Number.isFinite(timestamp) ? [{timestamp, value, node}] : [];
+  });
+}
+
+function drawResourceHistory(points, metric) {
+  const configuration = resourceHistoryMetrics[metric];
+  const svg = $('resource-history-chart');
+  const width = 920;
+  const height = 320;
+  const padding = {top: 24, right: 24, bottom: 30, left: 64};
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const start = points[0].timestamp;
+  const duration = Math.max(points.at(-1).timestamp - start, 1);
+  const ceiling = configuration.max(points);
+  const x = point => padding.left + ((point.timestamp - start) / duration) * plotWidth;
+  const y = point => padding.top + plotHeight - Math.min(1, Math.max(0, point.value / ceiling)) * plotHeight;
+  const path = points.map((point, index) => `${index ? 'L' : 'M'} ${x(point).toFixed(2)} ${y(point).toFixed(2)}`).join(' ');
+  const area = `${path} L ${x(points.at(-1)).toFixed(2)} ${padding.top + plotHeight} L ${x(points[0]).toFixed(2)} ${padding.top + plotHeight} Z`;
+  const grid = [0, .25, .5, .75, 1].map(ratio => {
+    const lineY = padding.top + plotHeight * (1 - ratio);
+    return `<line x1="${padding.left}" y1="${lineY}" x2="${width - padding.right}" y2="${lineY}"/><text x="${padding.left - 12}" y="${lineY + 4}">${escapeHtml(configuration.format(ceiling * ratio))}</text>`;
+  }).join('');
+  const capacity = metric === 'memory' ? `<line class="resource-chart-capacity" x1="${padding.left}" y1="${padding.top}" x2="${width - padding.right}" y2="${padding.top}"/>` : '';
+  const last = points.at(-1);
+  svg.innerHTML = `<title id="resource-history-chart-title">${escapeHtml(configuration.title)} history</title><desc id="resource-history-chart-description">${points.length} recorded values from ${new Date(start).toLocaleString()} to ${new Date(last.timestamp).toLocaleString()}.</desc><g class="resource-chart-grid">${grid}</g>${capacity}<path class="resource-chart-area" d="${area}"/><path class="resource-chart-line" d="${path}"/><circle class="resource-chart-point" cx="${x(last)}" cy="${y(last)}" r="5"/>`;
+}
+
+function renderResourceHistory(history, nodeId, metric) {
+  const configuration = resourceHistoryMetrics[metric];
+  const points = resourceHistoryPoints(history, nodeId, metric);
+  $('resource-history-loading').hidden = true;
+  if (!points.length) {
+    $('resource-history-empty').hidden = false;
+    return;
+  }
+  const values = points.map(point => point.value);
+  const latest = points.at(-1);
+  const durationMinutes = Math.max(1, Math.round((latest.timestamp - points[0].timestamp) / 60000));
+  $('resource-history-window').textContent = `${durationMinutes} min recorded`;
+  $('resource-history-current').textContent = configuration.format(latest.value);
+  $('resource-history-updated').textContent = `Updated ${new Date(latest.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})}`;
+  $('resource-history-min').textContent = configuration.format(Math.min(...values));
+  $('resource-history-average').textContent = configuration.format(values.reduce((sum, value) => sum + value, 0) / values.length);
+  $('resource-history-max').textContent = configuration.format(Math.max(...values));
+  $('resource-history-start').textContent = new Date(points[0].timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  $('resource-history-end').textContent = new Date(latest.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  $('resource-history-samples').textContent = `${points.length} sample${points.length === 1 ? '' : 's'}`;
+  $('resource-history-data').hidden = false;
+  drawResourceHistory(points, metric);
+}
+
+async function openResourceHistory(nodeId, metric, opener) {
+  const node = latestSnapshot?.nodes.find(candidate => candidate.id === nodeId);
+  const configuration = resourceHistoryMetrics[metric];
+  if (!node || !configuration) return;
+  const request = ++resourceHistoryRequest;
+  resourceHistoryOpener = opener;
+  clearTimeout(resourceHistoryCloseTimer);
+  $('resource-history-node').textContent = node.hostname;
+  $('resource-history-title').textContent = configuration.title;
+  $('resource-history-window').textContent = 'Last 30 minutes';
+  $('resource-history-loading').hidden = false;
+  $('resource-history-data').hidden = true;
+  $('resource-history-empty').hidden = true;
+  $('resource-history-error').hidden = true;
+  $('resource-history-sheet').hidden = false;
+  document.body.classList.add('bottom-sheet-open');
+  requestAnimationFrame(() => {
+    $('resource-history-sheet').classList.add('open');
+    $('resource-history-close').focus({preventScroll: true});
+  });
+  try {
+    const history = await api('/api/v1/history?minutes=30', {promptForAdmin: false});
+    if (request === resourceHistoryRequest) renderResourceHistory(history, nodeId, metric);
+  } catch (error) {
+    if (request !== resourceHistoryRequest) return;
+    $('resource-history-loading').hidden = true;
+    $('resource-history-error').textContent = `Unable to load resource history: ${error.message}`;
+    $('resource-history-error').hidden = false;
+  }
+}
+
+function closeResourceHistory() {
+  if ($('resource-history-sheet').hidden) return;
+  resourceHistoryRequest += 1;
+  $('resource-history-sheet').classList.remove('open');
+  document.body.classList.remove('bottom-sheet-open');
+  const opener = resourceHistoryOpener;
+  resourceHistoryOpener = null;
+  clearTimeout(resourceHistoryCloseTimer);
+  resourceHistoryCloseTimer = setTimeout(() => {
+    $('resource-history-sheet').hidden = true;
+    if (opener?.isConnected) opener.focus({preventScroll: true});
+  }, 220);
 }
 
 function renderTopology(nodes) {
@@ -1485,8 +1614,15 @@ $('action-sheet-confirm').addEventListener('click', confirmModelAction);
 $('action-sheet-cancel').addEventListener('click', closeModelActionSheet);
 $('action-sheet-close').addEventListener('click', closeModelActionSheet);
 $('action-sheet-backdrop').addEventListener('click', closeModelActionSheet);
+$('overview-nodes').addEventListener('click', event => {
+  const button = event.target.closest('[data-resource-node][data-resource-metric]');
+  if (button) void openResourceHistory(button.dataset.resourceNode, button.dataset.resourceMetric, button);
+});
+$('resource-history-close').addEventListener('click', closeResourceHistory);
+$('resource-history-backdrop').addEventListener('click', closeResourceHistory);
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !$('action-sheet').hidden) closeModelActionSheet();
+  if (event.key === 'Escape' && !$('resource-history-sheet').hidden) closeResourceHistory();
 });
 
 $('launch-model').addEventListener('change', async () => {

@@ -133,10 +133,11 @@ class SnapshotStore:
         since = (datetime.now(UTC) - timedelta(minutes=minutes)).isoformat()
         with self._lock:
             rows = self._connection.execute(
-                "SELECT payload FROM snapshots WHERE timestamp >= ? ORDER BY timestamp ASC LIMIT ?",
+                "SELECT payload FROM snapshots "
+                "WHERE timestamp >= ? ORDER BY timestamp DESC LIMIT ?",
                 (since, limit),
             ).fetchall()
-        return [json.loads(row[0]) for row in rows]
+        return [json.loads(row[0]) for row in reversed(rows)]
 
     def prune(self, retention_hours: int) -> None:
         before = (datetime.now(UTC) - timedelta(hours=retention_hours)).isoformat()

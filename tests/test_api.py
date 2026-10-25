@@ -1,11 +1,13 @@
 import asyncio
 import json
 import time
+from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
 from spark_cluster.app import create_app
 from spark_cluster.config import Settings
+from spark_cluster.simulator import ClusterSimulator
 from spark_cluster.store import SnapshotStore
 
 
@@ -56,6 +58,9 @@ def test_dashboard_and_live_snapshot(tmp_path):
         assert "api('/api/v1/pool').then(renderPoolEndpoint)" in dashboard_js
         assert "Direct to cluster runtime" not in page.text
         assert "OpenAI pool endpoint" in page.text
+        assert 'id="resource-history-sheet"' in page.text
+        assert "historyButton('gpu'" in dashboard_js
+        assert "api('/api/v1/history?minutes=30'" in dashboard_js
         assert "`${window.location.origin}/v1`" in dashboard_js
 
 
@@ -89,6 +94,24 @@ def test_history_metrics_and_capacity(tmp_path):
         assert performance.status_code == 200
         assert performance.json()["kv_cache_dtype"] == "fp8_e4m3"
         assert performance.json()["tensor_parallel"] == 4
+
+
+def test_snapshot_history_limit_keeps_latest_samples(tmp_path):
+    store = SnapshotStore(tmp_path / "history.db")
+    simulator = ClusterSimulator("history-test")
+    start = datetime.now(UTC) - timedelta(minutes=3)
+    for offset in range(3):
+        store.append(
+            simulator.snapshot().model_copy(update={"timestamp": start + timedelta(minutes=offset)})
+        )
+
+    history = store.history(minutes=30, limit=2)
+
+    assert [datetime.fromisoformat(entry["timestamp"]) for entry in history] == [
+        start + timedelta(minutes=1),
+        start + timedelta(minutes=2),
+    ]
+    store.close()
 
 
 def test_local_gpu_performance_plan_skips_spark_setup_history(tmp_path, monkeypatch):
