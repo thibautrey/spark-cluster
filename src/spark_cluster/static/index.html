@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=launch-workspace-v1" />
+    <link rel="stylesheet" href="/assets/app.css?v=runtime-workspace-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -37,13 +37,18 @@
         </header>
 
         <section class="panel runtime-library" id="runtimes" data-route-view="runtimes">
-          <div class="panel-heading"><div><h2>Runtime readiness</h2><p>Prepare engines for compute pools and trusted native hosts.</p></div></div>
+          <section class="runtime-pool-overview" id="runtime-pool-overview"><div class="empty-state">Loading runtime readiness…</div></section>
+          <nav class="runtime-workspace-tabs" aria-label="Runtime workspace">
+            <button class="active" type="button" data-runtime-tab="engines">Runtimes <span id="runtime-engine-count">0</span></button>
+            <button type="button" data-runtime-tab="packages">Package library <span id="runtime-package-count">0</span></button>
+          </nav>
           <div class="runtime-readiness-state loading" id="runtime-readiness-state" role="status" aria-live="polite"><span class="runtime-state-icon" aria-hidden="true">…</span><div><b>Checking runtime readiness</b><small>Inspecting the selected compute pool.</small></div></div>
           <div id="runtime-readiness-content" hidden>
+            <div class="runtime-engine-toolbar"><div><h2>Launch engines</h2><p>Image, adapter and nodes: everything required to start.</p></div><div><label><span class="sr-only">Search runtimes</span><input id="runtime-engine-search" type="search" placeholder="Search runtimes…" /></label><label><span class="sr-only">Runtime state</span><select id="runtime-engine-filter"><option value="all">All states</option><option value="ready">Ready to launch</option><option value="attention">Needs attention</option></select></label></div></div>
             <div class="runtime-engine-list" id="runtime-engine-list"></div>
             <section class="runtime-readiness-activity" id="runtime-readiness-activity" hidden><div class="runtime-section-heading"><h3>Recent preparation</h3></div><div id="runtime-readiness-jobs"></div></section>
           </div>
-          <details class="runtime-library-advanced" id="runtime-library-advanced" hidden>
+          <details class="runtime-library-advanced runtime-package-workspace" id="runtime-library-advanced" hidden open>
             <summary><span><b>Advanced runtime packages</b><small>Cache and distribute upstream packages without enabling a launch adapter.</small></span><i>⌄</i></summary>
             <div class="runtime-library-advanced-content">
               <p class="runtime-library-warning">Package installation only prepares files or images. <b>Ready to launch</b> requires the configured image and an executable Spark adapter on every target node.</p>
@@ -524,7 +529,7 @@
     <script src="/assets/catalog.js?v=overview-model-sheet-v2"></script>
     <script src="/assets/setup.js?v=native-macos-onboarding-v1"></script>
     <script src="/assets/pool.js?v=launch-workspace-v1" defer></script>
-    <script src="/assets/runtimes.js?v=native-host-library-v1" defer></script>
+    <script src="/assets/runtimes.js?v=runtime-workspace-v1" defer></script>
     <script src="/assets/inference.js?v=model-instance-scale-v1" defer></script>
 </body>
 </html>
