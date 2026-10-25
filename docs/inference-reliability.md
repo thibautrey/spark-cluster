@@ -20,6 +20,9 @@ active request. A successful probe resets consecutive health failures. Unhealthy
 residents stop being advertised as ready and retain their GPU reservation until
 their managed container is removed. Idle, unretained unhealthy runtimes can also
 be evicted to admit another model.
+If Docker cleanup fails after a failed start, the reservation stays visible as
+unhealthy and cleanup retries use the same backoff. It cannot become a permanent
+startup reservation or be silently released while GPU use is unknown.
 
 Failed startups, dead containers and failed readiness checks start a per-profile
 cooldown: 5 seconds, then exponential backoff up to 300 seconds. A runtime must
@@ -76,3 +79,15 @@ Reviewed GPUStack commit `4aaf598ee12d656115ba59acaf16577e77e17010`:
 Spark uses cheap readiness probes by default. GPUStack's opt-in inference probes
 are not enabled here because they spend model capacity and require workload-specific
 requests. Spark's regression and integration checks send actual completion traffic.
+
+## Validation
+
+Run `pytest -q` and `ruff check src tests` from the main checkout. Fault regression
+cases live in `tests/test_inference_reliability.py`.
+
+On 2026-10-25, the new local `PoolResponse`/`forward_http` gateway code forwarded
+one JSON completion, one streaming completion and four concurrent streaming
+completions to the existing live `cce-compression` model. All six returned HTTP
+200 and backend-reported token usage; all five streams included `[DONE]`.
+This validates forwarding against a real model. The new recovery supervisor has
+automated fault coverage and still requires deployment for live recovery evidence.

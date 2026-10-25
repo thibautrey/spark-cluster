@@ -636,7 +636,13 @@ class OnDemandInference:
                 async with self.lock:
                     existing = self.residents.get(profile.id)
                     if existing and existing.status == "unhealthy":
-                        await self._remove(profile)
+                        try:
+                            await self._remove(profile)
+                        except Exception as error:
+                            self.failed_runtime(profile)
+                            raise RuntimeUnavailable(
+                                self.recovery_state(profile)["retry_after_seconds"]
+                            ) from error
                         existing = None
                     if existing and existing.status == "ready":
                         state = await self.docker.request(
@@ -721,7 +727,16 @@ class OnDemandInference:
                 if not isinstance(error, asyncio.CancelledError):
                     self.failed_runtime(profile)
                 async with self.lock:
-                    await self._remove(profile, force=True)
+                    # Unknown cleanup state must keep its memory reservation, but it
+                    # must not remain "starting" forever after the owner has exited.
+                    resident.status = "unhealthy"
+                    try:
+                        await self._remove(profile, force=True)
+                    except Exception:
+                        if isinstance(error, asyncio.CancelledError):
+                            self.failed_runtime(profile)
+                        self.last_error = "Runtime cleanup failed; GPU reservation preserved"
+                        logger.exception("Failed startup cleanup for %s", profile.id)
                 raise
 
     async def _start_runtime(self, profile, resident):
