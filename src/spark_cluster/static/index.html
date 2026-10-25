@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080b12" />
     <title>Spark Cluster — Cluster control plane</title>
     <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/assets/app.css?v=overview-model-sheet-v2" />
+    <link rel="stylesheet" href="/assets/app.css?v=model-instance-scale-v1" />
   </head>
   <body data-route="overview">
     <div class="noise"></div>
@@ -158,6 +158,11 @@
                 <span class="inference-menu-check" aria-hidden="true">✓</span>
                 <span><b>Keep in memory</b><small>Prevent automatic unloading and eviction.</small></span>
               </button>
+              <div class="inference-instance-stepper" id="inference-instance-stepper" role="group" aria-label="Model instances" hidden>
+                <button id="inference-instance-minus" type="button" role="menuitem" aria-label="Remove one model instance">−</button>
+                <output id="inference-instance-count" aria-live="polite">1 instance</output>
+                <button id="inference-instance-plus" type="button" role="menuitem" aria-label="Add one model instance">+</button>
+              </div>
               <button class="inference-pool-action" id="inference-pool-action" type="button" role="menuitem">
                 <span id="inference-pool-action-icon" aria-hidden="true">↑</span>
                 <span><b id="inference-pool-action-label">Load</b><small id="inference-pool-action-description">Load this model into an available pool.</small></span>
@@ -508,6 +513,6 @@
     <script src="/assets/setup.js?v=automated-ssh-bootstrap-v1"></script>
     <script src="/assets/pool.js?v=adaptive-pools-v1" defer></script>
     <script src="/assets/runtimes.js?v=runtime-readiness-v1" defer></script>
-    <script src="/assets/inference.js?v=overview-model-sheet-v2" defer></script>
+    <script src="/assets/inference.js?v=model-instance-scale-v1" defer></script>
 </body>
 </html>
