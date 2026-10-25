@@ -295,7 +295,9 @@ function renderOverviewDetails(snapshot) {
   $('overview-temperature-node').textContent = hottest ? hottest.hostname : 'Temperature unavailable';
   $('overview-nodes').innerHTML = nodes.length ? nodes.map(node => {
     const online = !stale && node.status !== 'offline';
-    return `<tr><th scope="row">${escapeHtml(node.hostname)}</th><td><span class="overview-node-status ${escapeHtml(node.status)}">${stale ? 'stale' : escapeHtml(node.status)}</span></td><td>${online ? `${node.gpu_utilization.toFixed(0)}%` : '—'}</td><td>${online ? `${node.memory.used_gib.toFixed(1)} / ${node.memory.total_gib.toFixed(0)} GiB` : '—'}</td><td>${online && node.temperature_c > 0 ? `${node.temperature_c.toFixed(0)}°C` : '—'}</td></tr>`;
+    const models = online ? (node.loaded_model_ids || []) : [];
+    const modelLabel = models.length ? `<small class="overview-node-model" title="${escapeHtml(models.join(', '))}">Model · ${escapeHtml(models.join(', '))}</small>` : '';
+    return `<tr><th scope="row"><span class="overview-node-name">${escapeHtml(node.hostname)}${modelLabel}</span></th><td><span class="overview-node-status ${escapeHtml(node.status)}">${stale ? 'stale' : escapeHtml(node.status)}</span></td><td>${online ? `${node.gpu_utilization.toFixed(0)}%` : '—'}</td><td>${online ? `${node.memory.used_gib.toFixed(1)} / ${node.memory.total_gib.toFixed(0)} GiB` : '—'}</td><td>${online && node.temperature_c > 0 ? `${node.temperature_c.toFixed(0)}°C` : '—'}</td></tr>`;
   }).join('') : '<tr><td colspan="5">No nodes in this pool yet. Add a compute pool to get started.</td></tr>';
   $('overview-updated').textContent = `Snapshot ${new Date(snapshot.timestamp).toLocaleString()}${stale ? " · stale; current resources unknown" : " · measured resource sample"}`;
 }

@@ -45,7 +45,11 @@ def detect_nvidia_gpus() -> list[GPUDevice]:
     return devices
 
 
-def local_gpu_snapshot(cluster: ClusterTarget, settings: Settings) -> ClusterSnapshot:
+def local_gpu_snapshot(
+    cluster: ClusterTarget,
+    settings: Settings,
+    loaded_models_by_gpu: dict[int, list[str]] | None = None,
+) -> ClusterSnapshot:
     try:
         import pynvml
     except ImportError:
@@ -84,6 +88,7 @@ def local_gpu_snapshot(cluster: ClusterTarget, settings: Settings) -> ClusterSna
                     ),
                     gpu_utilization=utilization,
                     temperature_c=temperature,
+                    loaded_model_ids=(loaded_models_by_gpu or {}).get(gpu.index, []),
                 )
             )
     finally:
@@ -210,6 +215,54 @@ class DockerEngineClient:
         )
         system = info.get("OSType")
         return f"{system}/{architecture}" if system and architecture else None
+
+    async def loaded_models_by_gpu(self, cluster: ClusterTarget) -> dict[int, list[str]]:
+        """Read model-to-GPU placement from running Spark Cluster containers."""
+        filters = json.dumps(
+            {
+                "label": [
+                    "spark-cluster.managed=true",
+                    f"spark-cluster.cluster-id={cluster.id}",
+                ]
+            }
+        )
+        try:
+            response = await self.request(
+                "GET", "/containers/json", params={"filters": filters}, timeout=10
+            )
+            containers = response.json()
+            placements: dict[int, set[str]] = {}
+            known_devices = {str(gpu.index): gpu.index for gpu in cluster.gpus}
+            known_devices.update({gpu.uuid: gpu.index for gpu in cluster.gpus})
+            for container in containers:
+                details = (
+                    await self.request(
+                        "GET", f"/containers/{quote(container['Id'], safe='')}/json", timeout=10
+                    )
+                ).json()
+                if not details.get("State", {}).get("Running"):
+                    continue
+                labels = details.get("Config", {}).get("Labels", {})
+                model = labels.get("spark-cluster.model-id") or labels.get(
+                    "spark-cluster.model"
+                )
+                if not model:
+                    continue
+                requests = details.get("HostConfig", {}).get("DeviceRequests") or []
+                device_ids = [
+                    device
+                    for request in requests
+                    for device in (request.get("DeviceIDs") or [])
+                ]
+                if "all" in device_ids:
+                    device_ids = list(known_devices)
+                for device in device_ids:
+                    index = known_devices.get(str(device))
+                    if index is not None:
+                        placements.setdefault(index, set()).add(str(model))
+            return {index: sorted(models) for index, models in placements.items()}
+        except (httpx.HTTPError, KeyError, TypeError, ValueError):
+            return {}
 
     @staticmethod
     def container_name(cluster_id: str) -> str:
@@ -344,6 +397,7 @@ class DockerEngineClient:
         cluster: ClusterTarget,
         image: str,
         model_path: str,
+        model_id: str,
         served_model_name: str,
         context_length: int,
         tensor_parallel: int,
@@ -380,6 +434,7 @@ class DockerEngineClient:
             expert_parallel=expert_parallel,
             chunked_prefill=chunked_prefill,
         )
+        payload["Labels"]["spark-cluster.model-id"] = model_id
         name = self.container_name(cluster.id)
         await self._remove_existing(name)
         response = await self.request(

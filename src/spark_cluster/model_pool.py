@@ -531,6 +531,7 @@ class PoolNode:
                 expert_parallel=launch.expert_parallel,
                 chunked_prefill=launch.chunked_prefill,
             )
+            payload["Labels"]["spark-cluster.model-id"] = request.model_id
             # Bind only loopback; inference is routed through the authenticated pool gateway.
             payload["HostConfig"]["NetworkMode"] = "bridge"
             payload["HostConfig"]["PortBindings"] = {

@@ -95,11 +95,52 @@ def test_local_snapshot_represents_each_gpu_and_storage(tmp_path):
         gpus=gpus(),
         model_storage_path="/mnt/models",
     )
-    snapshot = local_gpu_snapshot(cluster, config)
+    snapshot = local_gpu_snapshot(cluster, config, {1: ["acme/model"]})
     assert snapshot.cluster_name == "Unraid GPUs"
     assert len(snapshot.nodes) == 2
     assert snapshot.nodes[0].memory.total_gib == 8
+    assert snapshot.nodes[0].loaded_model_ids == []
+    assert snapshot.nodes[1].loaded_model_ids == ["acme/model"]
     assert snapshot.cache_tiers[0].persistent is True
+
+
+@pytest.mark.asyncio
+async def test_running_models_are_mapped_to_their_assigned_gpus(tmp_path):
+    socket = tmp_path / "docker.sock"
+    socket.touch()
+    config = settings(tmp_path, docker_runtime_enabled=True, docker_socket_path=socket)
+    registry = ClusterRegistry(config)
+    cluster = registry.add_local(
+        name="Unraid GPUs",
+        host_address="192.168.1.149",
+        runtime_port=30000,
+        gpus=gpus(),
+        model_storage_path="/mnt/models",
+    )
+
+    def handle(request):
+        if request.url.path == "/containers/json":
+            return httpx.Response(200, json=[{"Id": "runtime-1"}])
+        if request.url.path == "/containers/runtime-1/json":
+            return httpx.Response(
+                200,
+                json={
+                    "State": {"Running": True},
+                    "Config": {
+                        "Labels": {
+                            "spark-cluster.model-id": "acme/model",
+                            "spark-cluster.model": "model",
+                        }
+                    },
+                    "HostConfig": {"DeviceRequests": [{"DeviceIDs": ["1"]}]},
+                },
+            )
+        raise AssertionError(f"Unexpected Docker request: {request.method} {request.url}")
+
+    docker = DockerEngineClient(config)
+    docker.transport = httpx.MockTransport(handle)
+
+    assert await docker.loaded_models_by_gpu(cluster) == {1: ["acme/model"]}
 
 
 @pytest.mark.asyncio
@@ -144,6 +185,7 @@ async def test_docker_runtime_launch_uses_selected_gpus_and_shared_models(tmp_pa
         cluster=cluster,
         image="vllm/vllm-openai:latest",
         model_path=str(model),
+        model_id="acme/model",
         served_model_name="test-model",
         context_length=8192,
         tensor_parallel=parallel,
@@ -159,6 +201,7 @@ async def test_docker_runtime_launch_uses_selected_gpus_and_shared_models(tmp_pa
     create = next(item for item in calls if item[1] == "/containers/create")
     payload = json.loads(create[2])
     assert payload["Cmd"][0] == "/models/acme/model"
+    assert payload["Labels"]["spark-cluster.model-id"] == "acme/model"
     assert payload["HostConfig"]["DeviceRequests"][0]["DeviceIDs"] == [
         str(i) for i in range(parallel)
     ]

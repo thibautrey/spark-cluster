@@ -32,6 +32,7 @@ class NodeSnapshot(BaseModel):
     input_tokens_per_second: float = Field(default=0, ge=0)
     output_tokens_per_second: float = Field(default=0, ge=0)
     active_requests: int = Field(default=0, ge=0)
+    loaded_model_ids: list[str] = Field(default_factory=list)
     last_seen: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
