@@ -108,9 +108,7 @@ async def test_preload_finishes_before_runtime_is_ready(monkeypatch):
 @pytest.mark.parametrize("status", [401, 500])
 async def test_preload_failure_cleans_up_healthy_service(monkeypatch, status):
     original = httpx.AsyncClient
-    transport = httpx.MockTransport(
-        lambda r: httpx.Response(status if r.method == "POST" else 200)
-    )
+    transport = httpx.MockTransport(lambda r: httpx.Response(status if r.method == "POST" else 200))
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(transport=transport))
     p = profile(preload_path="/api/ps/test-model")
     manager = OnDemandInference(Docker(), [p])
