@@ -225,7 +225,7 @@ docker run --gpus all --group-add "$(stat -c %g /var/run/docker.sock)" \
   spark-cluster:latest serve --host 192.168.1.10 --port 8769
 ```
 
-Docker socket access grants host-level container control. Keep the controller on a trusted LAN, restrict its administration token, and do not expose `/var/run/docker.sock` to unrelated applications. Spark Cluster creates one labeled vLLM container per local cluster, limits it to the cluster's assigned GPU indices, mounts models read-only, and leaves the inference container running independently of controller updates.
+Docker socket access grants host-level container control. Keep the controller on a trusted LAN, restrict its administration token, and do not expose `/var/run/docker.sock` to unrelated applications. Direct launches create one labeled vLLM container per local cluster; the model pool creates a separate container for each resident model. Runtime containers use only their assigned GPUs and mount model files read-only. Direct runtimes and retained pool runtimes remain running during controller updates.
 
 NVFP4 is Blackwell-specific. On older NVIDIA GPUs, Spark Cluster allows storage of an NVFP4 repository but blocks launch and explains which compatible quantization family to choose.
 
