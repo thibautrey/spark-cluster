@@ -1,14 +1,8 @@
 # Spark Cluster
 
-The [runtime readiness screen](docs/runtime-library.md) verifies the configured engine
-image on every node of an explicitly selected pool and can prepare missing or outdated
-nodes before launch. Its advanced package library lists ten inference runtimes with
-live version discovery, controller-side caching, OCI imports for managed Linux pools,
-and SHA256-verified native packages for supported macOS and Windows hosts.
-
 <p align="center">
-  <strong>A visual control plane for NVIDIA DGX Spark clusters.</strong><br>
-  Discover machines, verify cabling, configure the cluster, launch models, and understand runtime health from one dashboard.
+  <strong>A visual control plane for private AI compute.</strong><br>
+  Connect GPU pools, discover models, prepare runtimes, launch workloads, and serve them through one observable API.
 </p>
 
 <p align="center">
@@ -18,9 +12,18 @@ and SHA256-verified native packages for supported macOS and Windows hosts.
   <img alt="DGX Spark / GB10" src="https://img.shields.io/badge/platform-DGX%20Spark%20%2F%20GB10-f6c766">
 </p>
 
-![Spark Cluster overview](docs/screenshots/overview.jpg)
+![Spark Cluster overview with active inference traffic](docs/screenshots/overview-2026.jpg)
 
-Spark Cluster turns a set of DGX Spark systems into an approachable inference cluster. The dashboard can run on a NAS, VM, workstation, or one of the Sparks and control GPU machines on the same trusted LAN. Its guided setup covers physical preparation, network discovery, SSH verification, NVIDIA fabric checks, Kubernetes installation, model storage, observability, and runtime operations.
+Spark Cluster manages NVIDIA DGX Spark fleets and local Docker GPU hosts from one dashboard.
+It discovers public Hugging Face models, checks whether they fit each pool, prepares compatible
+runtime engines, and places several resident models across available GPUs. Applications use one
+OpenAI-compatible endpoint while the controller handles routing, on-demand loading, retention,
+idle eviction, and automatic concurrency.
+
+The dashboard can run on a NAS, VM, workstation, or one of the Sparks. Its measured views cover
+requests, latency, token usage, model placement, GPU and unified memory, topology, runtime health,
+and tiered KV cache. Guided setup remains available for a new DGX Spark cluster, including machine
+discovery, SSH verification, cabling, fabric checks, Kubernetes, shared model storage, and telemetry.
 
 The runtime works with Hugging Face models supported by the configured engine adapter and
 image, with architecture-aware MLA memory estimates for DeepSeek. The official DeepSeek V4.1
@@ -37,29 +40,36 @@ engine and kernel-kit pins, external benchmarks and managed-launch blockers.
 
 | Capability | What it changes for the operator |
 | --- | --- |
-| **Plug-and-play discovery** | Finds candidate machines with mDNS or a bounded private subnet scan and verifies SSH reachability. |
-| **Visual hardware assistant** | Draws the required topology, distinguishes RJ45 management from QSFP fabric links, and highlights missing or uncertain cables. |
-| **Remote control plane** | Runs away from the GPU nodes while an authenticated bridge performs cluster-local operations. |
-| **Automated installation** | Installs pinned k3s components, NVIDIA scheduling, shared model storage, telemetry, and idle runtime resources. |
-| **Actionable diagnostics** | Turns failed checks into a concrete remedy and lets interrupted setup resume from persisted state. |
-| **Single internet download** | Downloads each model once on the controller, then relays verified files over the LAN into shared cluster storage. |
-| **Model lifecycle** | Checks capacity before download, resumes internet and LAN transfers, lists cached models, and launches a selected model across the cluster. |
-| **Operational visibility** | Shows topology, memory, throughput, KV-cache tiers, GPU state, endpoints, and per-runtime logs in real time. |
-| **Open interfaces** | Exposes JSON APIs, WebSockets, Prometheus metrics, an OpenAI-compatible endpoint, Docker, and Helm deployment paths. |
+| **Multiple compute pools** | Combines remote DGX Spark clusters and local Docker GPU hosts behind one scheduler and pool selector. |
+| **Evidence-based model discovery** | Ranks live Hugging Face repositories with Spark-specific recipes, metadata, capacity checks, and explicit caveats. |
+| **Runtime readiness** | Verifies engine versions across a selected pool, prepares compatible targets, and keeps unsupported launch paths visibly blocked. |
+| **Automatic model placement** | Accounts for model budgets, resident runtimes, external GPU use, active streams, retention, and least-recently-used eviction. |
+| **Shared inference API** | Routes OpenAI-compatible requests by model across pools and loads eligible models on demand. |
+| **Measured operations** | Records request outcomes, latency, token usage, concurrency, runtime throughput, GPU memory, and cache behavior without retaining prompts or responses. |
+| **Guided cluster setup** | Discovers machines, verifies SSH and cabling, checks NVIDIA fabric readiness, and installs the pinned cluster stack through resumable jobs. |
+| **Verified model delivery** | Downloads a repository once, resumes transfers, signs its manifest, and verifies every file copied into shared storage. |
+| **Open interfaces** | Exposes JSON APIs, WebSockets, Prometheus metrics, an MCP server, Docker, and Helm deployment paths. |
 
 ## Product tour
 
+The screens below use representative demo telemetry and model activity; no production cluster,
+request content, or credentials are shown.
+
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/hardware-setup.jpg" alt="Visual hardware and cabling assistant"><br><strong>Guided hardware preparation</strong><br>Follow illustrated RJ45 and QSFP steps, inspect negotiated links, and correct the highlighted machine or port.</td>
-    <td width="50%"><img src="docs/screenshots/topology-cache.jpg" alt="Cluster topology"><br><strong>Cluster topology</strong><br>See node roles, fabric links, GPU activity, memory allocation, output rate, and temperature at a glance.</td>
+    <td width="50%"><img src="docs/screenshots/compute-pools-2026.jpg" alt="Compute pool manager with a DGX Spark cluster and a local GPU host"><br><strong>Compute pools</strong><br>Connect remote Spark clusters and local Docker GPUs, switch the active pool, and keep each target's hardware capacity visible.</td>
+    <td width="50%"><img src="docs/screenshots/inference-api-2026.jpg" alt="OpenAI-compatible inference and MCP endpoints"><br><strong>One endpoint for applications and agents</strong><br>Route models across every available pool through OpenAI-compatible APIs, with a separate MCP endpoint for model and cluster tools.</td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/screenshots/model-library.jpg" alt="Model library and capacity check"><br><strong>Model library</strong><br>Inspect a Hugging Face repository, calculate fit, protect mutations with an admin token, and resume downloads.</td>
-    <td width="50%"><img src="docs/screenshots/model-launcher.jpg" alt="Distributed model launcher"><br><strong>Cluster model launcher</strong><br>Choose context and parallelism, revalidate capacity, scale workers, and follow rollout readiness.</td>
+    <td width="50%"><img src="docs/screenshots/model-library-2026.jpg" alt="Live Hugging Face model discovery ranked for DGX Spark"><br><strong>Model discovery</strong><br>Search current Hugging Face repositories, inspect evidence and licenses, compare Spark-focused recipes, and check capacity before downloading.</td>
+    <td width="50%"><img src="docs/screenshots/model-launcher-2026.jpg" alt="Multi-model launcher with automatic GPU placement"><br><strong>Multi-model launcher</strong><br>See GPU budgets, resident models, compatible runtimes, and automatic concurrency before loading or unloading a model.</td>
   </tr>
   <tr>
-    <td colspan="2"><img src="docs/screenshots/runtime-logs.jpg" alt="Runtime log console"><br><strong>Runtime log console</strong><br>Stream and filter structured logs from the vLLM head and every Ray worker without leaving the dashboard.</td>
+    <td colspan="2"><img src="docs/screenshots/runtime-readiness-2026.jpg" alt="Runtime readiness across four DGX Spark targets"><br><strong><a href="docs/runtime-library.md">Runtime readiness</a></strong><br>Verify vLLM, SGLang, llama.cpp, and specialized engines across every target. Launch-ready paths stay distinct from packages that need preparation or a validated recipe.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/topology-2026.jpg" alt="Four-node DGX Spark pool topology"><br><strong>Live topology</strong><br>Follow node roles, links, GPU activity, memory, output rate, temperature, and health from the same pool context.</td>
+    <td width="50%"><img src="docs/screenshots/kv-cache-2026.jpg" alt="Tiered KV cache usage and latency"><br><strong>Tiered KV cache</strong><br>Compare capacity, hit rate, and read latency across GPU KV, unified memory, local NVMe, and shared cache.</td>
   </tr>
 </table>
 
