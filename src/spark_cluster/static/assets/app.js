@@ -687,6 +687,7 @@ async function loadPerformancePlan(apply = true) {
   try {
     const plan = await api('/api/v1/performance/plan', {method: 'POST', body: JSON.stringify({
       model_id: modelId,
+      revision: localModels.find(model => model.id === modelId)?.revision || null,
       workload: $('launch-workload').value,
       context_length: Number($('launch-context').value),
       concurrent_sequences: Number($('launch-concurrency').value),
