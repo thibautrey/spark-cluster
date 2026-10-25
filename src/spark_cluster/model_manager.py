@@ -1397,6 +1397,12 @@ class ModelManager:
             self._runtime_cached_at = time.monotonic()
             return endpoint
 
+    def recorded_fit(self, repo_id: str) -> ModelFitPlan | None:
+        """Already collected metadata; safe for pool capacity checks without storage IO."""
+        with self._inventory_guard:
+            cached = self._local_fit_cache.get(repo_id)
+            return cached[1] if cached else None
+
     async def local_models(self) -> list[LocalModel]:
         endpoint = await self.runtime_endpoint()
         loaded = set(endpoint.loaded_model_ids)

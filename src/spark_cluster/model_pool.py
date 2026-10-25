@@ -236,12 +236,15 @@ class PoolNode:
         model_path = model.get("model_path")
         if not model_path:
             return None
-        manifest_fit = None
-        try:
-            payload = json.loads((Path(model_path) / ".spark-cluster.json").read_text())
-            manifest_fit = ModelFitPlan.model_validate(payload["fit"])
-        except (OSError, ValueError, KeyError, json.JSONDecodeError):
-            pass
+        manifest_fit = getattr(self.models, "recorded_fit", lambda _: None)(model["id"])
+        if manifest_fit is None:
+            try:
+                payload = await asyncio.to_thread(
+                    lambda: json.loads((Path(model_path) / ".spark-cluster.json").read_text())
+                )
+                manifest_fit = ModelFitPlan.model_validate(payload["fit"])
+            except (OSError, ValueError, KeyError, json.JSONDecodeError):
+                pass
         saved = model.get("last_settings")
         profile = model.get("profile")
         if saved:
@@ -289,11 +292,14 @@ class PoolNode:
             "confidence": fit.confidence,
         }
 
-    def machine_inventory(self) -> list[dict]:
+    def machine_inventory(self, snapshot=None) -> list[dict]:
         cluster = self.local_cluster()
-        snapshot = (
-            local_gpu_snapshot(cluster, self.settings) if cluster else self.models.runtime.latest
-        )
+        if snapshot is None:
+            snapshot = (
+                local_gpu_snapshot(cluster, self.settings)
+                if cluster
+                else self.models.runtime.latest
+            )
         if not snapshot:
             return []
         grouped: dict[str, dict] = {}
@@ -378,7 +384,9 @@ class PoolNode:
             models[active_id]["loaded"] = True
             models[active_id]["keep_loaded"] = bool(retained)
         cluster = self.local_cluster()
-        snapshot = local_gpu_snapshot(cluster, self.settings) if cluster else None
+        snapshot = (
+            await asyncio.to_thread(local_gpu_snapshot, cluster, self.settings) if cluster else None
+        )
         if snapshot:
             usable_total = sum(
                 node.memory.total_gib * self.settings.model_usable_memory_fraction
@@ -424,7 +432,7 @@ class PoolNode:
             "active_model": active_id,
             "keep_loaded": bool(retained),
             "busy": self.demand.lock.locked() or self.native_lock.locked(),
-            "machines": self.machine_inventory(),
+            "machines": await asyncio.to_thread(self.machine_inventory, snapshot),
         }
 
     def model_context(self):
@@ -671,6 +679,7 @@ class ModelPool:
         self.cache = None
         self.cache_time = 0.0
         self.pending_requests = 0
+        self._inventory_task = None
         self.tracker = None
 
     def save(self):
@@ -684,6 +693,9 @@ class ModelPool:
         )
 
     async def close(self):
+        if self._inventory_task and not self._inventory_task.done():
+            self._inventory_task.cancel()
+            await asyncio.gather(self._inventory_task, return_exceptions=True)
         for task in self.tasks:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
@@ -725,6 +737,11 @@ class ModelPool:
     async def inventory(self, force=False):
         if not force and self.cache is not None and time.monotonic() - self.cache_time < 3:
             return self.cache
+        if self._inventory_task is None or self._inventory_task.done():
+            self._inventory_task = asyncio.create_task(self._refresh_inventory())
+        return await asyncio.shield(self._inventory_task)
+
+    async def _refresh_inventory(self):
         clusters = self.registry.list()
         # A Kubernetes bridge with no local Docker registration is itself a pool member.
         if not clusters and self.node.deployments.mode in {"kubernetes", "demo"}:
