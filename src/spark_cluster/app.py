@@ -1187,6 +1187,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.api_route("/api/v1/pool/serve/{key}/{path:path}", methods=["GET", "POST", "DELETE"])
     async def pool_inference(request: Request, key: str, path: str):
+        request.scope["spark.arrival"] = (time.time(), time.perf_counter())
         inventory = await model_pool.inventory()
         model = next((m for m in inventory["models"] if m["key"] == key), None)
         if not model:
@@ -1221,6 +1222,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     )
     async def global_openai_inference(request: Request, path: str):
+        request.scope["spark.arrival"] = (time.time(), time.perf_counter())
         body = await request.body()
         content_type = request.headers.get("content-type", "")
         reference = request.headers.get("x-spark-model") or request.query_params.get("model")

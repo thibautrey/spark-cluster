@@ -405,6 +405,38 @@ async def test_capacity_reports_exact_memory_shortfall():
 
 
 @pytest.mark.asyncio
+async def test_concurrent_pool_inventory_refresh_is_shared(tmp_path):
+    pool = FakePool(tmp_path)
+    values = await asyncio.gather(*(pool.inventory(force=True) for _ in range(8)))
+    assert all(value is values[0] for value in values)
+    assert sum(action == "status" for _, action, _ in pool.calls) == 2
+    await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_capacity_uses_recorded_metadata_without_network_storage(monkeypatch):
+    from pathlib import Path
+
+    fit = SimpleNamespace(
+        resident_weights_gib=2,
+        resident_kv_cache_gib=1,
+        runtime_overhead_gib=1,
+        total_required_gib=4,
+        context_length=8192,
+        confidence="architecture",
+    )
+    node = PoolNode.__new__(PoolNode)
+    node.models = SimpleNamespace(recorded_fit=lambda _: fit)
+
+    def unexpected_read(*args):
+        raise AssertionError("Warm capacity must not touch model storage")
+
+    monkeypatch.setattr(Path, "read_text", unexpected_read)
+    result = await node.model_capacity({"id": "org/model", "model_path": "/slow-nas/model"}, 8)
+    assert result["fits"] and result["required_gib"] == 4
+
+
+@pytest.mark.asyncio
 async def test_transient_cluster_context_targets_that_cluster_without_saving_affinity(tmp_path):
     pool = FakePool(tmp_path)
     request = PoolLoadRequest(model_id="org/model", cluster_id="second")

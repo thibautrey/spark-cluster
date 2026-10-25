@@ -137,6 +137,8 @@ class InferenceTracker:
         if SCOPE_KEY in scope or scope.get("method") in {"GET", "HEAD", "OPTIONS"}:
             return await handler(scope, receive, send)
         record = RequestRecord(self, model_id, path)
+        if arrival := scope.get("spark.arrival"):
+            record.started_at, record.start = arrival
         scope = dict(scope, **{SCOPE_KEY: record})
         self.active[record.id] = record
         try:
