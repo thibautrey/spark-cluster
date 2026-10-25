@@ -131,6 +131,17 @@
           <article class="metric" id="prefix-reuse-metric" hidden><span>Prefix reuse</span><strong><b id="prefix-reuse">—</b><small> tokens</small></strong></article>
         </section>
 
+        <section class="overview-details" data-route-view="overview">
+          <div class="overview-resources">
+            <article class="metric"><span>Reporting nodes</span><strong id="overview-health">—</strong><footer id="overview-health-note">Waiting for telemetry</footer></article>
+            <article class="metric"><span>Average GPU load</span><strong id="overview-gpu">—</strong><footer>Across reporting nodes</footer></article>
+            <article class="metric"><span>Memory headroom</span><strong id="overview-free">—</strong><footer>Free on reporting nodes</footer></article>
+            <article class="metric"><span>Hottest GPU</span><strong id="overview-temperature">—</strong><footer id="overview-temperature-node">Waiting for telemetry</footer></article>
+          </div>
+          <article class="panel overview-runtime"><div class="panel-head"><h2>Inference activity</h2><a href="#launch">Manage runtime ↗</a></div><p id="overview-model">Waiting for runtime status</p><dl id="overview-runtime-stats"></dl></article>
+          <article class="panel"><div class="panel-head"><h2>Node resources</h2><a href="#topology">View topology ↗</a></div><div class="overview-table-wrap"><table class="overview-table"><thead><tr><th scope="col">Node</th><th scope="col">Status</th><th scope="col">GPU load</th><th scope="col">Memory</th><th scope="col">Temperature</th></tr></thead><tbody id="overview-nodes"><tr><td colspan="5">Waiting for telemetry</td></tr></tbody></table></div><p class="overview-updated" id="overview-updated">Uses the existing telemetry stream</p></article>
+        </section>
+
         <section class="panel api-panel" id="api" data-route-view="api">
           <article class="api-card">
             <div class="api-card-head"><div><h2>OpenAI pool endpoint</h2><small id="api-routing-mode">Controller routed · automatic model placement</small></div><span class="pill" id="api-status">checking</span></div>

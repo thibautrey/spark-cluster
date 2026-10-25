@@ -252,6 +252,7 @@ function render(snapshot) {
 }
 
 function renderOverviewMetrics(snapshot) {
+  renderOverviewDetails(snapshot);
   const memoryUsed = snapshot.nodes.reduce((sum, node) => sum + node.memory.used_gib, 0);
   const memoryTotal = snapshot.nodes.reduce((sum, node) => sum + node.memory.total_gib, 0);
   $('stream-status').title = `Updated ${new Date(snapshot.timestamp).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})}`;
@@ -273,6 +274,36 @@ function renderOverviewMetrics(snapshot) {
   } else {
     drawSparkline([]);
   }
+}
+
+// Pure client-side summaries: no additional polling, storage, or server aggregation.
+function renderOverviewDetails(snapshot) {
+  const nodes = snapshot.nodes;
+  const reporting = nodes.filter(node => node.status !== 'offline');
+  const healthy = reporting.filter(node => node.status === 'healthy').length;
+  $('overview-health').textContent = `${reporting.length} / ${nodes.length}`;
+  $('overview-health-note').textContent = `${healthy} healthy · ${reporting.length - healthy} degraded · ${nodes.length - reporting.length} offline`;
+  $('overview-gpu').textContent = reporting.length ? `${(reporting.reduce((sum, node) => sum + node.gpu_utilization, 0) / reporting.length).toFixed(0)}%` : '—';
+  $('overview-free').textContent = reporting.length ? `${reporting.reduce((sum, node) => sum + Math.max(0, node.memory.total_gib - node.memory.used_gib), 0).toFixed(1)} GiB` : '—';
+  const hottest = reporting.filter(node => node.temperature_c > 0).reduce((best, node) => !best || node.temperature_c > best.temperature_c ? node : best, null);
+  $('overview-temperature').textContent = hottest ? `${hottest.temperature_c.toFixed(0)}°C` : '—';
+  $('overview-temperature-node').textContent = hottest ? hottest.hostname : 'Temperature unavailable';
+  const runtime = snapshot.runtime;
+  $('overview-model').textContent = runtimeReady ? runtime.model : 'No runtime ready · launch a model to serve requests';
+  const stats = runtimeReady ? [
+    ['Input', `${Math.round(snapshot.total_input_tokens_per_second)} tok/s`],
+    ['Output', `${Math.round(snapshot.total_output_tokens_per_second)} tok/s`],
+    ['Queue', `${runtime.queued_requests}`],
+    ['Context', `${formatNumber(runtime.context_length)} tokens`],
+    ['Parallelism', `TP ${runtime.tensor_parallel} · PP ${runtime.pipeline_parallel}`],
+    ['Uptime', `${Math.floor(runtime.uptime_seconds / 3600)}h ${Math.floor(runtime.uptime_seconds % 3600 / 60)}m`],
+  ] : [];
+  $('overview-runtime-stats').innerHTML = stats.map(([label, value]) => `<div><dt>${label}</dt><dd>${escapeHtml(value)}</dd></div>`).join('');
+  $('overview-nodes').innerHTML = nodes.length ? nodes.map(node => {
+    const online = node.status !== 'offline';
+    return `<tr><th scope="row">${escapeHtml(node.hostname)}</th><td><span class="overview-node-status ${escapeHtml(node.status)}">${escapeHtml(node.status)}</span></td><td>${online ? `${node.gpu_utilization.toFixed(0)}%` : '—'}</td><td>${online ? `${node.memory.used_gib.toFixed(1)} / ${node.memory.total_gib.toFixed(0)} GiB` : '—'}</td><td>${online && node.temperature_c > 0 ? `${node.temperature_c.toFixed(0)}°C` : '—'}</td></tr>`;
+  }).join('') : '<tr><td colspan="5">No nodes in this pool yet. Add a compute pool to get started.</td></tr>';
+  $('overview-updated').textContent = `Snapshot ${new Date(snapshot.timestamp).toLocaleTimeString()} · existing telemetry stream`;
 }
 
 function renderTopology(nodes) {
