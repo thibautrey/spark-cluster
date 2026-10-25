@@ -77,6 +77,14 @@ this private file or mounted secrets; never commit recipes containing deployment
 The proxy preserves upstream authentication and does not log request bodies or credentials.
 Recipe files can create Docker containers and must be managed only by trusted administrators.
 
+For services that load weights lazily, set the optional `preload_path` to a runtime-relative
+POST endpoint. For Speaches Whisper, use `/api/ps/deepdml/faster-whisper-large-v3-turbo-ct2`
+with `WHISPER__TTL=-1`. The controller waits for this request to succeed within the startup
+deadline before reporting the runtime ready; a healthy HTTP service alone is insufficient.
+Use explicit `resources` to allow automatic GPU placement for an imported service. Without
+that declaration, imported recipes preserve their original device affinity and require an
+exclusive device when no engine memory budget is available.
+
 Public listeners can preserve legacy service ports. Clients on private Docker DNS networks must
 instead use a reachable host listener. `/api/v1/inference/status` reports profiles and residency
 without exposing Docker recipes. Unrelated application containers are never stopped. Manual local

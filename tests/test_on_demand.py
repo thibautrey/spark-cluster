@@ -80,6 +80,54 @@ async def test_failed_start_cleans_up(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_preload_finishes_before_runtime_is_ready(monkeypatch):
+    original = httpx.AsyncClient
+    p = profile(preload_path="/api/ps/test-model")
+    manager = OnDemandInference(Docker(), [p])
+    calls = []
+
+    def upstream(request):
+        calls.append((request.method, request.url.path))
+        assert manager.residents[p.id].status == "starting"
+        if request.method == "POST":
+            assert request.extensions["timeout"]["read"] > 3
+            return httpx.Response(201)
+        return httpx.Response(200)
+
+    transport = httpx.MockTransport(upstream)
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(transport=transport))
+    await manager.ensure(p, keep_loaded=True)
+    assert calls == [("GET", "/health"), ("POST", "/api/ps/test-model")]
+    assert manager.residents[p.id].status == "ready"
+    assert p.id in manager.retained
+    await manager.ensure(p)
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 500])
+async def test_preload_failure_cleans_up_healthy_service(monkeypatch, status):
+    original = httpx.AsyncClient
+    transport = httpx.MockTransport(
+        lambda r: httpx.Response(status if r.method == "POST" else 200)
+    )
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original(transport=transport))
+    p = profile(preload_path="/api/ps/test-model")
+    manager = OnDemandInference(Docker(), [p])
+    with pytest.raises(RuntimeError, match=f"model preload failed.*{status}"):
+        await manager.ensure(p, keep_loaded=True)
+    assert not manager.docker.containers
+    assert not manager.residents
+    assert p.id not in manager.retained
+
+
+@pytest.mark.parametrize("path", ["https://example.com/model", "//example.com/model"])
+def test_preload_path_stays_on_runtime(path):
+    with pytest.raises(ValueError, match="Preload path must be relative"):
+        profile(preload_path=path)
+
+
+@pytest.mark.asyncio
 async def test_never_removes_unmanaged_container():
     p = profile()
     docker = Docker()
