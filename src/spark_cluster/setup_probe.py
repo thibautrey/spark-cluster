@@ -143,7 +143,10 @@ def accelerator_facts():
         return "amd", "rocm", names or ["AMD GPU"]
     if system == "windows":
         output = command(
-            "powershell", "-NoProfile", "-NonInteractive", "-Command",
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
             "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
         )
         names = [name for name in output.splitlines() if name.strip()]

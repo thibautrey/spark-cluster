@@ -212,9 +212,7 @@ class SSHTransport:
         args = self.command(node)
         return (await process(args, script.encode(), timeout)).decode()
 
-    async def run_command(
-        self, node: SetupNode, remote: list[str], timeout: float = 60
-    ) -> str:
+    async def run_command(self, node: SetupNode, remote: list[str], timeout: float = 60) -> str:
         """Run a bounded command without assuming the remote host has a POSIX shell."""
         return (await process(self.command(node, remote), timeout=timeout)).decode()
 
@@ -381,15 +379,15 @@ class ClusterSetupService:
         callback = f"{callback_base_url}/api/v1/setup/bootstrap/confirm"
         awk_filter = shlex.quote(f'$NF != "{marker}"')
         return (
-            "set -eu; umask 077; d=\"$HOME/.ssh\"; a=\"$d/authorized_keys\"; "
-            "mkdir -p \"$d\"; chmod 700 \"$d\"; touch \"$a\"; chmod 600 \"$a\"; "
-            "t=$(mktemp \"$a.XXXXXX\"); "
-            f"awk {awk_filter} \"$a\" >\"$t\"; "
+            'set -eu; umask 077; d="$HOME/.ssh"; a="$d/authorized_keys"; '
+            'mkdir -p "$d"; chmod 700 "$d"; touch "$a"; chmod 600 "$a"; '
+            't=$(mktemp "$a.XXXXXX"); '
+            f'awk {awk_filter} "$a" >"$t"; '
             f"printf '%s\\n' {shlex.quote(public_key)} >>\"$t\"; "
-            "chmod 600 \"$t\"; mv \"$t\" \"$a\"; "
+            'chmod 600 "$t"; mv "$t" "$a"; '
             "h=$(cat /etc/ssh/ssh_host_ed25519_key.pub); "
-            f"curl -fsS -X POST -H \"X-Spark-Username: $(id -un)\" "
-            f"-H \"X-Spark-Host-Key: $h\" "
+            f'curl -fsS -X POST -H "X-Spark-Username: $(id -un)" '
+            f'-H "X-Spark-Host-Key: $h" '
             f"-H {shlex.quote(f'X-Spark-Bootstrap: {token}')} {shlex.quote(callback)}"
         )
 

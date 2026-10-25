@@ -255,20 +255,17 @@ async def test_dedicated_bootstrap_command_confirms_host_key_and_ssh(tmp_path, m
         return private_key, generated_public_key
 
     monkeypatch.setattr(service, "_generate_bootstrap_key", generate)
-    enrollment = await service.create_bootstrap(
-        "192.168.50.10", "http://192.168.50.5:8080"
-    )
+    enrollment = await service.create_bootstrap("192.168.50.10", "http://192.168.50.5:8080")
     assert enrollment["status"] == "waiting"
     assert generated_public_key in enrollment["command"]
     assert "authorized_keys" in enrollment["command"]
     assert "ssh_host_ed25519_key.pub" in enrollment["command"]
-    assert subprocess.run(
-        ["bash", "-n", "-c", enrollment["command"]], capture_output=True
-    ).returncode == 0
-    token = enrollment["command"].split("X-Spark-Bootstrap: ", 1)[1].split("'", 1)[0]
-    confirmed = await service.confirm_bootstrap(
-        token, "spark", f"ssh-ed25519 {host_key} machine"
+    assert (
+        subprocess.run(["bash", "-n", "-c", enrollment["command"]], capture_output=True).returncode
+        == 0
     )
+    token = enrollment["command"].split("X-Spark-Bootstrap: ", 1)[1].split("'", 1)[0]
+    confirmed = await service.confirm_bootstrap(token, "spark", f"ssh-ed25519 {host_key} machine")
     assert confirmed["status"] == "ready"
     assert confirmed["username"] == "spark"
     assert confirmed["fingerprint"] == fingerprint(host_key)
@@ -555,15 +552,19 @@ async def test_generic_nvidia_pool_has_no_dgx_fabric_requirement(tmp_path):
     store.close()
 
 
-@pytest.mark.parametrize("system,vendor,names,arch,kind,strategy,supported", [
-    ("darwin", "apple", ["Apple M4 Max"], "arm64", "mac-apple-silicon", "metal-agent", False),
-    ("windows", "nvidia", ["RTX 5090"], "AMD64", "windows-gpu", "windows-agent", False),
-    ("linux", "nvidia", ["RTX 4090"], "x86_64", "linux-nvidia", "k3s-nvidia", True),
-    ("linux", "amd", ["MI300X"], "x86_64", "linux-amd", "docker-rocm", False),
-    ("linux", "nvidia", ["NVIDIA GB10"], "aarch64", "dgx-spark", "k3s-cluster", True),
-])
+@pytest.mark.parametrize(
+    "system,vendor,names,arch,kind,strategy,supported",
+    [
+        ("darwin", "apple", ["Apple M4 Max"], "arm64", "mac-apple-silicon", "metal-agent", False),
+        ("windows", "nvidia", ["RTX 5090"], "AMD64", "windows-gpu", "windows-agent", False),
+        ("linux", "nvidia", ["RTX 4090"], "x86_64", "linux-nvidia", "k3s-nvidia", True),
+        ("linux", "amd", ["MI300X"], "x86_64", "linux-amd", "docker-rocm", False),
+        ("linux", "nvidia", ["NVIDIA GB10"], "aarch64", "dgx-spark", "k3s-cluster", True),
+    ],
+)
 def test_machine_classification(system, vendor, names, arch, kind, strategy, supported):
     from spark_cluster.setup_probe import machine_class
+
     assert machine_class(system, vendor, names, arch) == (kind, strategy, supported)
 
 
@@ -585,6 +586,7 @@ async def test_native_platform_blocks_bootstrap_without_dgx_checks(tmp_path):
 
 def test_adaptive_onboarding_hides_dgx_controls_initially():
     from pathlib import Path
+
     static = Path(__file__).parents[1] / "src/spark_cluster/static"
     page = (static / "index.html").read_text()
     script = (static / "assets/setup.js").read_text()

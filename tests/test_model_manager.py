@@ -540,9 +540,7 @@ def test_managed_inventory_only_scans_valid_repository_depth(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_inventory_serves_completed_jobs_while_storage_scan_runs(
-    tmp_path, monkeypatch
-):
+async def test_inventory_serves_completed_jobs_while_storage_scan_runs(tmp_path, monkeypatch):
     settings = Settings(model_cache_path=tmp_path / "models")
     store = SnapshotStore(tmp_path / "inventory-fast.db")
     runtime = SimpleNamespace(latest=ClusterSimulator("test").snapshot())
@@ -601,9 +599,7 @@ async def test_inventory_serves_completed_jobs_while_storage_scan_runs(
 
 
 @pytest.mark.asyncio
-async def test_local_fit_uses_recorded_metadata_without_scanning_storage(
-    tmp_path, monkeypatch
-):
+async def test_local_fit_uses_recorded_metadata_without_scanning_storage(tmp_path, monkeypatch):
     settings = Settings(model_cache_path=tmp_path / "models")
     store = SnapshotStore(tmp_path / "fit-fast.db")
     runtime = SimpleNamespace(latest=ClusterSimulator("test").snapshot())
