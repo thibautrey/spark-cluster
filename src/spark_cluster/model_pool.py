@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
-from .inference_tracking import mark_dispatch
+from .inference_tracking import mark_dispatch, request_stream_usage
 from .local_docker import local_gpu_snapshot
 from .models import ModelFitPlan, ModelFitRequest, ModelLaunchRequest
 from .on_demand import HOP_HEADERS, DemandProxy, InferenceProfile
@@ -1209,7 +1209,12 @@ async def forward_http(url, scope, receive, send, token=None, transport=None):
     query = scope.get("query_string", b"").decode()
     if query:
         url += "?" + query
-    headers = {k.decode(): v.decode() for k, v in scope["headers"] if k.lower() not in HOP_HEADERS}
+    body = request_stream_usage(body, request.headers.get("content-type", ""), request.url.path)
+    headers = {
+        k.decode(): v.decode()
+        for k, v in scope["headers"]
+        if k.lower() not in HOP_HEADERS | {b"content-length"}
+    }
     if token:
         parsed = httpx.URL(url)
         target = parsed.raw_path.decode()

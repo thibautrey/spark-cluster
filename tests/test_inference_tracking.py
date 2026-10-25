@@ -15,6 +15,7 @@ from spark_cluster.inference_tracking import (
     InferenceTracker,
     RequestRecord,
     mark_dispatch,
+    request_stream_usage,
 )
 from spark_cluster.store import SnapshotStore
 from spark_cluster.telemetry import InferenceTelemetryService
@@ -258,3 +259,13 @@ def test_global_api_records_real_router_requests_and_exposes_metrics(tmp_path, m
         assert activity["recent"][0]["cluster_id"] == "pool-a"
         assert client.get("/api/v1/inference/activity?limit=101").status_code == 422
         assert "spark_cluster_inference_requests_total 1" in client.get("/metrics").text
+
+
+def test_stream_usage_default_and_explicit_client_opt_out():
+    body = b'{"model":"model","stream":true}'
+    result = request_stream_usage(body, "application/json", "/v1/chat/completions")
+    assert json.loads(result)["stream_options"]["include_usage"] is True
+    opted_out = b'{"stream":true,"stream_options":{"include_usage":false}}'
+    assert request_stream_usage(opted_out, "application/json", "/v1/completions") == opted_out
+    assert request_stream_usage(body, "application/json", "/v1/embeddings") == body
+    assert request_stream_usage(body, "multipart/form-data", "/v1/chat/completions") == body

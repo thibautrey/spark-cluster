@@ -16,7 +16,9 @@ shared sample, not an estimate of allocation by an individual request.
 The dashboard retains totals, a one-hour minute chart, recent requests, per-model
 and per-pool totals, pool occupancy and resource usage. Percentiles describe the
 latest 512 retained requests (successful observations with the relevant measurement).
-Missing usage stays unknown and is counted explicitly. Nothing is inferred from
+Streaming chat/completion routes request a final usage chunk by default; an explicit
+client `include_usage: false` remains respected. Missing usage stays unknown and is
+counted explicitly. Nothing is inferred from
 response length, SSE chunk count, or GPU activity. Earlier unrecorded requests
 cannot be reconstructed. Historical records survive runtime unloads and restarts.
 
