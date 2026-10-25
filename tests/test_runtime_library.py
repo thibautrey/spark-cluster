@@ -628,7 +628,7 @@ def test_runtime_api_authorization_validation_and_controller_routing(tmp_path):
         assert "windows/amd64" in llama["platforms"]
         page = client.get("/").text
         assert 'id="runtime-host-form"' in page
-        assert "Runtime readiness" in page
+        assert "Launch engines" in page
         assert "Standalone macOS &amp; Windows hosts" in page
         cluster_id = client.get("/api/v1/clusters").json()["clusters"][0]["id"]
         assert (
