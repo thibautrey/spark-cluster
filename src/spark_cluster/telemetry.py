@@ -33,6 +33,8 @@ def parse_prometheus(text: str) -> dict[str, list[tuple[dict[str, str], float]]]
             value = float(match.group(3))
         except ValueError:
             continue
+        if not math.isfinite(value):
+            continue
         labels = {key: value for key, value in LABEL.findall(match.group(2) or "")}
         result[_name(match.group(1))].append((labels, value))
     return result
@@ -78,11 +80,15 @@ class InferenceTelemetryService:
         self.latest = store.latest_telemetry() or InferenceTelemetry(
             notes=["Waiting for a runtime metrics endpoint"]
         )
+        self.target_provider = None
+        self.client = None
+        self._target = None
         self.task: asyncio.Task | None = None
         self.transport: httpx.AsyncBaseTransport | None = None
         self._previous: tuple[float, dict[str, float]] | None = None
 
     async def start(self) -> None:
+        self.client = httpx.AsyncClient(timeout=3, trust_env=False, transport=self.transport)
         self.task = asyncio.create_task(self._loop())
 
     async def stop(self) -> None:
@@ -92,18 +98,40 @@ class InferenceTelemetryService:
                 await self.task
             except asyncio.CancelledError:
                 pass
+        if self.client:
+            await self.client.aclose()
+            self.client = None
 
     async def sample(self) -> InferenceTelemetry:
-        try:
-            async with httpx.AsyncClient(timeout=5, transport=self.transport) as client:
-                response = await client.get(self.url)
-                response.raise_for_status()
-            telemetry = self.from_metrics(response.text)
-        except (httpx.HTTPError, ValueError) as error:
+        target = self.settings.runtime_metrics_url or (
+            self.target_provider() if self.target_provider else self.url
+        )
+        if target != self._target:
+            self._previous = None
+            self._target = target
+        if not target:
+            self._previous = None
             telemetry = InferenceTelemetry(
-                source=self.url,
-                notes=[f"Runtime metrics unavailable: {type(error).__name__}"],
+                notes=["No active runtime to scrape; request tracking remains available."]
             )
+        else:
+            temporary = self.client is None
+            client = self.client or httpx.AsyncClient(
+                timeout=3, trust_env=False, transport=self.transport
+            )
+            try:
+                response = await client.get(target)
+                response.raise_for_status()
+                telemetry = self.from_metrics(response.text).model_copy(update={"source": target})
+            except (httpx.HTTPError, ValueError) as error:
+                self._previous = None
+                telemetry = InferenceTelemetry(
+                    source=target,
+                    notes=[f"Runtime metrics unavailable: {type(error).__name__}"],
+                )
+            finally:
+                if temporary:
+                    await client.aclose()
         self.latest = telemetry
         await asyncio.to_thread(self.store.save_telemetry, telemetry)
         return telemetry
@@ -112,26 +140,49 @@ class InferenceTelemetryService:
         metrics = parse_prometheus(text)
         now = time.monotonic()
         counters = {
-            "prompt": _value(metrics, ("vllm:prompt_tokens_total", "vllm_prompt_tokens_total"))
-            or 0,
+            "prompt": _value(
+                metrics,
+                (
+                    "vllm:prompt_tokens_total",
+                    "sglang:prompt_tokens_total",
+                    "llamacpp:prompt_tokens_total",
+                ),
+            ),
             "decode": _value(
-                metrics, ("vllm:generation_tokens_total", "vllm_generation_tokens_total")
-            )
-            or 0,
+                metrics,
+                (
+                    "vllm:generation_tokens_total",
+                    "sglang:generation_tokens_total",
+                    "llamacpp:tokens_predicted_total",
+                ),
+            ),
         }
         prefill_rate = decode_rate = None
+        rates = {}
         if self._previous:
             elapsed = now - self._previous[0]
             if elapsed > 0:
-                prefill_rate = max(0, counters["prompt"] - self._previous[1]["prompt"]) / elapsed
-                decode_rate = max(0, counters["decode"] - self._previous[1]["decode"]) / elapsed
+                for key, value in counters.items():
+                    previous = self._previous[1].get(key)
+                    # Restarts and model switches start a fresh baseline; never manufacture a spike.
+                    if value is not None and previous is not None and value >= previous:
+                        rates[key] = (value - previous) / elapsed
+        prefill_rate, decode_rate = rates.get("prompt"), rates.get("decode")
         self._previous = (now, counters)
         ttft = ("vllm:time_to_first_token_seconds", "vllm_time_to_first_token_seconds")
         itl = ("vllm:inter_token_latency_seconds", "vllm_inter_token_latency_seconds")
         return InferenceTelemetry(
             sampled_at=datetime.now(UTC),
             source=self.url,
-            available=True,
+            available=any(
+                name.startswith(("vllm_", "sglang_", "llamacpp_", "lmcache_")) for name in metrics
+            ),
+            input_tokens_total=_integer(counters["prompt"]),
+            output_tokens_total=_integer(counters["decode"]),
+            requests_total=_integer(_value(metrics, ("vllm:request_success_total",))),
+            request_p95_ms=_milliseconds(
+                _quantile(metrics, ("vllm:e2e_request_latency_seconds",), 0.95)
+            ),
             ttft_p50_ms=_milliseconds(_quantile(metrics, ttft, 0.5)),
             ttft_p95_ms=_milliseconds(_quantile(metrics, ttft, 0.95)),
             inter_token_p50_ms=_milliseconds(_quantile(metrics, itl, 0.5)),
@@ -148,7 +199,15 @@ class InferenceTelemetryService:
                 )
             ),
             gpu_kv_cache_usage=_ratio(
-                _value(metrics, ("vllm:gpu_cache_usage_perc", "vllm_gpu_cache_usage_perc"))
+                _value(
+                    metrics,
+                    (
+                        "vllm:kv_cache_usage_perc",
+                        "vllm:gpu_cache_usage_perc",
+                        "sglang:token_usage",
+                        "llamacpp:kv_cache_usage_ratio",
+                    ),
+                )
             ),
             cache_hits=_integer(
                 _value(metrics, ("lmcache:cache_hits_total", "lmcache_cache_hits_total"))
@@ -168,10 +227,24 @@ class InferenceTelemetryService:
             ),
             expert_imbalance=_value(metrics, ("vllm:expert_load_imbalance",)),
             active_requests=_integer(
-                _value(metrics, ("vllm:num_requests_running", "vllm_num_requests_running"))
+                _value(
+                    metrics,
+                    (
+                        "vllm:num_requests_running",
+                        "sglang:num_running_reqs",
+                        "llamacpp:requests_processing",
+                    ),
+                )
             ),
             queued_requests=_integer(
-                _value(metrics, ("vllm:num_requests_waiting", "vllm_num_requests_waiting"))
+                _value(
+                    metrics,
+                    (
+                        "vllm:num_requests_waiting",
+                        "sglang:num_queue_reqs",
+                        "llamacpp:requests_deferred",
+                    ),
+                )
             ),
             notes=[
                 "Values are read from the runtime; absent metrics remain unknown rather than zero."

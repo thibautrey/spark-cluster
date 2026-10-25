@@ -138,7 +138,10 @@
             <article class="metric"><span>Memory headroom</span><strong id="overview-free">—</strong><footer>Free on reporting nodes</footer></article>
             <article class="metric"><span>Hottest GPU</span><strong id="overview-temperature">—</strong><footer id="overview-temperature-node">Waiting for telemetry</footer></article>
           </div>
-          <article class="panel overview-runtime"><div class="panel-head"><h2>Inference activity</h2><a href="#launch">Manage runtime ↗</a></div><p id="overview-model">Waiting for runtime status</p><dl id="overview-runtime-stats"></dl></article>
+          <article class="panel overview-runtime"><div class="panel-head"><h2>Inference activity</h2><a href="#launch">Manage runtime ↗</a></div><p id="overview-model">Connecting to inference tracking…</p><dl id="overview-runtime-stats"></dl>
+            <p class="overview-updated" id="inference-coverage"></p>
+            <div class="overview-table-wrap"><table class="overview-table"><thead><tr><th>Recent requests</th><th>Model / pool</th><th>Result</th><th>Latency</th><th>Tokens in / out</th><th>Pool memory</th></tr></thead><tbody id="inference-recent"><tr><td colspan="6">Loading recorded activity…</td></tr></tbody></table></div>
+            <details class="inference-breakdown"><summary>Pool usage and tracking details</summary><div id="inference-pools"></div><div id="inference-groups"></div><p id="inference-tracking-note" class="overview-updated"></p></details></article>
           <article class="panel"><div class="panel-head"><h2>Node resources</h2><a href="#topology">View topology ↗</a></div><div class="overview-table-wrap"><table class="overview-table"><thead><tr><th scope="col">Node</th><th scope="col">Status</th><th scope="col">GPU load</th><th scope="col">Memory</th><th scope="col">Temperature</th></tr></thead><tbody id="overview-nodes"><tr><td colspan="5">Waiting for telemetry</td></tr></tbody></table></div><p class="overview-updated" id="overview-updated">Uses the existing telemetry stream</p></article>
         </section>
 
@@ -452,5 +455,6 @@
     <script src="/assets/setup.js?v=automated-ssh-bootstrap-v1"></script>
     <script src="/assets/pool.js?v=adaptive-pools-v1" defer></script>
     <script src="/assets/runtimes.js?v=runtime-multios-v1" defer></script>
+    <script src="/assets/inference.js?v=inference-tracking-v1" defer></script>
 </body>
 </html>

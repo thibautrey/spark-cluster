@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
+from .inference_tracking import mark_dispatch
 from .local_docker import local_gpu_snapshot
 from .models import ModelFitPlan, ModelFitRequest, ModelLaunchRequest
 from .on_demand import HOP_HEADERS, DemandProxy, InferenceProfile
@@ -120,10 +121,18 @@ class PoolNode:
         self.runtime_metadata = (
             json.loads(self.metadata_path.read_text()) if self.metadata_path.exists() else {}
         )
+        self._metadata_checked = {key: time.monotonic() for key in self.runtime_metadata}
+        self.tracker = None
         self.native_lock = asyncio.Lock()
         self.reaper = None
 
     async def capture_runtime_metadata(self, model_id: str, base_url: str) -> None:
+        now = time.monotonic()
+        if now - self._metadata_checked.get(model_id, -float("inf")) < 60:
+            return
+        if len(self._metadata_checked) >= 256:
+            self._metadata_checked.clear()
+        self._metadata_checked[model_id] = now
         try:
             async with httpx.AsyncClient(
                 timeout=5, trust_env=False, transport=self.transport
@@ -165,6 +174,18 @@ class PoolNode:
                 await self.unload(self.native["model_id"])
 
     async def infer(self, model_id, path, scope, receive, send):
+        if self.tracker:
+
+            async def handler(scope, receive, send):
+                await self._infer_local(model_id, path, scope, receive, send)
+
+            return await self.tracker.track(handler, model_id, path, scope, receive, send)
+        return await self._infer_local(model_id, path, scope, receive, send)
+
+    async def _infer_local(self, model_id, path, scope, receive, send):
+        cluster = self.local_cluster()
+        if record := scope.get("spark.inference"):
+            record.cluster_id = record.cluster_id or (cluster.id if cluster else "self")
         profile = self.demand.profile_for(model_id)
         scope = dict(scope, path="/" + path, raw_path=("/" + path).encode())
         if profile:
@@ -180,6 +201,7 @@ class PoolNode:
                 )(scope, receive, send)
                 return
             try:
+                mark_dispatch(scope)
                 base = self.settings.direct_runtime_base_url.removesuffix("/v1")
                 await forward_http(base + "/" + path, scope, receive, send)
             finally:
@@ -283,11 +305,13 @@ class PoolNode:
                     "id": key,
                     "name": snapshot.cluster_name if cluster else node.hostname,
                     "address": node.address,
+                    "available": True,
                     "accelerators": 0,
                     "memory_used_gib": 0.0,
                     "memory_total_gib": 0.0,
                 },
             )
+            machine["available"] = machine["available"] and node.status != "offline"
             machine["accelerators"] += 1
             machine["memory_used_gib"] += node.memory.accelerator_used_gib or node.memory.used_gib
             machine["memory_total_gib"] += node.memory.total_gib
@@ -647,6 +671,7 @@ class ModelPool:
         self.cache = None
         self.cache_time = 0.0
         self.pending_requests = 0
+        self.tracker = None
 
     def save(self):
         self.jobs = self.jobs[-100:]
@@ -1090,6 +1115,15 @@ class ModelPool:
         return {"status": "unloaded"}
 
     async def infer(self, model_id, path, scope, receive, send):
+        if self.tracker:
+
+            async def handler(scope, receive, send):
+                await self._infer_queued(model_id, path, scope, receive, send)
+
+            return await self.tracker.track(handler, model_id, path, scope, receive, send)
+        return await self._infer_queued(model_id, path, scope, receive, send)
+
+    async def _infer_queued(self, model_id, path, scope, receive, send):
         if self.pending_requests >= 64:
             await JSONResponse({"error": "Pool inference queue is full"}, status_code=503)(
                 scope, receive, send
@@ -1126,9 +1160,12 @@ class ModelPool:
                 await JSONResponse({"error": job["message"]}, status_code=503)(scope, receive, send)
                 return
             cluster = self.cluster(job["cluster_id"])
+            if record := scope.get("spark.inference"):
+                record.cluster_id = cluster.id
             if self.local(cluster):
                 await self.node.infer(model_id, path, scope, receive, send)
             else:
+                mark_dispatch(scope, cluster.id)
                 target = "/api/v1/pool/node/inference/" + path
                 query = scope.get("query_string", b"").decode()
                 query += ("&" if query else "") + urlencode({"model_id": model_id})

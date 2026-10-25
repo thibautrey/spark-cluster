@@ -1,6 +1,7 @@
 from pathlib import Path
 from urllib.parse import urlparse
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -52,6 +53,7 @@ class Settings(BaseSettings):
     runtime_cache_path: Path | None = None
     runtime_metrics_url: str | None = None
     runtime_metrics_poll_seconds: float = 5
+    inference_retention_requests: int = Field(default=50_000, ge=100, le=1_000_000)
     setup_enabled: bool = False
     setup_state_path: Path = Path("./setup-state")
     setup_ssh_identity: Path | None = None

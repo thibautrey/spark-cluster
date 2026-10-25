@@ -2,8 +2,10 @@ import asyncio
 import contextlib
 import hmac
 import json
+import logging
 import re
 import shutil
+import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,6 +57,7 @@ from .cluster_registry import (
 )
 from .cluster_setup import ClusterSetupService, SetupFailure
 from .config import Settings
+from .inference_tracking import InferenceTracker
 from .local_docker import DockerEngineClient, detect_nvidia_gpus, local_gpu_snapshot
 from .mcp_server import SparkClusterMCP
 from .model_manager import (
@@ -202,7 +205,73 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     runtime_library = RuntimeLibrary(
         settings, runtime.store, runtime_prerequisites, cluster_registry, docker_engine
     )
+    inference_tracker = InferenceTracker(settings)
+    model_pool.tracker = pool_node.tracker = inference_tracker
+
+    def resource_sample(cluster_id):
+        cache_age = time.monotonic() - model_pool.cache_time
+        if cluster_id and model_pool.cache and cache_age < 15:
+            pool = next((p for p in model_pool.cache["clusters"] if p["id"] == cluster_id), None)
+            machines = pool.get("machines", []) if pool and pool["available"] else []
+            if machines and all(m.get("available", True) for m in machines):
+                return dict(
+                    sampled_at=time.time() - cache_age,
+                    used_gib=round(sum(m["memory_used_gib"] for m in machines), 3),
+                    total_gib=round(sum(m["memory_total_gib"] for m in machines), 3),
+                )
+        snapshot = runtime.latest
+        active = cluster_registry.active()
+        if not snapshot or (cluster_id and active and cluster_id != active.id):
+            return None
+        age = (datetime.now(UTC) - snapshot.timestamp).total_seconds()
+        if (
+            age > max(15, settings.sample_interval_seconds * 3)
+            or not snapshot.nodes
+            or any(n.status == "offline" for n in snapshot.nodes)
+        ):
+            return None
+        return dict(
+            sampled_at=snapshot.timestamp.timestamp(),
+            used_gib=round(sum(n.memory.used_gib for n in snapshot.nodes), 3),
+            total_gib=round(sum(n.memory.total_gib for n in snapshot.nodes), 3),
+            gpu_utilization=round(
+                sum(n.gpu_utilization for n in snapshot.nodes) / max(1, len(snapshot.nodes)), 2
+            ),
+        )
+
+    def pool_usage():
+        cached = model_pool.cache
+        if not cached:
+            return []
+        return [
+            dict(
+                id=c["id"],
+                name=c["name"],
+                available=c["available"],
+                active_model=c.get("active_model"),
+                busy=c.get("busy", False),
+                machines=c.get("machines", []),
+                age_seconds=round(max(0, time.monotonic() - model_pool.cache_time), 1),
+            )
+            for c in cached["clusters"]
+        ]
+
+    def metrics_target():
+        # The physical engine owns counters, not the legacy listener or fixed default port.
+        if on_demand.active:
+            return on_demand.active.upstream + "/metrics"
+        if pool_node.native.get("model_id"):
+            return settings.direct_runtime_base_url.removesuffix("/v1") + "/metrics"
+        return (
+            None
+            if on_demand.profiles
+            else settings.direct_runtime_base_url.removesuffix("/v1") + "/metrics"
+        )
+
+    inference_tracker.resources = resource_sample
+    inference_tracker.pool_state = pool_usage
     telemetry_service = InferenceTelemetryService(settings, runtime.store)
+    telemetry_service.target_provider = metrics_target
     optimization_lab = OptimizationLab(settings, runtime.store, telemetry_service)
     cluster_connector = RemoteClusterConnector(settings, cluster_registry)
 
@@ -294,27 +363,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     activate=cluster_registry.active() is None,
                 )
 
+            if any(c.kind == "local-docker" for c in cluster_registry.list()):
+
                 async def monitor_local_cluster() -> None:
                     while True:
                         active = cluster_registry.active()
                         if active and active.kind == "local-docker":
-                            snapshot = await asyncio.to_thread(local_gpu_snapshot, active, settings)
-                            snapshot.runtime.model = (
-                                (on_demand.active.model if on_demand.active else "No model loaded")
-                                if on_demand.profiles
-                                else settings.runtime_model
-                            )
-                            snapshot.runtime.quantization = settings.runtime_quantization
-                            snapshot.runtime.context_length = settings.runtime_context_length
-                            snapshot.runtime.tensor_parallel = settings.runtime_tensor_parallel
-                            snapshot.runtime.pipeline_parallel = settings.runtime_pipeline_parallel
-                            await runtime.publish(snapshot)
+                            try:
+                                snapshot = await asyncio.to_thread(
+                                    local_gpu_snapshot, active, settings
+                                )
+                                snapshot.runtime.model = (
+                                    (
+                                        on_demand.active.model
+                                        if on_demand.active
+                                        else "No model loaded"
+                                    )
+                                    if on_demand.profiles
+                                    else settings.runtime_model
+                                )
+                                snapshot.runtime.quantization = settings.runtime_quantization
+                                snapshot.runtime.context_length = settings.runtime_context_length
+                                snapshot.runtime.tensor_parallel = settings.runtime_tensor_parallel
+                                snapshot.runtime.pipeline_parallel = (
+                                    settings.runtime_pipeline_parallel
+                                )
+                                await runtime.publish(snapshot)
+                            except (OSError, RuntimeError, ValueError):
+                                logging.getLogger(__name__).warning(
+                                    "Local telemetry sample failed; retrying"
+                                )
                         await asyncio.sleep(max(2, settings.sample_interval_seconds))
 
                 local_monitor = asyncio.create_task(monitor_local_cluster())
         await runtime.start()
         await model_manager.start()
         await log_service.start()
+        await inference_tracker.start()
         await telemetry_service.start()
         await deployment_service.start()
         await setup_service.start()
@@ -336,6 +421,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await runtime_library.stop()
         await deployment_service.stop()
         await telemetry_service.stop()
+        await inference_tracker.stop()
         await log_service.stop()
         await model_manager.stop()
         browser.close()
@@ -352,6 +438,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.runtime_prerequisites = runtime_prerequisites
     app.state.runtime_library = runtime_library
     app.state.telemetry_service = telemetry_service
+    app.state.inference_tracker = inference_tracker
     app.state.optimization_lab = optimization_lab
     app.state.settings = settings
     app.state.cluster_connector = cluster_connector
@@ -697,6 +784,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/v1/performance/plan", response_model=PerformancePlan)
     async def performance_plan(request: PerformancePlanRequest) -> PerformancePlan:
         return await model_performance_plan(request)
+
+    @app.get("/api/v1/inference/activity")
+    async def inference_activity(limit: int = Query(default=20, ge=0, le=100)) -> dict:
+        return {
+            **inference_tracker.summary(limit),
+            "runtime_metrics": telemetry_service.latest.model_dump(mode="json"),
+        }
 
     @app.get("/api/v1/telemetry", response_model=InferenceTelemetry)
     async def inference_telemetry() -> InferenceTelemetry:
@@ -1282,9 +1376,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/metrics", response_class=PlainTextResponse)
     async def metrics() -> str:
-        if runtime.latest is None:
-            return ""
-        return render_metrics(runtime.latest, telemetry_service.latest)
+        base = render_metrics(runtime.latest, telemetry_service.latest) if runtime.latest else ""
+        return base + inference_tracker.prometheus()
 
     @app.websocket("/api/v1/stream")
     async def stream(websocket: WebSocket) -> None:

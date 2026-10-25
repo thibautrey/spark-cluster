@@ -369,6 +369,10 @@ class InferenceTelemetry(BaseModel):
     sampled_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     source: str = "unavailable"
     available: bool = False
+    input_tokens_total: int | None = None
+    output_tokens_total: int | None = None
+    requests_total: int | None = None
+    request_p95_ms: float | None = None
     ttft_p50_ms: float | None = None
     ttft_p95_ms: float | None = None
     inter_token_p50_ms: float | None = None

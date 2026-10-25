@@ -96,6 +96,12 @@ The setup flow is deliberately sequential:
 
 For direct links, a green result requires the expected point-to-point subnet, sufficient negotiated speed, successful interface-bound peer checks, and a neighbor MAC matching the remote fabric interface. Carrier alone stays amber. See the [cluster setup guide](docs/cluster-setup.md) for access, networking, supported layouts, recovery, and security boundaries.
 
+### Inference activity
+
+[Inference tracking](docs/inference-tracking.md) records routed requests, latency,
+reported tokens, pool placement and sampled memory in a bounded background journal.
+Activity survives model unloads; missing metrics and stale GPU samples are explicit.
+
 ### Measured optimization lab
 
 The controller now turns runtime recommendations into executable, capability-checked launch plans.

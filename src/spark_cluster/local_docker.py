@@ -57,11 +57,13 @@ def local_gpu_snapshot(cluster: ClusterTarget, settings: Settings) -> ClusterSna
     try:
         for position, gpu in enumerate(cluster.gpus):
             used = utilization = temperature = 0.0
+            measured = False
             if pynvml:
                 try:
                     handle = pynvml.nvmlDeviceGetHandleByIndex(gpu.index)
                     memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
                     used = memory.used / GIB
+                    measured = True
                     utilization = float(pynvml.nvmlDeviceGetUtilizationRates(handle).gpu)
                     temperature = float(
                         pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)
@@ -73,7 +75,7 @@ def local_gpu_snapshot(cluster: ClusterTarget, settings: Settings) -> ClusterSna
                     id=gpu.uuid,
                     hostname=f"{cluster.name}-gpu-{gpu.index}",
                     role="head" if position == 0 else "worker",
-                    status="healthy",
+                    status="healthy" if measured else "offline",
                     address=cluster.host_address or settings.docker_runtime_host,
                     memory=MemoryStats(
                         total_gib=gpu.memory_gib,
@@ -92,7 +94,7 @@ def local_gpu_snapshot(cluster: ClusterTarget, settings: Settings) -> ClusterSna
     return ClusterSnapshot(
         timestamp=datetime.now(UTC),
         cluster_name=cluster.name,
-        status="healthy" if nodes else "offline",
+        status="healthy" if nodes and all(n.status == "healthy" for n in nodes) else "offline",
         nodes=nodes,
         cache_tiers=[
             CacheTier(

@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, model_validator
 from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 
+from .inference_tracking import mark_dispatch
 from .local_docker import DockerEngineClient
 
 logger = logging.getLogger(__name__)
@@ -393,6 +394,7 @@ class DemandProxy:
                 async with self.manager.lease(self.profile):
                     try:
                         await self.manager.ensure(self.profile)
+                        mark_dispatch(scope)
                         query = scope.get("query_string", b"").decode("ascii")
                         raw_path = scope.get("raw_path", path.encode()).decode("ascii")
                         url = self.profile.upstream + raw_path + ("?" + query if query else "")
