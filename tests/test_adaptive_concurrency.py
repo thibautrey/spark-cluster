@@ -353,3 +353,73 @@ async def test_native_requests_overlap_and_model_mutation_waits_for_all_streams(
         await asyncio.wait_for(mutation, 1)
     assert all(b"[DONE]" in r.content for r in responses)
     assert node.native_requests == 0 and mutated.is_set()
+
+
+def test_memory_backoff_requires_oom_evidence_and_single_slot_limits_are_explicit():
+    from spark_cluster.adaptive_concurrency import startup_capacity_failure
+
+    assert not startup_capacity_failure({"ExitCode": 137}, b"killed by liveness probe")
+    assert startup_capacity_failure({"OOMKilled": True}, b"")
+    assert startup_capacity_failure({}, b"torch.OutOfMemoryError: CUDA out of memory")
+    controller = ConcurrencyController("one-slot", ceiling=1)
+    assert controller.public()["state"] == "runtime-limited"
+    assert controller.public()["limit"] == 1
+
+
+@pytest.mark.asyncio
+async def test_startup_memory_fallback_keeps_reservation_and_other_models(monkeypatch):
+    from spark_cluster.adaptive_concurrency import RuntimeCapacityError
+
+    first, second = profile("resident"), profile("new-runtime")
+    manager = manager_for([first, second], [gpu()])
+    attempts = []
+
+    async def start(p, resident):
+        assert p.id in manager.residents
+        # A failed batch probe must not evict the other resident.
+        if p.id == second.id:
+            assert first.id in manager.residents
+            attempts.append(resident.runtime_ceiling)
+            if resident.runtime_ceiling > 16:
+                raise RuntimeCapacityError("CUDA graph allocation exceeded budget")
+
+    monkeypatch.setattr(manager, "_start_runtime", start)
+    await manager.ensure(first, keep_loaded=True)
+    await manager.ensure(second)
+    assert attempts == [64, 32, 16]
+    assert manager.residents[second.id].runtime_ceiling == 16
+    assert manager.residents[second.id].parallelism_prepared
+    assert set(manager.residents) == {first.id, second.id}
+    assert manager.residents[first.id].status == "ready"
+
+
+@pytest.mark.asyncio
+async def test_successful_smaller_engine_ceiling_is_not_retried_on_every_request(monkeypatch):
+    p = profile("small-gpu")
+    p.container["Image"] = "vllm"
+    manager = manager_for([p], [gpu()])
+    docker_request = manager.docker.request
+
+    async def engine(method, path, **kwargs):
+        if path.endswith("/logs"):
+            return httpx.Response(200, text="torch.OutOfMemoryError: CUDA out of memory")
+        response = await docker_request(method, path, **kwargs)
+        if path.endswith("/json") and response.status_code == 200:
+            details = response.json()
+            command = details.get("Config", {}).get("Cmd", [])
+            if "--max-num-seqs" in command and command[command.index("--max-num-seqs") + 1] == "64":
+                details["State"] = {"Running": False}
+                return httpx.Response(200, json=details)
+        return response
+
+    manager.docker.request = engine
+    original = httpx.AsyncClient
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={}))
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: original(transport=transport))
+    await manager.ensure(p)
+    assert manager.residents[p.id].runtime_ceiling == 32
+    creates = sum(path == "/containers/create" for _, path, _ in manager.docker.calls)
+    assert creates == 2
+    await manager.ensure(p)
+    assert sum(path == "/containers/create" for _, path, _ in manager.docker.calls) == creates
+    assert manager.residents[p.id].runtime_ceiling == 32

@@ -23,9 +23,11 @@ from starlette.responses import JSONResponse, StreamingResponse
 
 from .adaptive_concurrency import (
     AdaptiveConcurrency,
+    RuntimeCapacityError,
     fingerprint,
     response_feedback,
     runtime_parallelism,
+    startup_capacity_failure,
 )
 from .inference_tracking import mark_dispatch, request_stream_usage
 from .local_docker import DockerEngineClient
@@ -114,6 +116,7 @@ class ResidentRuntime:
     status: str = "starting"
     runtime_ceiling: int = 64
     engine_image: str | None = None
+    parallelism_prepared: bool = False
 
     def public(self):
         return {
@@ -447,6 +450,9 @@ class OnDemandInference:
                     )
                 resident.runtime_ceiling = runtime_parallelism(actual.container)
                 resident.engine_image = details.get("Image") or profile.container.get("Image")
+                resident.parallelism_prepared = (
+                    labels.get("spark-cluster.adaptive-batching") == "true"
+                )
                 self.residents[profile.id] = resident
             listeners = [p for p in self.profiles if p.id not in self.dynamic]
             for profile, sock in zip(listeners, self.sockets, strict=True):
@@ -527,7 +533,11 @@ class OnDemandInference:
                             desired = runtime_parallelism(
                                 copy.deepcopy(profile.container), prepare=True
                             )
-                            if existing.runtime_ceiling >= desired or existing.active_requests:
+                            if (
+                                existing.parallelism_prepared
+                                or existing.runtime_ceiling >= desired
+                                or existing.active_requests
+                            ):
                                 existing.last_used = time.monotonic()
                                 if keep_loaded is not None:
                                     self.retain(profile, keep_loaded)
@@ -557,11 +567,22 @@ class OnDemandInference:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self.changed.wait(), timeout=1)
             try:
-                await self._start_runtime(profile, resident)
+                while True:
+                    try:
+                        await self._start_runtime(profile, resident)
+                        break
+                    except RuntimeCapacityError:
+                        if resident.runtime_ceiling <= 1:
+                            raise
+                        async with self.lock:
+                            await self._remove(profile, force=True)
+                            resident.runtime_ceiling = max(1, resident.runtime_ceiling // 2)
+                            self.residents[profile.id] = resident
                 async with self.lock:
                     if self.residents.get(profile.id) is not resident:
                         raise RuntimeError("Runtime residency changed during startup")
                     resident.status = "ready"
+                    resident.parallelism_prepared = True
                     resident.last_used = time.monotonic()
                     if keep_loaded is not None:
                         self.retain(profile, keep_loaded)
@@ -587,7 +608,9 @@ class OnDemandInference:
                 for flag in ("--gpu-memory-utilization", "--mem-fraction-static"):
                     if flag in command:
                         command[command.index(flag) + 1] = str(resident.fraction)
-        resident.runtime_ceiling = runtime_parallelism(payload, prepare=True)
+        resident.runtime_ceiling = runtime_parallelism(
+            payload, prepare=True, ceiling=resident.runtime_ceiling
+        )
         labels = payload.setdefault("Labels", {})
         labels["spark-cluster.reservation"] = json.dumps(
             {
@@ -598,6 +621,7 @@ class OnDemandInference:
             }
         )
         labels["spark-cluster.managed"] = "true"
+        labels["spark-cluster.adaptive-batching"] = "true"
         labels["spark-cluster.on-demand"] = profile.id
         labels["spark-cluster.model"] = profile.model
         labels["spark-cluster.model-id"] = profile.model_id or profile.model
@@ -616,6 +640,20 @@ class OnDemandInference:
                 state = await self.docker.request("GET", f"/containers/{container_id}/json")
                 resident.engine_image = state.json().get("Image") or payload.get("Image")
                 if not state.json().get("State", {}).get("Running"):
+                    logs = b""
+                    with contextlib.suppress(httpx.HTTPError, RuntimeError):
+                        response = await self.docker.request(
+                            "GET",
+                            f"/containers/{container_id}/logs",
+                            params={"stdout": "true", "stderr": "true", "tail": 64},
+                            allow={404},
+                            timeout=5,
+                        )
+                        logs = response.content
+                    if startup_capacity_failure(state.json().get("State", {}), logs):
+                        raise RuntimeCapacityError(
+                            "Runtime batching exceeded startup memory capacity"
+                        )
                     raise RuntimeError("Inference runtime exited during startup")
                 try:
                     response = await client.get(profile.upstream + profile.readiness_path)
