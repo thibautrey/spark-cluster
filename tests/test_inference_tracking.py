@@ -7,6 +7,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import ClientDisconnect
+from starlette.responses import StreamingResponse
 
 from spark_cluster.app import create_app
 from spark_cluster.config import Settings
@@ -171,6 +172,94 @@ async def test_cancellation_releases_active_tracking_and_keeps_event(tmp_path):
         await t.track(cancelled, "model", "v1/embeddings", {"method": "POST"}, None, None)
     assert not t.active
     assert t.recent[0]["outcome"] == "cancelled"
+    await t.stop()
+
+
+@pytest.mark.asyncio
+async def test_streaming_response_client_disconnect_is_cancelled(tmp_path):
+    t = tracker(tmp_path)
+    messages = asyncio.Queue()
+
+    async def receive():
+        return await messages.get()
+
+    async def send(message):
+        if message["type"] == "http.response.body" and message.get("body"):
+            await messages.put({"type": "http.disconnect"})
+
+    async def chunks():
+        yield b'data: {"choices":[{"delta":{"content":"```"}}]}\n\n'
+        await asyncio.Event().wait()
+
+    async def handler(scope, receive, send):
+        await StreamingResponse(chunks(), media_type="text/event-stream")(scope, receive, send)
+
+    await asyncio.wait_for(
+        t.track(
+            handler,
+            "model",
+            "v1/chat/completions",
+            {"type": "http", "method": "POST", "asgi": {"spec_version": "2.3"}},
+            receive,
+            send,
+        ),
+        timeout=2,
+    )
+    assert t.recent[0]["outcome"] == "cancelled"
+    assert t.recent[0]["status"] == 200
+    assert t.summary()["totals"]["failed"] == 0
+    assert not t.active
+    await t.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("finish", ["stop", "length", "error"])
+async def test_terminal_finish_event_is_observed_after_first_token(tmp_path, finish):
+    t = tracker(tmp_path)
+    await emit(
+        t,
+        [
+            b'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n',
+            ('data: {"choices":[{"delta":{},"finish_reason":"' + finish + '"}]}\n\n').encode(),
+        ],
+        "text/event-stream",
+    )
+    assert t.recent[0]["outcome"] == ("failed" if finish == "error" else "successful")
+    assert t.recent[0]["input_tokens"] is None
+    await t.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_error", [False, True])
+async def test_disconnect_does_not_hide_completed_generation_or_provider_error(
+    tmp_path, provider_error
+):
+    t = tracker(tmp_path)
+
+    async def handler(scope, receive, send):
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/event-stream")],
+            }
+        )
+        body = (
+            b'data: {"error":{"message":"provider failed"}}\n\n'
+            if provider_error
+            else b"data: [DONE]\n\n"
+        )
+        await send({"type": "http.response.body", "body": body, "more_body": True})
+        await receive()
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        pass
+
+    await t.track(handler, "model", "v1/chat/completions", {"method": "POST"}, receive, send)
+    assert t.recent[0]["outcome"] == ("failed" if provider_error else "successful")
     await t.stop()
 
 

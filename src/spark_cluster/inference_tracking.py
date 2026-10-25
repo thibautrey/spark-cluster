@@ -184,10 +184,18 @@ class InferenceTracker:
             record.started_at, record.start = arrival
         scope = dict(scope, **{SCOPE_KEY: record})
         self.active[record.id] = record
+
+        async def observed_receive():
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                record.client_disconnected = True
+            return message
+
         try:
-            return await handler(scope, receive, record.wrap_send(send))
+            return await handler(scope, observed_receive, record.wrap_send(send))
         except (asyncio.CancelledError, ClientDisconnect):
-            record.outcome = "cancelled"
+            if record.outcome != "failed" and (record.status is None or record.status < 400):
+                record.outcome = "cancelled"
             raise
         except BaseException:
             record.outcome = "failed"
@@ -329,6 +337,7 @@ class RequestRecord:
         self.overflow = False
         self.complete = False
         self.stream_ended = False
+        self.client_disconnected = False
         self.memory_start = None
 
     def dispatch(self, cluster_id=None):
@@ -361,6 +370,7 @@ class RequestRecord:
             for key in (
                 b'"usage"',
                 b'"error"',
+                b'"finish_reason"',
                 b"response.failed",
                 b".completed",
                 b".done",
@@ -391,6 +401,10 @@ class RequestRecord:
                 if isinstance(number, int) and number >= 0:
                     self.cached_tokens = number
         choices = value.get("choices")
+        if isinstance(choices, list) and any(
+            isinstance(c, dict) and c.get("finish_reason") == "error" for c in choices
+        ):
+            self.outcome = "failed"
         output = (
             any(
                 isinstance(c, dict)
@@ -494,12 +508,13 @@ class RequestRecord:
     def finish(self):
         end = self.last_body or time.perf_counter()
         duration = (end - self.start) * 1000
+        streaming = "text/event-stream" in self.content_type
+        delivered = self.stream_ended if streaming else self.complete
         outcome = self.outcome or (
             "successful"
-            if self.complete
-            and self.status is not None
-            and self.status < 400
-            and ("text/event-stream" not in self.content_type or self.stream_ended)
+            if delivered and self.status is not None and self.status < 400
+            else "cancelled"
+            if self.client_disconnected and (self.status is None or self.status < 400)
             else "failed"
         )
         decode = None
