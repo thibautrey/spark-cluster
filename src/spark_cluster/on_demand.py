@@ -21,6 +21,12 @@ from pydantic import BaseModel, Field, model_validator
 from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 
+from .adaptive_concurrency import (
+    AdaptiveConcurrency,
+    fingerprint,
+    response_feedback,
+    runtime_parallelism,
+)
 from .inference_tracking import mark_dispatch, request_stream_usage
 from .local_docker import DockerEngineClient
 from .pool_memory import (
@@ -50,6 +56,7 @@ class InferenceProfile(BaseModel):
     model: str
     model_id: str | None = None
     launch_settings: dict = Field(default_factory=dict)
+    model_revision: str | None = None
     listen_host: str = "127.0.0.1"
     listen_port: int = Field(ge=1024, le=65535)
     upstream_port: int = Field(ge=1024, le=65535)
@@ -105,6 +112,8 @@ class ResidentRuntime:
     last_used: float = field(default_factory=time.monotonic)
     active_requests: int = 0
     status: str = "starting"
+    runtime_ceiling: int = 64
+    engine_image: str | None = None
 
     def public(self):
         return {
@@ -142,6 +151,9 @@ class OnDemandInference:
         self.pending = 0
         self.last_error: str | None = None
         self.state_path = state_path
+        self.concurrency = AdaptiveConcurrency(
+            state_path.with_name("adaptive-concurrency.json") if state_path else None
+        )
         self.retained: set[str] = set()
         self.changed = asyncio.Event()
         self.dynamic: set[str] = set()
@@ -249,22 +261,55 @@ class OnDemandInference:
             self.usable_fraction,
         )
 
+    def admission_controller(self, resident):
+        profile = resident.profile
+        identity = fingerprint(
+            {
+                "model": profile.model_id or profile.model,
+                "revision": profile.model_revision,
+                "image": resident.engine_image or profile.container.get("Image"),
+                "command": profile.container.get("Cmd"),
+                "settings": profile.launch_settings,
+                "gpus": resident.gpu_ids,
+                "budget": resident.budget_gib,
+                "ceiling": resident.runtime_ceiling,
+            }
+        )
+        return self.concurrency.controller(profile.id, identity, resident.runtime_ceiling)
+
+    def resident_state(self, resident):
+        return dict(
+            resident.public(),
+            keep_loaded=resident.profile.id in self.retained,
+            concurrency=self.admission_controller(resident).public()
+            if resident.status == "ready"
+            else None,
+        )
+
     @contextlib.asynccontextmanager
-    async def lease(self, profile: InferenceProfile):
-        while True:
-            await self.ensure(profile, wait=True)
-            async with self.lock:
-                resident = self.residents.get(profile.id)
-                if resident and resident.status == "ready":
-                    resident.active_requests += 1
-                    break
-        try:
-            yield
-        finally:
-            async with self.lock:
-                resident.active_requests -= 1
-                resident.last_used = time.monotonic()
-                self.changed.set()
+    async def lease(self, profile: InferenceProfile, feedback=None):
+        await self.ensure(profile, wait=True)
+        resident = self.residents.get(profile.id)
+        if resident is None:
+            raise RuntimeError("Runtime was unloaded before admission")
+        controller = self.admission_controller(resident)
+        async with controller.slot(feedback) as admission:
+            while True:
+                async with self.lock:
+                    resident = self.residents.get(profile.id)
+                    if resident and resident.status == "ready":
+                        resident.active_requests += 1
+                        self.admission_controller(resident)
+                        break
+                await self.ensure(profile, wait=True)
+            admission.begin()
+            try:
+                yield admission
+            finally:
+                async with self.lock:
+                    resident.active_requests -= 1
+                    resident.last_used = time.monotonic()
+                    self.changed.set()
 
     def register(self, profile: InferenceProfile) -> None:
         if self.profile_for(profile.model_id or profile.model):
@@ -280,10 +325,7 @@ class OnDemandInference:
             "active_profiles": [
                 r.profile.id for r in self.residents.values() if r.status == "ready"
             ],
-            "resident_models": [
-                dict(r.public(), keep_loaded=r.profile.id in self.retained)
-                for r in self.residents.values()
-            ],
+            "resident_models": [self.resident_state(r) for r in self.residents.values()],
             "pending_requests": self.pending,
             "last_error": self.last_error,
             "profiles": [
@@ -403,6 +445,8 @@ class OnDemandInference:
                         resources.mode == "exclusive",
                         status="ready",
                     )
+                resident.runtime_ceiling = runtime_parallelism(actual.container)
+                resident.engine_image = details.get("Image") or profile.container.get("Image")
                 self.residents[profile.id] = resident
             listeners = [p for p in self.profiles if p.id not in self.dynamic]
             for profile, sock in zip(listeners, self.sockets, strict=True):
@@ -435,6 +479,7 @@ class OnDemandInference:
                     await self._remove(resident.profile)
         for sock in self.sockets:
             sock.close()
+        await self.concurrency.flush(force=True)
 
     async def reap(self) -> None:
         while True:
@@ -452,6 +497,7 @@ class OnDemandInference:
                         except Exception:
                             self.last_error = "Idle runtime cleanup failed; inspect controller logs"
                             logger.exception("On-demand idle cleanup failed")
+            await self.concurrency.flush()
 
     async def ensure(
         self, profile: InferenceProfile, *, wait=False, keep_loaded=None, _profile_locked=False
@@ -473,10 +519,20 @@ class OnDemandInference:
                         if state.status_code == 200 and state.json().get("State", {}).get(
                             "Running"
                         ):
-                            existing.last_used = time.monotonic()
-                            if keep_loaded is not None:
-                                self.retain(profile, keep_loaded)
-                            return
+                            actual = state.json()
+                            existing.runtime_ceiling = runtime_parallelism(actual.get("Config", {}))
+                            existing.engine_image = actual.get("Image") or profile.container.get(
+                                "Image"
+                            )
+                            desired = runtime_parallelism(
+                                copy.deepcopy(profile.container), prepare=True
+                            )
+                            if existing.runtime_ceiling >= desired or existing.active_requests:
+                                existing.last_used = time.monotonic()
+                                if keep_loaded is not None:
+                                    self.retain(profile, keep_loaded)
+                                return
+                            # Upgrade continuous-batching flags only after active streams drain.
                         await self._remove(profile)
                     gpus = await self.gpu_memory()
                     resources = self.resources_for(profile, gpus)
@@ -531,6 +587,7 @@ class OnDemandInference:
                 for flag in ("--gpu-memory-utilization", "--mem-fraction-static"):
                     if flag in command:
                         command[command.index(flag) + 1] = str(resident.fraction)
+        resident.runtime_ceiling = runtime_parallelism(payload, prepare=True)
         labels = payload.setdefault("Labels", {})
         labels["spark-cluster.reservation"] = json.dumps(
             {
@@ -557,6 +614,7 @@ class OnDemandInference:
         async with httpx.AsyncClient(timeout=3, trust_env=False) as client:
             while time.monotonic() < deadline:
                 state = await self.docker.request("GET", f"/containers/{container_id}/json")
+                resident.engine_image = state.json().get("Image") or payload.get("Image")
                 if not state.json().get("State", {}).get("Running"):
                     raise RuntimeError("Inference runtime exited during startup")
                 try:
@@ -615,11 +673,14 @@ class DemandProxy:
                 )
                 return
         forwarded = request_stream_usage(body, request.headers.get("content-type", ""), path)
+        scope, feedback, send = response_feedback(
+            scope, self.profile.model_id or self.profile.model, path, send
+        )
         self.manager.pending += 1
         response_started = False
         try:
             async with asyncio.timeout(1800):
-                async with self.manager.lease(self.profile):
+                async with self.manager.lease(self.profile, feedback):
                     mark_dispatch(scope)
                     query = scope.get("query_string", b"").decode("ascii")
                     raw_path = scope.get("raw_path", path.encode()).decode("ascii")

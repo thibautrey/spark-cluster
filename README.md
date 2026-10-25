@@ -124,7 +124,14 @@ and declared engine limits; an unknown budget keeps those devices exclusive.
 `/api/v1/inference/status` adds `active_profiles`. Singular active-model fields are
 populated only for a single resident. Runtime metrics include independent per-runtime
 samples; aggregate counters and rates are summed without mixing latency percentiles.
-The Kubernetes launcher keeps its existing exclusive behavior.
+The Kubernetes launcher keeps its existing exclusive model-residency behavior.
+
+[Automatic concurrency](docs/adaptive-concurrency.md) adjusts request admission per
+runtime from real traffic. It probes higher concurrency when aggregate throughput
+improves, backs off for latency regressions, overload and sustained KV-cache pressure,
+and periodically retests as conditions change. No user settings or synthetic warm-up
+requests are needed. Docker and Kubernetes requests can overlap while active streams
+protect their model from unloads. Placement status shows the learned limit and queue.
 
 ### Measured optimization lab
 

@@ -101,6 +101,7 @@
         <div class="pool-model-heading"><h3>${escapeHtml(model.id)}</h3><span class="pill ${loaded ? 'ready' : ''}">${retained && loaded ? 'Kept loaded' : retained ? 'Retention enabled' : loaded ? 'Loaded' : 'On demand'}</span></div>
         <p>${loaded ? model.placements.map(p => escapeHtml(p.cluster_name) + (p.gpu_ids?.length ? ` · ${p.gpu_ids.length} GPU · ${Object.values(p.budget_gib || {}).reduce((sum, value) => sum + value, 0).toFixed(1)} GiB` : '')).join(', ') : model.preferences.cluster_id ? `Required compute pool: ${escapeHtml(state.clusters.find(c => c.id === model.preferences.cluster_id)?.name || 'unavailable')}` : 'Automatic placement in the pool'}</p>
         <div class="pool-model-runtime"><span>⚡</span><div><b>${escapeHtml(runtimeName)}</b><small>${escapeHtml(runtimeState)}</small></div></div>
+        ${loaded ? `<small>${model.placements.filter(p => p.concurrency).map(p => `Automatic concurrency: ${p.concurrency.running} / ${p.concurrency.limit} active${p.concurrency.waiting ? ` · ${p.concurrency.waiting} waiting` : ''} · ${escapeHtml(p.concurrency.state)}`).join(' · ')}</small>` : ''}
         ${capacityMarkup(capacity)}
         ${loadProgressMarkup(visibleJob)}
         ${!visibleJob && last?.status === 'failed' ? `<p class="pool-error">${escapeHtml(last.message)}</p>` : ''}
