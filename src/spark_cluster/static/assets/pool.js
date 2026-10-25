@@ -141,7 +141,8 @@
 
   function render() {
     renderPoolOverview();
-    const eligible = state.models.filter(model => model.loadable || model.placements.length);
+    // Installed models stay visible so blocked launches can expose their requirements.
+    const eligible = state.models;
     updateFilters(eligible);
     const views = eligible.map(model => ({model, view: modelState(model), task: modelTask(model)}));
     const running = views.filter(item => item.view.id === 'running' || item.view.id === 'launching').length;
