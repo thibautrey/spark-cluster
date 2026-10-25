@@ -1268,7 +1268,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         async def replay_receive():
             nonlocal delivered
             if delivered:
-                return {"type": "http.disconnect"}
+                # StreamingResponse listens for the real client disconnect in parallel with
+                # upstream bytes. A synthetic disconnect here cancels every valid SSE stream.
+                return await request.receive()
             delivered = True
             return {"type": "http.request", "body": forwarded, "more_body": False}
 
