@@ -15,6 +15,9 @@ let catalogSheetCloseTimer = null;
 let catalogFilterOpener = null;
 let catalogFilterCloseTimer = null;
 
+// Model details can be opened from routes outside the model library.
+document.body.append($('catalog-sheet'));
+
 function openCatalogSheet(opener, title = 'Model details') {
   const wasHidden = $('catalog-sheet').hidden;
   clearTimeout(catalogSheetCloseTimer);
