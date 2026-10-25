@@ -63,6 +63,7 @@ class InferenceProfile(BaseModel):
     listen_port: int = Field(ge=1024, le=65535)
     upstream_port: int = Field(ge=1024, le=65535)
     readiness_path: str = "/health"
+    preload_path: str | None = None
     idle_seconds: float = Field(default=120, ge=1)
     startup_seconds: float = Field(default=900, ge=1)
     container: dict
@@ -74,6 +75,10 @@ class InferenceProfile(BaseModel):
             raise ValueError("Inference listener and runtime must use different ports")
         if not self.readiness_path.startswith("/"):
             raise ValueError("Readiness path must be relative")
+        if self.preload_path is not None and (
+            not self.preload_path.startswith("/") or self.preload_path.startswith("//")
+        ):
+            raise ValueError("Preload path must be relative to the runtime")
         return self
 
     @property
@@ -658,6 +663,18 @@ class OnDemandInference:
                 try:
                     response = await client.get(profile.upstream + profile.readiness_path)
                     if response.status_code in {200, 401, 403}:
+                        if profile.preload_path:
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                break
+                            loaded = await client.post(
+                                profile.upstream + profile.preload_path, timeout=remaining
+                            )
+                            if not loaded.is_success:
+                                raise RuntimeError(
+                                    "Runtime model preload failed "
+                                    f"(HTTP {loaded.status_code})"
+                                )
                         self.last_error = None
                         return
                 except httpx.HTTPError:
