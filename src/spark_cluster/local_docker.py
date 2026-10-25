@@ -220,10 +220,7 @@ class DockerEngineClient:
         """Read model-to-GPU placement from running Spark Cluster containers."""
         filters = json.dumps(
             {
-                "label": [
-                    "spark-cluster.managed=true",
-                    f"spark-cluster.cluster-id={cluster.id}",
-                ]
+                "label": ["spark-cluster.managed=true"]
             }
         )
         try:

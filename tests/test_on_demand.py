@@ -60,6 +60,9 @@ async def test_switch_removes_previous_runtime_and_disables_restart(monkeypatch)
     config = docker.containers[second.name]["Config"]
     assert config["HostConfig"]["RestartPolicy"] == {"Name": "no"}
     assert config["Healthcheck"]["Test"] == ["NONE"]
+    assert config["Labels"]["spark-cluster.managed"] == "true"
+    assert config["Labels"]["spark-cluster.on-demand"] == "second"
+    assert config["Labels"]["spark-cluster.model-id"] == "test-model"
     assert "container" not in json.dumps(manager.status())
 
 
