@@ -1226,6 +1226,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     async def global_openai_inference(request: Request, path: str):
         request.scope["spark.arrival"] = (time.time(), time.perf_counter())
+        request.scope["spark.client_request"] = request
         body = await request.body()
         content_type = request.headers.get("content-type", "")
         reference = request.headers.get("x-spark-model") or request.query_params.get("model")

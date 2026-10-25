@@ -12,7 +12,7 @@ from uuid import uuid4
 
 import httpx
 from pydantic import BaseModel, Field
-from starlette.requests import Request
+from starlette.requests import ClientDisconnect, Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
 
 from .inference_tracking import mark_dispatch, request_stream_usage
@@ -1172,6 +1172,9 @@ class ModelPool:
             job = await self.enqueue(PoolLoadRequest(model_id=model_id))
         async with asyncio.timeout(1800):
             while job["status"] not in {"ready", "failed", "cancelled"}:
+                client = scope.get("spark.client_request")
+                if client and await client.is_disconnected():
+                    raise ClientDisconnect
                 await asyncio.sleep(0.2)
             if job["status"] != "ready":
                 await JSONResponse({"error": job["message"]}, status_code=503)(scope, receive, send)

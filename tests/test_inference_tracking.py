@@ -1,10 +1,12 @@
 import asyncio
 import json
 import sqlite3
+from types import SimpleNamespace
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import ClientDisconnect
 
 from spark_cluster.app import create_app
 from spark_cluster.config import Settings
@@ -17,8 +19,31 @@ from spark_cluster.inference_tracking import (
     mark_dispatch,
     request_stream_usage,
 )
+from spark_cluster.model_pool import ModelPool
 from spark_cluster.store import SnapshotStore
 from spark_cluster.telemetry import InferenceTelemetryService
+
+
+@pytest.mark.asyncio
+async def test_disconnected_client_cancels_while_waiting_for_pool():
+    pool = ModelPool.__new__(ModelPool)
+    pool.preferences = {}
+    pool.reserved = set()
+
+    async def disconnected():
+        return True
+
+    async def inventory():
+        return {"clusters": [], "models": [], "jobs": []}
+
+    async def enqueue(request):
+        return {"status": "loading"}
+
+    pool.inventory = inventory
+    pool.enqueue = enqueue
+    scope = {"spark.client_request": SimpleNamespace(is_disconnected=disconnected)}
+    with pytest.raises(ClientDisconnect):
+        await pool._infer("org/model", "v1/chat/completions", scope, None, None)
 
 
 def tracker(tmp_path, **kwargs):
