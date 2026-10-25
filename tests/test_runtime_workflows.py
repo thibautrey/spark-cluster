@@ -133,6 +133,9 @@ async def test_guided_runtime_workflow_reuses_cache_installs_and_activates(tmp_p
     assert service.library.local_images == [Remote.metadata]
     assert completed.artifact_id is None
     assert prerequisites.activation("local-1", "sglang")["digest"] == Remote.metadata["digest"]
+    assert prerequisites.activation("local-1", "sglang")["image"] == (
+        Remote.metadata["repository"] + "@" + Remote.metadata["digest"]
+    )
     assert prerequisites.activation("local-1", "sglang")["artifact_id"] is None
     store.close()
 
