@@ -530,6 +530,21 @@ class DockerEngineClient:
                     name.endswith("Model") for name in architectures
                 ):
                     command.extend(["--runner", "pooling"])
+                    native = config.get("hidden_size")
+                    if isinstance(native, int) and native > 0 and not config.get("is_matryoshka"):
+                        # vLLM gates even an unchanged native dimensions parameter on
+                        # Matryoshka metadata. Permit only the native output size.
+                        command.extend(
+                            [
+                                "--hf-overrides",
+                                json.dumps(
+                                    {
+                                        "is_matryoshka": True,
+                                        "matryoshka_dimensions": [native],
+                                    }
+                                ),
+                            ]
+                        )
             except (OSError, ValueError):
                 pass
         device_ids = [

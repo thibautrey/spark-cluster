@@ -528,3 +528,36 @@ def test_small_eager_pooling_reduces_workspace_without_removing_gpu_weight_budge
     assert PoolNode.resources_for_fit(
         launch, fit, Settings(active_hardware="nvidia-gpu")
     ).required_gib_per_gpu == pytest.approx(3.16)
+
+
+def test_pooling_native_dimensions_override_cannot_advertise_truncation(tmp_path):
+    settings = Settings(model_cache_path=tmp_path, docker_host_model_path="/models")
+    path = tmp_path / "model"
+    path.mkdir()
+    (path / "config.json").write_text('{"architectures":["Qwen3Model"],"hidden_size":4096}')
+    cluster = ClusterTarget(
+        id="local",
+        name="local",
+        kind="local-docker",
+        gpu_count=1,
+        gpus=[GPUDevice(index=0, uuid="gpu-0", name="GPU", memory_gib=8)],
+    )
+    payload = DockerEngineClient(settings).runtime_payload(
+        cluster=cluster,
+        image="runtime:pinned",
+        model_path=str(path),
+        served_model_name="embedding",
+        context_length=8192,
+        tensor_parallel=1,
+        pipeline_parallel=1,
+        gpu_memory_utilization=0.4,
+        kv_cache_dtype="auto",
+        max_num_seqs=1,
+        max_num_batched_tokens=1024,
+        expert_parallel=False,
+        chunked_prefill=True,
+    )
+    import json
+
+    config = json.loads(payload["Cmd"][payload["Cmd"].index("--hf-overrides") + 1])
+    assert config["matryoshka_dimensions"] == [4096]
