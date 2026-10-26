@@ -724,6 +724,7 @@ def test_explicit_ram_offload_changes_gpu_budget_but_requires_host_memory(tmp_pa
         fallback_node_memory_gib=8,
     )
     data = metadata(weight_gib=8, files=(("model.safetensors", 8 * GIB),))
+    data.config.update(vocab_size=32000, hidden_size=4096)
     request = ModelFitRequest(repo_id="acme/model", context_length=512, cpu_offload_gib=4)
     fit = build_fit_plan(request, data, None, settings)
     assert fit.placement_strategy == "cpu-offload"
@@ -799,3 +800,27 @@ def test_gguf_layer_reader_is_bounded_and_reads_architecture_block_count(tmp_pat
     assert gguf_layer_count(tmp_path) == 32
     path.write_bytes(b"GGUF" + struct.pack("<IQQQ", 3, 0, 1, 2**63))
     assert gguf_layer_count(tmp_path) is None
+
+
+def test_weight_offload_preserves_unquantized_embedding_residency(tmp_path, monkeypatch):
+    monkeypatch.setattr("spark_cluster.model_manager.host_memory_available_gib", lambda: 40)
+    settings = Settings(
+        model_cache_path=tmp_path,
+        active_hardware="nvidia-gpu",
+        fallback_node_count=1,
+        fallback_node_memory_gib=8,
+    )
+    data = metadata(
+        weight_gib=4.5,
+        files=(("model.safetensors", int(4.5 * GIB)),),
+        pipeline_tag="feature-extraction",
+    )
+    data.config.update(vocab_size=151936, hidden_size=4096)
+    fit = build_fit_plan(
+        ModelFitRequest(repo_id="acme/model", context_length=512, cpu_offload_gib=4),
+        data,
+        None,
+        settings,
+    )
+    assert fit.resident_weights_gib > 1.15
+    assert 3.3 < fit.offloaded_weights_gib < 3.4

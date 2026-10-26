@@ -977,7 +977,26 @@ def build_fit_plan(
             else:
                 # Amount is per GPU rank. Reserve this allowance for every assigned GPU.
                 ranks = request.offload_ranks
-                offloaded_weights = min(complete_weights_gib, request.cpu_offload_gib * ranks)
+                vocab = int(model_config.get("vocab_size") or 0)
+                hidden = int(model_config.get("hidden_size") or 0)
+                # vLLM offloads transformer layers; embedding/output tensors stay on GPU.
+                # Quantized checkpoints commonly retain those tensors in FP16/BF16.
+                heads = (
+                    1
+                    if model_config.get("tie_word_embeddings")
+                    or pipeline in {"feature-extraction", "sentence-similarity"}
+                    else 2
+                )
+                non_layer_weights = vocab * hidden * 2 * heads / GIB
+                if not vocab or not hidden:
+                    non_layer_weights = complete_weights_gib
+                    requirements.append(
+                        "Vocabulary and hidden dimensions are needed to budget weight offload."
+                    )
+                offloaded_weights = min(
+                    max(0.0, complete_weights_gib - non_layer_weights),
+                    request.cpu_offload_gib * ranks,
+                )
                 resident_weights = complete_weights_gib - offloaded_weights
                 host_required = request.cpu_offload_gib * ranks + 1.0
                 engine = "Runtime with CPU weight offload"
@@ -1149,6 +1168,14 @@ class ModelManager:
         layers = previous.model_layers
         if request.gpu_layers is not None and not layers:
             layers = await asyncio.to_thread(gguf_layer_count, model_path)
+        local_config = {"num_hidden_layers": layers} if layers else {}
+        if request.cpu_offload_gib:
+            try:
+                local_config = await asyncio.to_thread(
+                    lambda: json.loads((model_path / "config.json").read_text())
+                )
+            except (OSError, ValueError):
+                pass
         metadata = RepositoryMetadata(
             repo_id=request.repo_id,
             revision=request.revision,
@@ -1157,7 +1184,7 @@ class ModelManager:
             weight_bytes=previous.weight_bytes,
             parameter_count=previous.parameter_count,
             architecture=previous.architecture,
-            config={"num_hidden_layers": layers} if layers else {},
+            config=local_config,
             files=tuple(
                 (str(file.relative_to(model_path)), file.stat().st_size)
                 for file in model_path.rglob("*.gguf")
