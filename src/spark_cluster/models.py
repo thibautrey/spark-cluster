@@ -20,6 +20,24 @@ class MemoryStats(BaseModel):
         return 0 if self.total_gib == 0 else min(100, self.used_gib / self.total_gib * 100)
 
 
+class CpuCoreLoad(BaseModel):
+    id: int = Field(ge=0)
+    utilization: float | None = Field(default=None, ge=0, le=100)
+
+
+class HostResources(BaseModel):
+    id: str
+    hostname: str
+    ram_total_gib: float | None = Field(default=None, ge=0)
+    ram_used_gib: float | None = Field(default=None, ge=0)
+    ram_available_gib: float | None = Field(default=None, ge=0)
+    cpu_physical_cores: int | None = Field(default=None, ge=1)
+    cpu_logical_cores: int | None = Field(default=None, ge=1)
+    cpu_utilization: float | None = Field(default=None, ge=0, le=100)
+    cpu_cores: list[CpuCoreLoad] = Field(default_factory=list)
+    last_seen: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+
 class NodeSnapshot(BaseModel):
     id: str
     hostname: str
@@ -27,6 +45,7 @@ class NodeSnapshot(BaseModel):
     status: NodeStatus = "healthy"
     address: str
     memory: MemoryStats
+    host: HostResources | None = None
     gpu_utilization: float = Field(ge=0, le=100)
     temperature_c: float = Field(ge=0)
     input_tokens_per_second: float = Field(default=0, ge=0)

@@ -2,6 +2,7 @@ import os
 import socket
 from datetime import UTC, datetime
 
+from .host_resources import collect_host_resources
 from .models import MemoryStats, NodeSnapshot
 
 
@@ -31,6 +32,7 @@ def collect_node(node_id: str | None = None, role: str = "worker") -> NodeSnapsh
     return NodeSnapshot(
         id=node_id or hostname,
         hostname=hostname,
+        host=collect_host_resources(hostname, hostname),
         role=role,  # type: ignore[arg-type]
         address=socket.gethostbyname(hostname),
         memory=MemoryStats(

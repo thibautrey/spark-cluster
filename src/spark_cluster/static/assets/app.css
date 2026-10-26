@@ -455,3 +455,30 @@ body[data-route="runtimes"] [data-route-view="runtimes"]{display:block!important
 .performance-toolbar{display:flex;gap:12px;align-items:end;flex-wrap:wrap;padding:16px 24px;border-bottom:1px solid #263d34}.performance-toolbar label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:#9db3ab}.performance-toolbar select{max-width:min(380px,78vw);padding:9px 12px;background:#111e19;color:#e2eee7;border:1px solid #365344;border-radius:7px}.performance-toolbar span{font-size:12px;color:#9db3ab;margin-left:auto}
 .performance-body{padding:24px;overflow:auto;overscroll-behavior:contain}.performance-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.performance-cards article{padding:16px;border:1px solid #2c4338;border-radius:10px;background:#111d18;display:flex;flex-direction:column;gap:9px}.performance-cards article>span{font-size:12px;color:#b4c7bd}.performance-cards strong{font-size:23px;font-weight:600;overflow-wrap:anywhere}.performance-cards small{font-size:11px;color:#91a99c}.performance-charts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px}.performance-chart{margin:0;padding:16px;background:#0d1814;border:1px solid #253c30;border-radius:10px;min-width:0}.performance-chart figcaption{display:flex;justify-content:space-between;font-size:13px}.performance-chart figcaption small,.performance-chart-times{font-size:10px;color:#91a99c}.performance-chart svg{width:100%;display:block;margin-top:12px}.performance-chart svg text{fill:#91a99c;font-size:10px}.performance-axis{stroke:#304c3f;fill:none}.performance-line{stroke:#8cdeb1;stroke-width:2;fill:none}.performance-chart circle{fill:#8cdeb1}.performance-chart-times{display:flex;justify-content:space-between;gap:8px}.performance-empty{padding:26px 0;color:#a8bdb0;font-size:13px;line-height:1.6}.performance-runtime{margin-top:24px}.performance-runtime h4,.performance-browse h4{font-size:13px;margin:12px 0}.performance-runtime p,.performance-note{font-size:12px;line-height:1.7;color:#96ada0}.performance-runtime dl{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.performance-runtime dt{font-size:11px;color:#96ada0}.performance-runtime dd{margin:6px 0;font-size:15px}.performance-browse{margin:20px 0}.performance-browse .performance-trigger{margin:0 6px 6px 0}.performance-note{border-top:1px solid #263d34;padding-top:14px}.inference-model-row .performance-trigger{white-space:nowrap}.launch-model-card footer{flex-wrap:wrap}
 @media(max-width:780px){.performance-panel{width:100vw}.performance-body{padding:16px}.performance-toolbar{padding:12px 16px}.performance-cards{grid-template-columns:repeat(2,minmax(0,1fr))}.performance-charts{grid-template-columns:1fr}.performance-cards strong{font-size:20px}.performance-runtime dl{grid-template-columns:1fr 1fr}.performance-toolbar span{margin-left:0;width:100%}}
+
+/* Physical host resources are shown once, alongside the GPU view. */
+.metrics .machine-memory-metric,.metrics .host-cpu-metric{min-height:210px}
+.machine-memory-metric .machine-ram-row{margin-top:26px;padding-top:10px;border-top:1px solid var(--line)}
+.machine-ram-row>span{font-size:11px;color:var(--muted)}
+.machine-ram-row strong{margin:5px 0 8px;font-size:23px}
+.host-ram-track{height:4px;background:#202938;border-radius:4px;overflow:hidden}
+.host-ram-track i{display:block;height:100%;background:#77a9e8;transition:width .4s}
+.host-cpu-heading{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.host-cpu-heading strong{margin-top:12px}
+.host-cpu-heading>small{font:10px DM Mono;color:var(--muted)}
+.host-cpu-cores{margin-top:12px;max-height:116px;overflow-y:auto}
+.cpu-machine>small{display:block;margin:5px 0;color:var(--muted);font-size:10px}
+.cpu-core-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(40px,1fr));gap:4px}
+.cpu-core{position:relative;display:flex;justify-content:space-between;gap:3px;padding:5px 4px 7px;border:1px solid #253044;border-radius:4px;font:9px DM Mono;overflow:hidden}
+.cpu-core small{font:inherit;color:var(--muted)}.cpu-core b{font-weight:400}.cpu-core i{position:absolute;bottom:0;left:0;height:2px;background:var(--green)}.cpu-core.busy i{background:#e8b46b}
+.host-resource-list{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.host-resource{display:flex;gap:14px;align-items:center;flex-wrap:wrap;font:11px DM Mono;color:var(--muted)}
+.host-resource-name{color:var(--text);font-weight:500}.host-resource strong{color:var(--text);font-weight:400;margin-left:5px}.host-resource small{display:block;margin-top:4px;font-size:9px;color:var(--muted)}
+.host-memory-grid{display:grid;gap:20px;padding-bottom:24px;margin-bottom:24px;border-bottom:1px solid var(--line)}
+.host-memory>small,.host-unavailable{display:block;color:var(--muted);font:10px DM Mono;margin-top:9px}
+.launch-host-summary{margin-top:12px}.launch-host-summary .host-resource-name{display:none}
+@media(max-width:900px){.metrics .machine-memory-metric,.metrics .host-cpu-metric{min-height:210px}.host-cpu-cores{max-height:150px}}
+
+#overview.metrics{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:1100px){#overview.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){#overview.metrics{grid-template-columns:1fr}}
