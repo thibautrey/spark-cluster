@@ -291,6 +291,7 @@ class PoolNode:
         overhead = max(2.0 if settings.active_hardware == "nvidia-gpu" else 8.0, weights * 0.08)
         return RuntimeResources(
             gpu_count=ranks,
+            host_memory_gib=getattr(fit, "host_memory_gib", 0),
             required_gib_per_gpu=weights + kv + overhead,
             memory_fraction=launch.gpu_memory_utilization,
             mode=launch.memory_budget_mode,
@@ -359,6 +360,9 @@ class PoolNode:
                 if gpus is not None
                 else launch.concurrent_sequences,
                 kv_cache_dtype=launch.kv_cache_dtype,
+                cpu_offload_gib=launch.cpu_offload_gib,
+                offload_ranks=launch.tensor_parallel * launch.pipeline_parallel,
+                gpu_layers=launch.gpu_layers,
             )
             fit = await self.models.fit_for_local(request)
         elif manifest_fit:
@@ -380,6 +384,7 @@ class PoolNode:
                 fit = manifest_fit
         else:
             return None
+        model["loadable"] = fit.launch_supported
         required_gib = (
             fit.resident_weights_gib + fit.resident_kv_cache_gib + fit.runtime_overhead_gib
         )
@@ -405,6 +410,8 @@ class PoolNode:
                 missing_gib=0.0 if allocation.gpu_ids else None,
                 context_length=fit.context_length,
                 confidence=fit.confidence,
+                host_memory_gib=fit.host_memory_gib,
+                degraded=fit.placement_strategy == "cpu-offload",
             )
             if not allocation.gpu_ids:
                 result["required_gib"] = (
@@ -648,6 +655,9 @@ class PoolNode:
                 context_length=launch.context_length,
                 concurrent_sequences=max(launch.concurrent_sequences, launch.max_num_seqs),
                 kv_cache_dtype=launch.kv_cache_dtype,
+                cpu_offload_gib=launch.cpu_offload_gib,
+                offload_ranks=launch.tensor_parallel * launch.pipeline_parallel,
+                gpu_layers=launch.gpu_layers,
             )
         )
         if not fit.fits:
@@ -692,6 +702,8 @@ class PoolNode:
                 max_num_batched_tokens=launch.max_num_batched_tokens,
                 expert_parallel=launch.expert_parallel,
                 chunked_prefill=launch.chunked_prefill,
+                cpu_offload_gib=launch.cpu_offload_gib,
+                gpu_layers=launch.gpu_layers,
             )
             payload["Labels"]["spark-cluster.model-id"] = request.model_id
             # Bind only loopback; inference is routed through the authenticated pool gateway.
@@ -1054,6 +1066,30 @@ class ModelPool:
             m["last_settings"] = (
                 prefs.last_settings.model_dump() if prefs.last_settings else m["last_settings"]
             )
+            if prefs.last_settings and m.get("editable_settings") and not m["placements"]:
+                for capacity in m["cluster_capacity"]:
+                    if not capacity["available"]:
+                        continue
+                    try:
+                        check = await self.call(self.cluster(capacity["cluster_id"]), "plan", {
+                            "model_id": m["id"], "settings": prefs.last_settings.model_dump(),
+                        })
+                        placement = check.get("placement") or {}
+                        capacity.update(placement)
+                        capacity["fits"] = bool(check["compatible"] and not check.get("waiting"))
+                        capacity["can_load"] = check["compatible"]
+                        capacity["reason"] = check.get("reason")
+                        if check.get("runtime"):
+                            m["runtime"] = check["runtime"]
+                        capacity["degraded"] = bool(
+                            prefs.last_settings.cpu_offload_gib
+                            or prefs.last_settings.gpu_layers is not None
+                        )
+                    except (httpx.HTTPError, ValueError, RuntimeError):
+                        capacity.update(fits=False, can_load=False, reason="Cluster preflight unavailable")
+                m["available_clusters"] = [
+                    c["cluster_id"] for c in m["cluster_capacity"] if c.get("fits")
+                ]
             if m["last_settings"]:
                 served = m["last_settings"].get("served_model_name")
                 if served:

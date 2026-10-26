@@ -101,6 +101,9 @@ class ModelFitRequest(BaseModel):
     context_length: int = Field(default=131072, gt=0, le=1_048_576)
     concurrent_sequences: int = Field(default=1, gt=0, le=1024)
     kv_cache_dtype: Literal["auto", "bf16", "fp8_e4m3"] = "auto"
+    offload_ranks: int = Field(default=1, ge=1, le=64)
+    cpu_offload_gib: float = Field(default=0, ge=0, le=512)
+    gpu_layers: int | None = Field(default=None, ge=0, le=10000)
 
 
 class ModelFitPlan(BaseModel):
@@ -148,6 +151,7 @@ class ModelFitPlan(BaseModel):
         "engram-nvme",
         "kv-offload",
         "expert-offload",
+        "cpu-offload",
         "mmap",
         "unsupported",
     ] = "full-memory"
@@ -156,6 +160,8 @@ class ModelFitPlan(BaseModel):
     detected_bits_per_weight: float | None = None
     library_name: str | None = None
     pipeline_tag: str | None = None
+    model_layers: int | None = None
+    host_memory_gib: float = 0
     resident_weights_gib: float = 0
     offloaded_weights_gib: float = 0
     resident_kv_cache_gib: float = 0
@@ -285,6 +291,8 @@ class ModelLaunchRequest(BaseModel):
     pipeline_parallel: int = Field(default=1, gt=0, le=64)
     gpu_memory_utilization: float = Field(default=0.82, gt=0, lt=1)
     memory_budget_mode: Literal["auto", "fixed"] = "auto"
+    cpu_offload_gib: float = Field(default=0, ge=0, le=512)
+    gpu_layers: int | None = Field(default=None, ge=0, le=10000)
     optimization_profile: Literal["balanced", "latency", "throughput", "long-context"] = "balanced"
     kv_cache_dtype: Literal["auto", "fp8_e4m3"] = "auto"
     max_num_seqs: int = Field(default=4, gt=0, le=1024)
@@ -326,6 +334,8 @@ class ModelLaunchRequest(BaseModel):
 
     @model_validator(mode="after")
     def scheduler_covers_requested_concurrency(self):
+        if self.cpu_offload_gib and self.gpu_layers is not None:
+            raise ValueError("Choose RAM weight offload or CPU/GPU layers, not both")
         if self.max_num_seqs < self.concurrent_sequences:
             self.max_num_seqs = self.concurrent_sequences
         if self.speculative_method == "off":

@@ -215,6 +215,10 @@
     field('pool-tensor').value = settings?.tensor_parallel || 1;
     field('pool-pipeline').value = settings?.pipeline_parallel || 1;
     field('pool-memory').value = settings?.gpu_memory_utilization || 0.82;
+    field('pool-cpu-offload').value = settings?.cpu_offload_gib || 0;
+    field('pool-gpu-layers').value = settings?.gpu_layers ?? '';
+    field('pool-offload-field').hidden = !['vllm', 'sglang'].includes(runtime?.engine_id);
+    field('pool-layers-field').hidden = runtime?.engine_id !== 'llama-cpp';
     field('pool-memory-mode').value = settings?.memory_budget_mode || (settings ? 'fixed' : 'auto');
     field('pool-served-name').value = settings?.served_model_name || model.id.split('/').at(-1);
     sheet.hidden = false;
@@ -257,6 +261,8 @@
       context_length: Number(field('pool-context').value), tensor_parallel: Number(field('pool-tensor').value),
       pipeline_parallel: Number(field('pool-pipeline').value), gpu_memory_utilization: Number(field('pool-memory').value),
       memory_budget_mode: field('pool-memory-mode').value,
+      cpu_offload_gib: field('pool-offload-field').hidden ? 0 : Number(field('pool-cpu-offload').value),
+      gpu_layers: field('pool-layers-field').hidden || field('pool-gpu-layers').value === '' ? null : Number(field('pool-gpu-layers').value),
     } : null;
     try {
       await api(`/api/v1/pool/models/${encodeURIComponent(editing.id)}/settings`, {method: 'PUT', headers: auth(), body: JSON.stringify({keep_loaded: field('pool-keep-loaded').checked, cluster_id: field('pool-cluster').value || null, last_settings: lastSettings})});

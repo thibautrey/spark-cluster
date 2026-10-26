@@ -45,6 +45,7 @@ from .pool_memory import (
     RuntimeResources,
     gpu_availability,
     imported_resources,
+    host_memory_available_gib,
     plan_memory,
 )
 
@@ -133,6 +134,8 @@ class ResidentRuntime:
             "model_id": self.profile.model_id or self.profile.model,
             "gpu_ids": self.gpu_ids,
             "budget_gib": self.budget_gib,
+            "host_memory_gib": self.profile.resources.host_memory_gib
+            if self.profile.resources else 0,
             "gpu_memory_utilization": self.fraction,
             "active_requests": self.active_requests,
             "status": self.status,
@@ -275,6 +278,7 @@ class OnDemandInference:
             self.residents,
             self.retained,
             self.usable_fraction,
+            host_available_gib=await asyncio.to_thread(host_memory_available_gib),
         )
 
     def admission_controller(self, resident):

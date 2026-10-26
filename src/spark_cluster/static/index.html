@@ -378,6 +378,8 @@
                     <label class="pool-field">Context tokens<input id="pool-context" type="number" min="1" max="1048576" /></label>
                     <label class="pool-field">Memory budget<select id="pool-memory-mode"><option value="auto">Automatic — size for this workload</option><option value="fixed">Fixed memory fraction</option></select></label>
                     <label class="pool-field">GPU memory limit<input id="pool-memory" type="number" min="0.01" max="0.99" step="0.01" /></label>
+                    <label class="pool-field" id="pool-offload-field">RAM weight offload (GiB per GPU)<input id="pool-cpu-offload" type="number" min="0" max="512" step="0.25" value="0" /><small>Weights stay in RAM and transfer to GPU for computation. Slower inference.</small></label>
+                    <label class="pool-field" id="pool-layers-field">Layers on GPU<input id="pool-gpu-layers" type="number" min="0" max="10000" placeholder="All layers" /><small>llama.cpp runs the remaining layers and KV operations on CPU. Leave blank for GPU mode.</small></label>
                     <label class="pool-field">Tensor parallel<input id="pool-tensor" type="number" min="1" max="64" /></label>
                     <label class="pool-field">Pipeline parallel<input id="pool-pipeline" type="number" min="1" max="64" /></label>
                   </div>

@@ -285,8 +285,22 @@ def build_execution_plan(
         if not any(managed_path.rglob("config.pbtxt")):
             blockers.append("Triton requires a model repository containing config.pbtxt.")
 
+    if request.cpu_offload_gib:
+        if engine_id not in {"vllm", "sglang"}:
+            blockers.append(f"{engine.name} does not support CPU weight offload through this adapter.")
+        warnings.append("Degraded mode transfers weights from RAM; inference may be much slower.")
+    if request.gpu_layers is not None:
+        if engine_id != "llama-cpp":
+            blockers.append("CPU/GPU layer splitting is available only with llama.cpp.")
+        warnings.append("Degraded mode runs RAM-resident layers and KV operations on CPU.")
+    if (request.cpu_offload_gib or request.gpu_layers is not None) and cluster_kind != "local-docker":
+        blockers.append("Degraded loading requires a local Docker pool with host RAM admission.")
+
     environment = {
         "ENGINE_ID": engine_id,
+        "CPU_OFFLOAD_GIB": str(request.cpu_offload_gib),
+        "GPU_LAYERS": str(request.gpu_layers if request.gpu_layers is not None else 999),
+        "CPU_KV": "1" if request.gpu_layers is not None else "0",
         "MODEL_ID": model_path,
         "SERVED_MODEL_NAME": request.served_model_name,
         "MAX_MODEL_LEN": str(request.context_length),
@@ -320,6 +334,10 @@ def build_execution_plan(
         environment["SPECULATIVE_CONFIG"] = ""
 
     command = _command_preview(engine_id, request)
+    if request.cpu_offload_gib and engine_id in {"vllm", "sglang"}:
+        command.extend(["--cpu-offload-gb", str(request.cpu_offload_gib)])
+    if request.gpu_layers is not None and engine_id == "llama-cpp":
+        command.extend(["--n-gpu-layers", str(request.gpu_layers), "--no-kv-offload"])
     exposed = (
         ["Triton V2 API"] if engine.inference_protocol == "triton" else ["OpenAI-compatible API"]
     )
@@ -466,6 +484,7 @@ def container_launch_script(engine_id: str) -> str:
             "--kv-transfer-config "
             '\'{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"}\' '
             '--host 0.0.0.0 --port "$RUNTIME_PORT"',
+            'if test "${CPU_OFFLOAD_GIB:-0}" != 0; then set -- "$@" --cpu-offload-gb "$CPU_OFFLOAD_GIB"; fi',
             'if test -n "$SPECULATIVE_CONFIG"; then set -- "$@" '
             '--speculative-config "$SPECULATIVE_CONFIG"; fi',
             'if test "$CUDA_GRAPHS" != 1; then set -- "$@" --enforce-eager; fi',
@@ -491,9 +510,11 @@ def container_launch_script(engine_id: str) -> str:
             'if test -f "$MODEL_ID"; then model_file="$MODEL_ID"; else '
             "model_file=$(find \"$MODEL_ID\" -type f -name '*.gguf' -print | sort | head -n 1); fi",
             "test -n \"$model_file\" || { echo 'No GGUF file found' >&2; exit 64; }",
-            'exec /app/llama-server --model "$model_file" --alias "$SERVED_MODEL_NAME" '
+            'set -- --model "$model_file" --alias "$SERVED_MODEL_NAME" '
             '--host 0.0.0.0 --port "$RUNTIME_PORT" --ctx-size "$MAX_MODEL_LEN" '
-            '--parallel "$MAX_NUM_SEQS" --n-gpu-layers 999',
+            '--parallel "$MAX_NUM_SEQS" --n-gpu-layers "${GPU_LAYERS:-999}"',
+            'if test "${CPU_KV:-0}" = 1; then set -- "$@" --no-kv-offload; fi',
+            'exec /app/llama-server "$@"',
         ),
         "ollama": script(
             'export OLLAMA_HOST="0.0.0.0:$RUNTIME_PORT"',

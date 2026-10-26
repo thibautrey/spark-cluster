@@ -435,6 +435,8 @@ class DockerEngineClient:
         max_num_batched_tokens: int,
         expert_parallel: bool,
         chunked_prefill: bool,
+        cpu_offload_gib: float = 0,
+        gpu_layers: int | None = None,
     ) -> dict:
         if tensor_parallel * pipeline_parallel > cluster.gpu_count:
             raise ValueError("Requested parallelism exceeds GPUs assigned to this cluster")
@@ -449,6 +451,10 @@ class DockerEngineClient:
             raise ValueError(f"The local {engine_id} adapter does not expose pipeline parallelism")
         if expert_parallel and engine_id not in expert_engines:
             raise ValueError(f"The local {engine_id} adapter does not expose expert parallelism")
+        if cpu_offload_gib and engine_id not in {"vllm", "sglang"}:
+            raise ValueError("CPU weight offload requires vLLM or SGLang")
+        if gpu_layers is not None and engine_id != "llama-cpp":
+            raise ValueError("CPU/GPU layer splitting requires llama.cpp")
         controller_root = self.settings.model_cache_path.resolve()
         resolved_model = Path(model_path).resolve()
         if controller_root not in resolved_model.parents:
@@ -511,6 +517,18 @@ class DockerEngineClient:
         else:
             entrypoint = ["sh", "-lc"]
             command = [container_launch_script(engine_id)]
+        if cpu_offload_gib:
+            command.extend(["--cpu-offload-gb", str(cpu_offload_gib)])
+        if engine_id == "vllm":
+            try:
+                config = json.loads((resolved_model / "config.json").read_text())
+                architectures = config.get("architectures") or []
+                if "embed" in served_model_name.casefold() or any(
+                    name.endswith("Model") for name in architectures
+                ):
+                    command.extend(["--runner", "pooling"])
+            except (OSError, ValueError):
+                pass
         device_ids = [
             str(item.index) for item in cluster.gpus[: tensor_parallel * pipeline_parallel]
         ]
@@ -519,6 +537,9 @@ class DockerEngineClient:
             "Entrypoint": entrypoint,
             "Cmd": command,
             "Env": [
+                f"CPU_OFFLOAD_GIB={cpu_offload_gib}",
+                f"GPU_LAYERS={gpu_layers if gpu_layers is not None else 999}",
+                f"CPU_KV={1 if gpu_layers is not None else 0}",
                 f"NVIDIA_VISIBLE_DEVICES={','.join(device_ids)}",
                 f"MODEL_ID={runtime_model}",
                 f"SERVED_MODEL_NAME={served_model_name}",
@@ -573,6 +594,8 @@ class DockerEngineClient:
         max_num_batched_tokens: int,
         expert_parallel: bool,
         chunked_prefill: bool,
+        cpu_offload_gib: float = 0,
+        gpu_layers: int | None = None,
     ) -> str:
         if tensor_parallel * pipeline_parallel > cluster.gpu_count:
             raise ValueError("Requested parallelism exceeds GPUs assigned to this cluster")
@@ -599,6 +622,8 @@ class DockerEngineClient:
             max_num_batched_tokens=max_num_batched_tokens,
             expert_parallel=expert_parallel,
             chunked_prefill=chunked_prefill,
+            cpu_offload_gib=cpu_offload_gib,
+            gpu_layers=gpu_layers,
         )
         payload["Labels"]["spark-cluster.model-id"] = model_id
         name = self.container_name(cluster.id)

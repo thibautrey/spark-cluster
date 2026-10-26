@@ -713,3 +713,61 @@ def test_discrete_gpu_reserve_allows_small_model_without_overstating_capacity(tm
         settings.model_copy(update={"active_hardware": "dgx-spark"}),
     )
     assert not spark.memory_fits
+
+
+def test_explicit_ram_offload_changes_gpu_budget_but_requires_host_memory(tmp_path, monkeypatch):
+    monkeypatch.setattr('spark_cluster.model_manager.host_memory_available_gib', lambda: 20)
+    settings = Settings(model_cache_path=tmp_path, active_hardware='nvidia-gpu',
+                        fallback_node_count=1, fallback_node_memory_gib=8)
+    data = metadata(weight_gib=8, files=(('model.safetensors', 8 * GIB),))
+    request = ModelFitRequest(repo_id='acme/model', context_length=512, cpu_offload_gib=4)
+    fit = build_fit_plan(request, data, None, settings)
+    assert fit.placement_strategy == 'cpu-offload'
+    assert fit.resident_weights_gib == 4
+    assert fit.offloaded_weights_gib == 4
+    assert fit.host_memory_gib == 5
+    assert fit.fit_status == 'hybrid-ready'
+    monkeypatch.setattr('spark_cluster.model_manager.host_memory_available_gib', lambda: 2)
+    assert not build_fit_plan(request, data, None, settings).fits
+    assert not build_fit_plan(request, data, None,
+                              settings.model_copy(update={'active_hardware': 'dgx-spark'})).fits
+
+
+def test_llama_cpu_gpu_split_budgets_cpu_kv_and_requires_layer_evidence(tmp_path, monkeypatch):
+    monkeypatch.setattr('spark_cluster.model_manager.host_memory_available_gib', lambda: 40)
+    settings = Settings(model_cache_path=tmp_path, active_hardware='nvidia-gpu',
+                        fallback_node_count=1, fallback_node_memory_gib=8)
+    data = metadata(weight_gib=8, files=(('model.q4.gguf', 8 * GIB),))
+    fit = build_fit_plan(ModelFitRequest(repo_id='acme/model', context_length=512,
+                                        gpu_layers=20), data, None, settings)
+    assert fit.fits
+    assert fit.resident_weights_gib < 3
+    assert fit.offloaded_weights_gib > 5
+    assert fit.resident_kv_cache_gib == 0
+    assert fit.host_memory_gib > 9
+    data.config.clear()
+    assert not build_fit_plan(ModelFitRequest(repo_id='acme/model', gpu_layers=4),
+                              data, None, settings).fits
+
+
+def test_pooling_embeddings_have_no_decode_kv_or_unsupported_task_gate(tmp_path):
+    data = metadata(weight_gib=4.5, files=(('model.safetensors', int(4.5 * GIB)),),
+                    pipeline_tag='feature-extraction')
+    settings = Settings(model_cache_path=tmp_path, active_hardware='nvidia-gpu',
+                        fallback_node_count=1, fallback_node_memory_gib=8)
+    fit = build_fit_plan(ModelFitRequest(repo_id='acme/model', context_length=8192,
+                                        concurrent_sequences=4), data, None, settings)
+    assert fit.kv_cache_gib == 0
+    assert fit.launch_supported
+
+
+def test_gguf_layer_reader_is_bounded_and_reads_architecture_block_count(tmp_path):
+    import struct
+    from spark_cluster.model_manager import gguf_layer_count
+    key = b'llama.block_count'
+    path = tmp_path / 'model.gguf'
+    path.write_bytes(b'GGUF' + struct.pack('<IQQQ', 3, 0, 1, len(key)) + key
+                     + struct.pack('<II', 4, 32))
+    assert gguf_layer_count(tmp_path) == 32
+    path.write_bytes(b'GGUF' + struct.pack('<IQQQ', 3, 0, 1, 2**63))
+    assert gguf_layer_count(tmp_path) is None

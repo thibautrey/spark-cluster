@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import signal
+import struct
 import sys
 import threading
 import time
@@ -33,6 +34,7 @@ from .deepseek_tonyd2wild import (
     MANAGED_LAUNCH_BLOCKER as TONY_MANAGED_LAUNCH_BLOCKER,
 )
 from .deepseek_tonyd2wild import build_tony_recipe, is_reviewed_profile, profile_for_model
+from .pool_memory import host_memory_available_gib
 from .model_relay import ModelRelay
 from .models import (
     ClusterSnapshot,
@@ -376,6 +378,53 @@ def _minimum_nodes(
     return len(capacities) + 1, overhead, total, headroom
 
 
+def gguf_layer_count(model_path: Path) -> int | None:
+    """Read block_count without loading tensors or trusting unbounded metadata lengths."""
+    files = sorted(model_path.rglob("*.gguf")) if model_path.is_dir() else [model_path]
+    if not files:
+        return None
+    try:
+        with files[0].open("rb") as stream:
+            if stream.read(4) != b"GGUF":
+                return None
+            version, _, count = struct.unpack("<IQQ", stream.read(20))
+            if version not in {2, 3} or count > 100000:
+                return None
+
+            def number(fmt):
+                return struct.unpack("<" + fmt, stream.read(struct.calcsize("<" + fmt)))[0]
+
+            def string():
+                size = number("Q")
+                if size > 16 * 1024**2 or stream.tell() + size > 16 * 1024**2:
+                    raise ValueError("GGUF metadata limit exceeded")
+                return stream.read(size)
+
+            def value(kind, depth=0):
+                if depth > 1 or stream.tell() > 16 * 1024**2:
+                    raise ValueError("GGUF metadata limit exceeded")
+                if kind == 8:
+                    return string()
+                if kind == 9:
+                    item_kind, size = number("I"), number("Q")
+                    if size > 1000000:
+                        raise ValueError("GGUF metadata array is too large")
+                    for _ in range(size):
+                        value(item_kind, depth + 1)
+                    return None
+                return number({0: "B", 1: "b", 2: "H", 3: "h", 4: "I", 5: "i",
+                               6: "f", 7: "?", 10: "Q", 11: "q", 12: "d"}[kind])
+
+            for _ in range(count):
+                key, kind = string(), number("I")
+                result = value(kind)
+                if key.endswith(b".block_count") and isinstance(result, int) and result > 0:
+                    return result
+    except (OSError, ValueError, KeyError, struct.error):
+        pass
+    return None
+
+
 def build_fit_plan(
     request: ModelFitRequest,
     metadata: RepositoryMetadata,
@@ -451,6 +500,10 @@ def build_fit_plan(
             "KV memory uses a conservative fallback because architecture metadata is incomplete."
         )
 
+    if pipeline in {"feature-extraction", "sentence-similarity"} or "embedding" in repo_lower:
+        kv_cache_gib = 0.0
+        notes.append("Pooling embeddings do not allocate an autoregressive KV cache.")
+
     kv_heads = (
         1
         if model_config.get("kv_lora_rank")
@@ -498,9 +551,11 @@ def build_fit_plan(
         "text-generation",
         "image-text-to-text",
         "conversational",
+        "feature-extraction",
+        "sentence-similarity",
     }
     if detected_format.startswith("GGUF"):
-        launch_supported = False
+        launch_supported = True
         engine = "llama.cpp with GGUF mmap"
         if not memory_fits:
             placement = "mmap"
@@ -868,6 +923,54 @@ def build_fit_plan(
         requirements.append(
             "EXL3 requires its compatible engine; the standard vLLM launcher cannot load it."
         )
+    model_layers = int(model_config.get("num_hidden_layers") or model_config.get("n_layer") or 0)
+    host_required = 0.0
+    if request.cpu_offload_gib or request.gpu_layers is not None:
+        placement = "cpu-offload"
+        performance_impact = "high"
+        if settings.active_hardware != "nvidia-gpu":
+            runtime_fits = False
+            requirements.append("RAM offload requires discrete GPUs; unified RAM is shared capacity.")
+        elif request.cpu_offload_gib and request.gpu_layers is not None:
+            runtime_fits = False
+            requirements.append("Choose weight offload or CPU/GPU layers, not both.")
+        elif request.gpu_layers is not None and not detected_format.startswith("GGUF"):
+            runtime_fits = False
+            requirements.append("CPU/GPU layer splitting requires the llama.cpp GGUF adapter.")
+        elif request.gpu_layers and not model_layers:
+            runtime_fits = False
+            requirements.append("The GGUF layer count is required to budget partial GPU loading.")
+        else:
+            if request.gpu_layers is not None:
+                fraction = min(1.0, (request.gpu_layers + 2) / (model_layers + 2))
+                if request.gpu_layers == 0:
+                    fraction = 0.0
+                resident_weights = complete_weights_gib * fraction
+                offloaded_weights = complete_weights_gib - resident_weights
+                resident_kv = 0.0
+                offloaded_kv = kv_cache_gib
+                # llama.cpp mmaps the complete GGUF; reserve its host pages plus CPU KV.
+                host_required = complete_weights_gib + kv_cache_gib + 1.0
+                engine = "llama.cpp CPU/GPU layers"
+                tradeoffs.append("Layers kept in RAM execute on CPU; latency can increase substantially.")
+            else:
+                # Amount is per GPU rank. Reserve this allowance for every assigned GPU.
+                ranks = request.offload_ranks
+                offloaded_weights = min(complete_weights_gib, request.cpu_offload_gib * ranks)
+                resident_weights = complete_weights_gib - offloaded_weights
+                host_required = request.cpu_offload_gib * ranks + 1.0
+                engine = "Runtime with CPU weight offload"
+                tradeoffs.append("Weights transfer from RAM for GPU computation on each forward pass.")
+            minimum_nodes, runtime_overhead, total_required, headroom = _minimum_nodes(
+                node_capacities, resident_weights, resident_kv, kv_heads, minimum_overhead
+            )
+            runtime_fits = minimum_nodes <= len(node_capacities)
+            available_host = host_memory_available_gib()
+            if available_host is None or host_required > available_host:
+                runtime_fits = False
+                requirements.append("Insufficient measured host RAM for degraded loading.")
+            notes.append(f"Degraded loading reserves {host_required:.2f} GiB of host RAM.")
+
     if not download_fits:
         fit_status = "insufficient-storage"
     elif runtime_fits and launch_supported and runtime_storage_fits:
@@ -921,6 +1024,8 @@ def build_fit_plan(
         detected_bits_per_weight=detected_bits,
         library_name=metadata.library_name,
         pipeline_tag=metadata.pipeline_tag,
+        model_layers=model_layers or None,
+        host_memory_gib=round(host_required, 2),
         resident_weights_gib=round(resident_weights, 2),
         offloaded_weights_gib=round(offloaded_weights, 2),
         resident_kv_cache_gib=round(resident_kv, 2),
@@ -1018,6 +1123,9 @@ class ModelManager:
         kv_bytes_per_token = previous.kv_cache_gib * GIB / (previous_context * previous_sequences)
         if previous.kv_cache_dtype == "fp8_e4m3":
             kv_bytes_per_token *= 2
+        layers = previous.model_layers
+        if request.gpu_layers is not None and not layers:
+            layers = await asyncio.to_thread(gguf_layer_count, model_path)
         metadata = RepositoryMetadata(
             repo_id=request.repo_id,
             revision=request.revision,
@@ -1026,7 +1134,10 @@ class ModelManager:
             weight_bytes=previous.weight_bytes,
             parameter_count=previous.parameter_count,
             architecture=previous.architecture,
-            config={},
+            config={"num_hidden_layers": layers} if layers else {},
+            files=tuple((str(file.relative_to(model_path)), file.stat().st_size)
+                        for file in model_path.rglob("*.gguf"))
+            if previous.detected_format.startswith("GGUF") else (),
             library_name=previous.library_name,
             pipeline_tag=previous.pipeline_tag,
             engram_bytes=(

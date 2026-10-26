@@ -477,6 +477,9 @@ class RuntimeDeploymentService:
                 kv_cache_dtype=request.kv_cache_dtype,
                 context_length=request.context_length,
                 concurrent_sequences=request.concurrent_sequences,
+                cpu_offload_gib=request.cpu_offload_gib,
+                offload_ranks=request.tensor_parallel * request.pipeline_parallel,
+                gpu_layers=request.gpu_layers,
             )
         )
         if not fit.fits:
@@ -603,6 +606,8 @@ class RuntimeDeploymentService:
             max_num_batched_tokens=job.request.max_num_batched_tokens,
             expert_parallel=job.request.expert_parallel,
             chunked_prefill=job.request.chunked_prefill,
+            cpu_offload_gib=job.request.cpu_offload_gib,
+            gpu_layers=job.request.gpu_layers,
         )
         await self._update(
             job, "waiting-ready", 75, f"Waiting for {plan.engine_name} health endpoint"
