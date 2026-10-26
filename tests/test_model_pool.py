@@ -425,6 +425,7 @@ async def test_invalid_runtime_model_metadata_is_not_cached(tmp_path, monkeypatc
 @pytest.mark.asyncio
 async def test_capacity_reports_exact_memory_shortfall():
     fit = SimpleNamespace(
+        launch_supported=True,
         resident_weights_gib=8.0,
         resident_kv_cache_gib=2.0,
         runtime_overhead_gib=2.0,
@@ -471,6 +472,7 @@ async def test_capacity_uses_recorded_metadata_without_network_storage(monkeypat
     from pathlib import Path
 
     fit = SimpleNamespace(
+        launch_supported=True,
         resident_weights_gib=2,
         resident_kv_cache_gib=1,
         runtime_overhead_gib=1,
