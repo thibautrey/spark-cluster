@@ -437,6 +437,7 @@ class DockerEngineClient:
         chunked_prefill: bool,
         cpu_offload_gib: float = 0,
         gpu_layers: int | None = None,
+        cuda_graphs: bool = True,
     ) -> dict:
         if tensor_parallel * pipeline_parallel > cluster.gpu_count:
             raise ValueError("Requested parallelism exceeds GPUs assigned to this cluster")
@@ -520,6 +521,8 @@ class DockerEngineClient:
         if cpu_offload_gib:
             command.extend(["--cpu-offload-gb", str(cpu_offload_gib)])
         if engine_id == "vllm":
+            if not cuda_graphs:
+                command.append("--enforce-eager")
             try:
                 config = json.loads((resolved_model / "config.json").read_text())
                 architectures = config.get("architectures") or []
@@ -596,6 +599,7 @@ class DockerEngineClient:
         chunked_prefill: bool,
         cpu_offload_gib: float = 0,
         gpu_layers: int | None = None,
+        cuda_graphs: bool = True,
     ) -> str:
         if tensor_parallel * pipeline_parallel > cluster.gpu_count:
             raise ValueError("Requested parallelism exceeds GPUs assigned to this cluster")
@@ -624,6 +628,7 @@ class DockerEngineClient:
             chunked_prefill=chunked_prefill,
             cpu_offload_gib=cpu_offload_gib,
             gpu_layers=gpu_layers,
+            cuda_graphs=cuda_graphs,
         )
         payload["Labels"]["spark-cluster.model-id"] = model_id
         name = self.container_name(cluster.id)

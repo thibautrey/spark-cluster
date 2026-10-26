@@ -704,6 +704,7 @@ class PoolNode:
                 chunked_prefill=launch.chunked_prefill,
                 cpu_offload_gib=launch.cpu_offload_gib,
                 gpu_layers=launch.gpu_layers,
+                cuda_graphs=launch.cuda_graphs,
             )
             payload["Labels"]["spark-cluster.model-id"] = request.model_id
             # Bind only loopback; inference is routed through the authenticated pool gateway.

@@ -494,8 +494,9 @@ def test_engine_payload_keeps_offload_and_cpu_layer_controls(tmp_path):
         chunked_prefill=False,
     )
     docker = DockerEngineClient(settings)
-    payload = docker.runtime_payload(**args, cpu_offload_gib=3)
-    assert payload["Cmd"][-4:] == ["--cpu-offload-gb", "3", "--runner", "pooling"]
+    payload = docker.runtime_payload(**args, cpu_offload_gib=3, cuda_graphs=False)
+    assert "--enforce-eager" in payload["Cmd"]
+    assert payload["Cmd"][-2:] == ["--runner", "pooling"]
     assert "CPU_OFFLOAD_GIB=3" in payload["Env"]
     payload = docker.runtime_payload(**args, engine_id="llama-cpp", gpu_layers=4)
     assert "GPU_LAYERS=4" in payload["Env"]

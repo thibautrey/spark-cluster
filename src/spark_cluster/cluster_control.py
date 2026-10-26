@@ -608,6 +608,7 @@ class RuntimeDeploymentService:
             chunked_prefill=job.request.chunked_prefill,
             cpu_offload_gib=job.request.cpu_offload_gib,
             gpu_layers=job.request.gpu_layers,
+            cuda_graphs=job.request.cuda_graphs,
         )
         await self._update(
             job, "waiting-ready", 75, f"Waiting for {plan.engine_name} health endpoint"
