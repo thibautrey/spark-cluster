@@ -517,7 +517,7 @@ def build_fit_plan(
             "KV memory uses a conservative fallback because architecture metadata is incomplete."
         )
 
-    if pipeline in {"feature-extraction", "sentence-similarity"} or "embedding" in repo_lower:
+    if pipeline in {"feature-extraction", "sentence-similarity"}:
         kv_cache_gib = 0.0
         notes.append("Pooling embeddings do not allocate an autoregressive KV cache.")
 

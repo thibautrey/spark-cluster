@@ -115,7 +115,10 @@
     const [publisher, ...nameParts] = model.id.split('/');
     const name = nameParts.join('/') || publisher;
     const retained = model.preferences.keep_loaded || model.placements.some(item => item.keep_loaded);
-    const required = Number(view.capacity.capacity?.required_gib || gib(model.size_bytes));
+    const reservation = model.placements.flatMap(item => Object.values(item.budget_gib || {}));
+    const required = reservation.length ? reservation.reduce((sum, value) => sum + Number(value), 0) : Number(view.capacity.capacity?.required_gib || gib(model.size_bytes));
+    const settings = model.last_settings || {};
+    const degraded = settings.cpu_offload_gib > 0 ? `${settings.cpu_offload_gib} GiB RAM / GPU` : settings.gpu_layers != null ? `${settings.gpu_layers} GPU layers · CPU + RAM` : '';
     const last = state.jobs.findLast(item => item.model_id === model.id);
     let condition;
     if (view.id === 'running') condition = '<i>✓</i><span>Serving requests · Ready for your app</span>';
@@ -129,7 +132,7 @@
     return `<article class="launch-model-card ${view.id}" data-pool-model="${escapeHtml(model.id)}" data-task="${task.id}">
       <header><span class="launch-model-icon ${task.id}">${task.icon}</span><em class="launch-card-state ${view.id}">${escapeHtml(view.label)}</em></header>
       <div class="launch-model-copy"><small>${escapeHtml(publisher)}</small><h3>${escapeHtml(name)}</h3><p>${escapeHtml(task.description)}</p></div>
-      <div class="launch-model-tags"><span>${escapeHtml(task.label)}</span><span>${escapeHtml(engine)}</span>${format ? `<span>${format}</span>` : ''}</div>
+      <div class="launch-model-tags"><span>${escapeHtml(task.label)}</span><span>${escapeHtml(engine)}</span>${format ? `<span>${format}</span>` : ''}${degraded ? `<span>${escapeHtml(degraded)}</span>` : ''}</div>
       <div class="launch-model-metrics"><span>Est. VRAM <b>${required.toFixed(1)} GiB</b></span><span>${retained ? '↳ Keep loaded' : 'On demand'}</span></div>
       <div class="launch-model-condition ${view.id}">${condition}</div>
       ${concurrency ? `<small class="launch-model-concurrency">Automatic concurrency ${concurrency.running} / ${concurrency.limit}${concurrency.waiting ? ` · ${concurrency.waiting} waiting` : ''}</small>` : ''}
