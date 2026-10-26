@@ -162,33 +162,37 @@ def test_launch_validation_rejects_invalid_speculation_moe_and_rank_plans():
         request(rank_order=["spark-1"] * 4)
 
 
-@pytest.mark.parametrize('engine_id', ['vllm', 'sglang'])
+@pytest.mark.parametrize("engine_id", ["vllm", "sglang"])
 def test_ram_offload_is_an_executable_local_runtime_contract(engine_id):
     plan = build_execution_plan(
         request(engine_id=engine_id, tensor_parallel=1, cpu_offload_gib=3.5),
-        '/models/acme/model', Settings(runtime_sglang_image='sglang:pinned'),
-        cluster_kind='local-docker',
+        "/models/acme/model",
+        Settings(runtime_sglang_image="sglang:pinned"),
+        cluster_kind="local-docker",
     )
     assert plan.executable
-    assert plan.environment['CPU_OFFLOAD_GIB'] == '3.5'
-    assert '--cpu-offload-gb' in plan.command
-    assert any('slower' in warning for warning in plan.warnings)
+    assert plan.environment["CPU_OFFLOAD_GIB"] == "3.5"
+    assert "--cpu-offload-gb" in plan.command
+    assert any("slower" in warning for warning in plan.warnings)
     remote = build_execution_plan(
         request(engine_id=engine_id, tensor_parallel=1, cpu_offload_gib=3.5),
-        '/models/acme/model', Settings(runtime_sglang_image='sglang:pinned'),
+        "/models/acme/model",
+        Settings(runtime_sglang_image="sglang:pinned"),
     )
     assert not remote.executable
 
 
 def test_cpu_layers_require_llama_cpp_and_do_not_enable_other_engines():
-    launch = request(tensor_parallel=1, engine_id='llama-cpp', gpu_layers=12)
-    plan = build_execution_plan(launch, '/models/gguf', Settings(), cluster_kind='local-docker')
-    assert '--n-gpu-layers' in plan.command
-    assert plan.environment['GPU_LAYERS'] == '12'
-    assert plan.environment['CPU_KV'] == '1'
+    launch = request(tensor_parallel=1, engine_id="llama-cpp", gpu_layers=12)
+    plan = build_execution_plan(launch, "/models/gguf", Settings(), cluster_kind="local-docker")
+    assert "--n-gpu-layers" in plan.command
+    assert plan.environment["GPU_LAYERS"] == "12"
+    assert plan.environment["CPU_KV"] == "1"
     invalid = build_execution_plan(
-        request(tensor_parallel=1, engine_id='vllm', gpu_layers=12),
-        '/models/model', Settings(), cluster_kind='local-docker',
+        request(tensor_parallel=1, engine_id="vllm", gpu_layers=12),
+        "/models/model",
+        Settings(),
+        cluster_kind="local-docker",
     )
     assert not invalid.executable
     with pytest.raises(ValidationError):

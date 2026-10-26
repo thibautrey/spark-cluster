@@ -44,8 +44,8 @@ from .pool_memory import (
     MemoryPlan,
     RuntimeResources,
     gpu_availability,
-    imported_resources,
     host_memory_available_gib,
+    imported_resources,
     plan_memory,
 )
 
@@ -135,7 +135,8 @@ class ResidentRuntime:
             "gpu_ids": self.gpu_ids,
             "budget_gib": self.budget_gib,
             "host_memory_gib": self.profile.resources.host_memory_gib
-            if self.profile.resources else 0,
+            if self.profile.resources
+            else 0,
             "gpu_memory_utilization": self.fraction,
             "active_requests": self.active_requests,
             "status": self.status,

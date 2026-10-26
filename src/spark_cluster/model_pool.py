@@ -1071,9 +1071,14 @@ class ModelPool:
                     if not capacity["available"]:
                         continue
                     try:
-                        check = await self.call(self.cluster(capacity["cluster_id"]), "plan", {
-                            "model_id": m["id"], "settings": prefs.last_settings.model_dump(),
-                        })
+                        check = await self.call(
+                            self.cluster(capacity["cluster_id"]),
+                            "plan",
+                            {
+                                "model_id": m["id"],
+                                "settings": prefs.last_settings.model_dump(),
+                            },
+                        )
                         placement = check.get("placement") or {}
                         capacity.update(placement)
                         capacity["fits"] = bool(check["compatible"] and not check.get("waiting"))
@@ -1086,7 +1091,9 @@ class ModelPool:
                             or prefs.last_settings.gpu_layers is not None
                         )
                     except (httpx.HTTPError, ValueError, RuntimeError):
-                        capacity.update(fits=False, can_load=False, reason="Cluster preflight unavailable")
+                        capacity.update(
+                            fits=False, can_load=False, reason="Cluster preflight unavailable"
+                        )
                 m["available_clusters"] = [
                     c["cluster_id"] for c in m["cluster_capacity"] if c.get("fits")
                 ]

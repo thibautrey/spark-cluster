@@ -453,39 +453,52 @@ async def test_legacy_adoption_without_gpu_telemetry_preserves_running_container
 
 
 def test_host_ram_admission_counts_starting_reservations_and_fails_closed():
-    first = profile('first')
+    first = profile("first")
     first.resources.host_memory_gib = 4
-    second = profile('second')
+    second = profile("second")
     second.resources.host_memory_gib = 5
-    items = {'first': ResidentRuntime(first, ['gpu-0'], {'gpu-0': 2}, status='starting')}
+    items = {"first": ResidentRuntime(first, ["gpu-0"], {"gpu-0": 2}, status="starting")}
     assert not plan_memory(second.resources, [gpu(1)], items, set()).gpu_ids
     denied = plan_memory(second.resources, [gpu(1)], items, set(), host_available_gib=8)
     assert not denied.gpu_ids
-    assert 'host RAM' in denied.reason
+    assert "host RAM" in denied.reason
     allowed = plan_memory(second.resources, [gpu(1)], items, set(), host_available_gib=10)
-    assert allowed.gpu_ids == ['gpu-1']
+    assert allowed.gpu_ids == ["gpu-1"]
 
 
 def test_engine_payload_keeps_offload_and_cpu_layer_controls(tmp_path):
-    settings = Settings(model_cache_path=tmp_path, docker_host_model_path='/models')
-    directory = tmp_path / 'model'
+    settings = Settings(model_cache_path=tmp_path, docker_host_model_path="/models")
+    directory = tmp_path / "model"
     directory.mkdir()
-    (directory / 'config.json').write_text('{"architectures":["Qwen3Model"]}')
+    (directory / "config.json").write_text('{"architectures":["Qwen3Model"]}')
     cluster = ClusterTarget(
-        id='local-test', name='test', kind='local-docker',
-        gpus=[GPUDevice(index=0, uuid='gpu-0', name='GPU', memory_gib=8)],
+        id="local-test",
+        name="test",
+        kind="local-docker",
+        gpu_count=1,
+        gpus=[GPUDevice(index=0, uuid="gpu-0", name="GPU", memory_gib=8)],
     )
-    args = dict(cluster=cluster, image='runtime:pinned', model_path=str(directory),
-                served_model_name='model', context_length=512, tensor_parallel=1,
-                pipeline_parallel=1, gpu_memory_utilization=0.5, kv_cache_dtype='auto',
-                max_num_seqs=1, max_num_batched_tokens=512, expert_parallel=False,
-                chunked_prefill=False)
+    args = dict(
+        cluster=cluster,
+        image="runtime:pinned",
+        model_path=str(directory),
+        served_model_name="model",
+        context_length=512,
+        tensor_parallel=1,
+        pipeline_parallel=1,
+        gpu_memory_utilization=0.5,
+        kv_cache_dtype="auto",
+        max_num_seqs=1,
+        max_num_batched_tokens=512,
+        expert_parallel=False,
+        chunked_prefill=False,
+    )
     docker = DockerEngineClient(settings)
     payload = docker.runtime_payload(**args, cpu_offload_gib=3)
-    assert payload['Cmd'][-4:] == ['--cpu-offload-gb', '3', '--runner', 'pooling']
-    assert 'CPU_OFFLOAD_GIB=3' in payload['Env']
-    payload = docker.runtime_payload(**args, engine_id='llama-cpp', gpu_layers=4)
-    assert 'GPU_LAYERS=4' in payload['Env']
-    assert '--no-kv-offload' in payload['Cmd'][0]
+    assert payload["Cmd"][-4:] == ["--cpu-offload-gb", "3", "--runner", "pooling"]
+    assert "CPU_OFFLOAD_GIB=3" in payload["Env"]
+    payload = docker.runtime_payload(**args, engine_id="llama-cpp", gpu_layers=4)
+    assert "GPU_LAYERS=4" in payload["Env"]
+    assert "--no-kv-offload" in payload["Cmd"][0]
     with pytest.raises(ValueError):
-        docker.runtime_payload(**args, engine_id='ollama', cpu_offload_gib=3)
+        docker.runtime_payload(**args, engine_id="ollama", cpu_offload_gib=3)

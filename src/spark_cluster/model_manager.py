@@ -34,7 +34,6 @@ from .deepseek_tonyd2wild import (
     MANAGED_LAUNCH_BLOCKER as TONY_MANAGED_LAUNCH_BLOCKER,
 )
 from .deepseek_tonyd2wild import build_tony_recipe, is_reviewed_profile, profile_for_model
-from .pool_memory import host_memory_available_gib
 from .model_relay import ModelRelay
 from .models import (
     ClusterSnapshot,
@@ -47,6 +46,7 @@ from .models import (
     ModelMutationResult,
     RuntimeEndpoint,
 )
+from .pool_memory import host_memory_available_gib
 from .store import SnapshotStore
 
 GIB = 2**30
@@ -380,7 +380,11 @@ def _minimum_nodes(
 
 def gguf_layer_count(model_path: Path) -> int | None:
     """Read block_count without loading tensors or trusting unbounded metadata lengths."""
-    files = sorted(model_path.rglob("*.gguf")) if model_path.is_dir() else [model_path]
+    files = (
+        sorted(model_path.rglob("*.gguf"), key=lambda p: p.stat().st_size)
+        if model_path.is_dir()
+        else [model_path]
+    )
     if not files:
         return None
     try:
@@ -412,8 +416,21 @@ def gguf_layer_count(model_path: Path) -> int | None:
                     for _ in range(size):
                         value(item_kind, depth + 1)
                     return None
-                return number({0: "B", 1: "b", 2: "H", 3: "h", 4: "I", 5: "i",
-                               6: "f", 7: "?", 10: "Q", 11: "q", 12: "d"}[kind])
+                return number(
+                    {
+                        0: "B",
+                        1: "b",
+                        2: "H",
+                        3: "h",
+                        4: "I",
+                        5: "i",
+                        6: "f",
+                        7: "?",
+                        10: "Q",
+                        11: "q",
+                        12: "d",
+                    }[kind]
+                )
 
             for _ in range(count):
                 key, kind = string(), number("I")
@@ -930,7 +947,9 @@ def build_fit_plan(
         performance_impact = "high"
         if settings.active_hardware != "nvidia-gpu":
             runtime_fits = False
-            requirements.append("RAM offload requires discrete GPUs; unified RAM is shared capacity.")
+            requirements.append(
+                "RAM offload requires discrete GPUs; unified RAM is shared capacity."
+            )
         elif request.cpu_offload_gib and request.gpu_layers is not None:
             runtime_fits = False
             requirements.append("Choose weight offload or CPU/GPU layers, not both.")
@@ -952,7 +971,9 @@ def build_fit_plan(
                 # llama.cpp mmaps the complete GGUF; reserve its host pages plus CPU KV.
                 host_required = complete_weights_gib + kv_cache_gib + 1.0
                 engine = "llama.cpp CPU/GPU layers"
-                tradeoffs.append("Layers kept in RAM execute on CPU; latency can increase substantially.")
+                tradeoffs.append(
+                    "Layers kept in RAM execute on CPU; latency can increase substantially."
+                )
             else:
                 # Amount is per GPU rank. Reserve this allowance for every assigned GPU.
                 ranks = request.offload_ranks
@@ -960,7 +981,9 @@ def build_fit_plan(
                 resident_weights = complete_weights_gib - offloaded_weights
                 host_required = request.cpu_offload_gib * ranks + 1.0
                 engine = "Runtime with CPU weight offload"
-                tradeoffs.append("Weights transfer from RAM for GPU computation on each forward pass.")
+                tradeoffs.append(
+                    "Weights transfer from RAM for GPU computation on each forward pass."
+                )
             minimum_nodes, runtime_overhead, total_required, headroom = _minimum_nodes(
                 node_capacities, resident_weights, resident_kv, kv_heads, minimum_overhead
             )
@@ -1135,9 +1158,12 @@ class ModelManager:
             parameter_count=previous.parameter_count,
             architecture=previous.architecture,
             config={"num_hidden_layers": layers} if layers else {},
-            files=tuple((str(file.relative_to(model_path)), file.stat().st_size)
-                        for file in model_path.rglob("*.gguf"))
-            if previous.detected_format.startswith("GGUF") else (),
+            files=tuple(
+                (str(file.relative_to(model_path)), file.stat().st_size)
+                for file in model_path.rglob("*.gguf")
+            )
+            if previous.detected_format.startswith("GGUF")
+            else (),
             library_name=previous.library_name,
             pipeline_tag=previous.pipeline_tag,
             engram_bytes=(

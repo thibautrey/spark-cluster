@@ -191,8 +191,7 @@ def plan_memory(
         # Reserve every resident's full offload allowance as well as measured use.
         # This conservative bound also covers runtimes that are still starting.
         reserved = sum(
-            r.profile.resources.host_memory_gib
-            for r in residents.values() if r.profile.resources
+            r.profile.resources.host_memory_gib for r in residents.values() if r.profile.resources
         )
         if host_available_gib is None:
             return MemoryPlan(reason="Host RAM telemetry is unavailable for degraded loading")

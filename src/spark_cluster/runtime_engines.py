@@ -287,13 +287,17 @@ def build_execution_plan(
 
     if request.cpu_offload_gib:
         if engine_id not in {"vllm", "sglang"}:
-            blockers.append(f"{engine.name} does not support CPU weight offload through this adapter.")
+            blockers.append(
+                f"{engine.name} does not support CPU weight offload through this adapter."
+            )
         warnings.append("Degraded mode transfers weights from RAM; inference may be much slower.")
     if request.gpu_layers is not None:
         if engine_id != "llama-cpp":
             blockers.append("CPU/GPU layer splitting is available only with llama.cpp.")
         warnings.append("Degraded mode runs RAM-resident layers and KV operations on CPU.")
-    if (request.cpu_offload_gib or request.gpu_layers is not None) and cluster_kind != "local-docker":
+    if (
+        request.cpu_offload_gib or request.gpu_layers is not None
+    ) and cluster_kind != "local-docker":
         blockers.append("Degraded loading requires a local Docker pool with host RAM admission.")
 
     environment = {
@@ -484,7 +488,8 @@ def container_launch_script(engine_id: str) -> str:
             "--kv-transfer-config "
             '\'{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_both"}\' '
             '--host 0.0.0.0 --port "$RUNTIME_PORT"',
-            'if test "${CPU_OFFLOAD_GIB:-0}" != 0; then set -- "$@" --cpu-offload-gb "$CPU_OFFLOAD_GIB"; fi',
+            'if test "${CPU_OFFLOAD_GIB:-0}" != 0; then set -- "$@" '
+            '--cpu-offload-gb "$CPU_OFFLOAD_GIB"; fi',
             'if test -n "$SPECULATIVE_CONFIG"; then set -- "$@" '
             '--speculative-config "$SPECULATIVE_CONFIG"; fi',
             'if test "$CUDA_GRAPHS" != 1; then set -- "$@" --enforce-eager; fi',
@@ -508,7 +513,8 @@ def container_launch_script(engine_id: str) -> str:
         ),
         "llama-cpp": script(
             'if test -f "$MODEL_ID"; then model_file="$MODEL_ID"; else '
-            "model_file=$(find \"$MODEL_ID\" -type f -name '*.gguf' -print | sort | head -n 1); fi",
+            "model_file=$(find \"$MODEL_ID\" -type f -name '*.gguf' "
+            "-printf '%s\t%p\n' | sort -n | head -n 1 | cut -f2-); fi",
             "test -n \"$model_file\" || { echo 'No GGUF file found' >&2; exit 64; }",
             'set -- --model "$model_file" --alias "$SERVED_MODEL_NAME" '
             '--host 0.0.0.0 --port "$RUNTIME_PORT" --ctx-size "$MAX_MODEL_LEN" '
@@ -565,7 +571,8 @@ def container_launch_script(engine_id: str) -> str:
         ),
         "localai": script(
             'if test -f "$MODEL_ID"; then model_file="$MODEL_ID"; else '
-            "model_file=$(find \"$MODEL_ID\" -type f -name '*.gguf' -print | sort | head -n 1); fi",
+            "model_file=$(find \"$MODEL_ID\" -type f -name '*.gguf' "
+            "-printf '%s\t%p\n' | sort -n | head -n 1 | cut -f2-); fi",
             "test -n \"$model_file\" || { echo 'No GGUF file found' >&2; exit 64; }",
             'export LOCALAI_ADDRESS="0.0.0.0:$RUNTIME_PORT"',
             'exec local-ai run "$model_file"',
