@@ -253,6 +253,7 @@ async function selectCluster(clusterId) {
 function render(snapshot) {
   latestSnapshot = snapshot;
   renderOverviewMetrics(snapshot);
+  renderHostResources(snapshot.nodes);
   renderTopology(snapshot.nodes);
   renderCache(snapshot.cache_tiers);
   renderMemory(snapshot.nodes);
@@ -286,6 +287,61 @@ function renderOverviewMetrics(snapshot) {
 }
 
 // Pure client-side summaries: no additional polling, storage, or server aggregation.
+function physicalHosts(nodes) {
+  const hosts = new Map();
+  for (const node of nodes) {
+    if (!node.host) continue;
+    const previous = hosts.get(node.host.id);
+    if (!previous || Date.parse(node.host.last_seen) > Date.parse(previous.last_seen)) hosts.set(node.host.id, node.host);
+  }
+  return [...hosts.values()];
+}
+
+const hostFresh = host => Date.now() - Date.parse(host.last_seen) <= 15000;
+const hostCpuCount = host => host.cpu_physical_cores
+  ? `${host.cpu_physical_cores} cores · ${host.cpu_logical_cores ?? '—'} threads`
+  : `${host.cpu_logical_cores ?? '—'} logical CPUs`;
+
+function hostResourceMarkup(host) {
+  const fresh = hostFresh(host);
+  const ram = fresh && host.ram_used_gib != null ? `${host.ram_used_gib.toFixed(1)} / ${host.ram_total_gib.toFixed(1)} GiB` : 'Unavailable';
+  const cpu = fresh && host.cpu_utilization != null ? `${host.cpu_utilization.toFixed(0)}%` : '—';
+  return `<div class="host-resource"><b class="host-resource-name">${escapeHtml(host.hostname)}</b><span>RAM <strong>${ram}</strong></span><span>CPU <strong>${cpu}</strong><small>${escapeHtml(hostCpuCount(host))}</small></span></div>`;
+}
+window.hostResourceMarkup = hostResourceMarkup;
+
+function renderHostResources(nodes) {
+  const hosts = physicalHosts(nodes);
+  const memory = hosts.filter(host => hostFresh(host) && host.ram_total_gib != null && host.ram_used_gib != null);
+  const total = memory.reduce((sum, host) => sum + host.ram_total_gib, 0);
+  const used = memory.reduce((sum, host) => sum + host.ram_used_gib, 0);
+  $('host-ram-used').textContent = memory.length ? used.toFixed(1) : '—';
+  $('host-ram-total').textContent = memory.length ? ` / ${total.toFixed(1)} GiB` : ' / — GiB';
+  const ramPercent = total ? Math.min(100, used / total * 100) : 0;
+  $('host-ram-bar').style.width = `${ramPercent}%`;
+  $('host-ram-bar').parentElement.setAttribute('aria-valuenow', memory.length ? ramPercent.toFixed(0) : '0');
+  $('host-ram-bar').parentElement.setAttribute('aria-valuetext', memory.length ? `${used.toFixed(1)} of ${total.toFixed(1)} GiB used` : 'Host RAM telemetry unavailable');
+  const measured = hosts.filter(host => hostFresh(host) && host.cpu_utilization != null && host.cpu_logical_cores);
+  const logical = measured.reduce((sum, host) => sum + host.cpu_logical_cores, 0);
+  const load = logical ? measured.reduce((sum, host) => sum + host.cpu_utilization * host.cpu_logical_cores, 0) / logical : null;
+  $('host-cpu-load').textContent = load == null ? '—' : `${load.toFixed(0)}%`;
+  const allLogical = hosts.reduce((sum, host) => sum + (host.cpu_logical_cores || 0), 0);
+  const allPhysical = hosts.every(host => host.cpu_physical_cores) ? hosts.reduce((sum, host) => sum + host.cpu_physical_cores, 0) : null;
+  $('host-cpu-count').textContent = hosts.length ? `${allPhysical ? `${allPhysical} cores · ` : ''}${allLogical || '—'} threads${measured.length < hosts.length ? ' · measuring' : ''}` : 'Host telemetry unavailable';
+  $('host-cpu-cores').innerHTML = hosts.map(host => `<div class="cpu-machine">${hosts.length > 1 ? `<small>${escapeHtml(host.hostname)}</small>` : ''}<div class="cpu-core-grid">${(host.cpu_cores || []).map(core => {
+    const value = hostFresh(host) ? core.utilization : null;
+    const label = value == null ? '—' : `${value.toFixed(0)}%`;
+    return `<span class="cpu-core ${value >= 85 ? 'busy' : ''}" title="${escapeHtml(host.hostname)} · Logical CPU ${core.id}: ${label}" aria-label="Logical CPU ${core.id}: ${label}"><small>${core.id}</small><b>${label}</b><i style="width:${value ?? 0}%"></i></span>`;
+  }).join('')}</div></div>`).join('');
+  $('topology-host-resources').innerHTML = hosts.length ? hosts.map(hostResourceMarkup).join('') : '<small class="host-unavailable">Host CPU and RAM telemetry unavailable</small>';
+  $('host-memory-grid').innerHTML = hosts.length ? hosts.map(host => {
+    const fresh = hostFresh(host) && host.ram_used_gib != null && host.ram_total_gib != null;
+    const total = fresh ? host.ram_total_gib : 0;
+    const used = fresh ? Math.min(total, host.ram_used_gib) : 0;
+    return `<div class="host-memory"><div class="memory-node-head"><b>${escapeHtml(host.hostname)} · RAM</b><span>${fresh ? `${used.toFixed(1)} / ${total.toFixed(1)} GiB` : 'Unavailable'}</span></div><div class="memory-block" role="img" aria-label="Machine RAM ${fresh ? `${used.toFixed(1)} of ${total.toFixed(1)} GiB used` : 'unavailable'}"><i class="runtime" style="--share:${used}"></i><i class="free" style="--share:${Math.max(0, total - used)}"></i></div><small>${fresh ? `${host.ram_available_gib?.toFixed(1) ?? '—'} GiB available · ${escapeHtml(hostCpuCount(host))} · CPU ${host.cpu_utilization?.toFixed(0) ?? '—'}%` : 'Waiting for host telemetry'}</small></div>`;
+  }).join('') : '<small class="host-unavailable">Host RAM telemetry unavailable</small>';
+}
+
 function renderOverviewDetails(snapshot) {
   const nodes = snapshot.nodes;
   const stale = Date.now() - Date.parse(snapshot.timestamp) > 15000;

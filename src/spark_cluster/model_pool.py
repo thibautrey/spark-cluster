@@ -461,6 +461,8 @@ class PoolNode:
                     "memory_total_gib": 0.0,
                 },
             )
+            if node.host:
+                machine["host"] = node.host.model_dump(mode="json")
             machine["available"] = machine["available"] and node.status != "offline"
             machine["accelerators"] += 1
             machine["memory_used_gib"] += node.memory.accelerator_used_gib or node.memory.used_gib

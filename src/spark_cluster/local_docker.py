@@ -12,6 +12,7 @@ import httpx
 
 from .cluster_registry import ClusterTarget, GPUDevice
 from .config import Settings
+from .host_resources import collect_host_resources
 from .models import CacheTier, ClusterSnapshot, MemoryStats, ModelRuntime, NodeSnapshot
 from .runtime_engines import MANAGED_ENGINE_IDS, container_launch_script
 
@@ -99,6 +100,9 @@ def local_gpu_snapshot(
     except ImportError:
         pynvml = None
     nodes = []
+    host = collect_host_resources(
+        cluster.host_address or settings.docker_runtime_host, cluster.name
+    )
     if pynvml:
         with contextlib.suppress(pynvml.NVMLError):
             pynvml.nvmlInit()
@@ -125,6 +129,7 @@ def local_gpu_snapshot(
                     role="head" if position == 0 else "worker",
                     status="healthy" if measured else "offline",
                     address=cluster.host_address or settings.docker_runtime_host,
+                    host=host,
                     memory=MemoryStats(
                         total_gib=gpu.memory_gib,
                         used_gib=round(used, 2),

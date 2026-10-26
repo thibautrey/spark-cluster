@@ -85,6 +85,7 @@
     field('launch-pool-overview').innerHTML = `<div class="launch-pool-identity">
       <div><span aria-hidden="true">▣</span><h2>${escapeHtml(cluster.name)}</h2><em class="${healthy ? 'healthy' : 'unavailable'}">${healthy ? 'Healthy' : 'Unavailable'}</em></div>
       ${window.performanceButton?.("pool", cluster.id, "Pool performance ↗") || ""}<p>${gpus.length || cluster.machines?.reduce((sum, machine) => sum + Number(machine.accelerators || 0), 0) || 0} GPUs connected · Automatic placement</p>
+      <div class="launch-host-summary">${(cluster.machines || []).filter(machine => machine.host).map(machine => window.hostResourceMarkup?.(machine.host) || '').join('')}</div>
     </div><div class="launch-gpu-grid">${gpuMarkup}</div>`;
   }
 

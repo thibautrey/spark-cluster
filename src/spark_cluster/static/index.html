@@ -144,7 +144,8 @@
         <section class="metrics runtime-idle" id="overview" data-route-view="overview">
           <article class="metric" id="output-metric"><span id="output-metric-label">Inference</span><strong><b id="output-tps">—</b><small id="output-unit"></small></strong><canvas id="throughput-spark" width="180" height="42"></canvas><button type="button" class="performance-trigger" data-performance-scope="overall">Speed history ↗</button></article>
           <article class="metric accent" id="cache-hit-metric" hidden><span>KV cache hit rate</span><strong><b id="hit-rate">—</b><small>%</small></strong><div class="ring" id="hit-ring"><span></span></div><button type="button" class="performance-trigger" data-performance-scope="overall">Cache history ↗</button></article>
-          <article class="metric"><span id="memory-metric-label">Memory</span><strong><b id="memory-used">—</b><small id="memory-total"> / — GiB</small></strong><div class="bar" role="progressbar" aria-label="Memory allocated" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="memory-bar"></i></div></article>
+          <article class="metric machine-memory-metric"><span id="memory-metric-label">Memory</span><strong><b id="memory-used">—</b><small id="memory-total"> / — GiB</small></strong><div class="bar" role="progressbar" aria-label="Memory allocated" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><i id="memory-bar"></i></div><div class="machine-ram-row"><span>Machine RAM</span><strong><b id="host-ram-used">—</b><small id="host-ram-total"> / — GiB</small></strong><div class="host-ram-track" role="progressbar" aria-label="Machine RAM used" aria-valuemin="0" aria-valuemax="100"><i id="host-ram-bar"></i></div></div></article>
+          <article class="metric host-cpu-metric"><span>Machine CPU</span><div class="host-cpu-heading"><strong id="host-cpu-load">—</strong><small id="host-cpu-count">Waiting for telemetry</small></div><div id="host-cpu-cores" class="host-cpu-cores" aria-label="Per-core CPU load"></div></article>
           <article class="metric" id="prefix-reuse-metric" hidden><span>Prefix reuse</span><strong><b id="prefix-reuse">—</b><small> tokens</small></strong></article>
         </section>
 
@@ -193,6 +194,7 @@
 
         <section class="grid-main">
           <article class="panel topology-panel" id="topology" data-route-view="topology">
+            <div class="host-resource-list" id="topology-host-resources"></div>
             <div class="topology" id="topology-map"><div class="fabric-line"></div></div>
             <div class="legend"><span class="pill topology-count" id="node-count">0 nodes</span><span class="topology-statuses" id="topology-statuses"></span></div>
           </article>
@@ -216,6 +218,7 @@
         </section>
 
         <section class="panel memory-panel" id="memory" data-route-view="memory">
+          <div class="host-memory-grid" id="host-memory-grid"></div>
           <div class="memory-grid" id="memory-grid"></div>
           <div class="memory-labels memory-legend" id="memory-legend" hidden></div>
         </section>

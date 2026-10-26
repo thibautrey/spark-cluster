@@ -99,6 +99,8 @@ def test_local_snapshot_represents_each_gpu_and_storage(tmp_path):
     assert snapshot.cluster_name == "Unraid GPUs"
     assert len(snapshot.nodes) == 2
     assert snapshot.nodes[0].memory.total_gib == 8
+    assert snapshot.nodes[0].host.id == snapshot.nodes[1].host.id == "192.168.1.149"
+    assert snapshot.nodes[0].host.hostname == "Unraid GPUs"
     assert snapshot.nodes[0].loaded_model_ids == []
     assert snapshot.nodes[1].loaded_model_ids == ["acme/model"]
     assert snapshot.cache_tiers[0].persistent is True
