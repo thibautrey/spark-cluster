@@ -987,7 +987,8 @@ def build_fit_plan(
                     or pipeline in {"feature-extraction", "sentence-similarity"}
                     else 2
                 )
-                non_layer_weights = vocab * hidden * 2 * heads / GIB
+                dtype = str(model_config.get("torch_dtype") or model_config.get("dtype") or "")
+                non_layer_weights = vocab * hidden * (4 if "float32" in dtype else 2) * heads / GIB
                 if not vocab or not hidden:
                     non_layer_weights = complete_weights_gib
                     requirements.append(
@@ -1012,6 +1013,9 @@ def build_fit_plan(
                 runtime_fits = False
                 requirements.append("Insufficient measured host RAM for degraded loading.")
             notes.append(f"Degraded loading reserves {host_required:.2f} GiB of host RAM.")
+
+    if snapshot and snapshot.nodes and not available_nodes:
+        runtime_fits = False
 
     if not download_fits:
         fit_status = "insufficient-storage"

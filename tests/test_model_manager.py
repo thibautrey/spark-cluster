@@ -824,3 +824,25 @@ def test_weight_offload_preserves_unquantized_embedding_residency(tmp_path, monk
     )
     assert fit.resident_weights_gib > 1.15
     assert 3.3 < fit.offloaded_weights_gib < 3.4
+
+
+def test_degraded_loading_cannot_restore_an_offline_cluster_fit(tmp_path, monkeypatch):
+    monkeypatch.setattr("spark_cluster.model_manager.host_memory_available_gib", lambda: 40)
+    settings = Settings(
+        model_cache_path=tmp_path,
+        active_hardware="nvidia-gpu",
+        fallback_node_count=1,
+        fallback_node_memory_gib=8,
+    )
+    data = metadata(weight_gib=8, files=(("model.safetensors", 8 * GIB),))
+    data.config.update(vocab_size=32000, hidden_size=4096)
+    snapshot = ClusterSimulator("offline").snapshot()
+    for node in snapshot.nodes:
+        node.status = "offline"
+    fit = build_fit_plan(
+        ModelFitRequest(repo_id="acme/model", context_length=512, cpu_offload_gib=4),
+        data,
+        snapshot,
+        settings,
+    )
+    assert not fit.fits
