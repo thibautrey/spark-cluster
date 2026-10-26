@@ -82,9 +82,10 @@
         <div><small>${models.length ? 'Model memory' : external ? 'External use' : 'Idle'}</small><small>${available.toFixed(1)} GiB available</small></div>
       </div>`;
     }).join('') : '<div class="launch-gpu-meter unavailable"><small>Per-GPU memory telemetry unavailable</small></div>';
-    field('launch-pool-overview').innerHTML = `<div class="launch-pool-identity">
+    field('launch-pool-overview').innerHTML = `<div class="launch-pool-heading">
       <div><span aria-hidden="true">▣</span><h2>${escapeHtml(cluster.name)}</h2><em class="${healthy ? 'healthy' : 'unavailable'}">${healthy ? 'Healthy' : 'Unavailable'}</em></div>
-      ${window.performanceButton?.("pool", cluster.id, "Pool performance ↗") || ""}<p>${gpus.length || cluster.machines?.reduce((sum, machine) => sum + Number(machine.accelerators || 0), 0) || 0} GPUs connected · Automatic placement</p>
+      ${window.performanceButton?.("pool", cluster.id, "Pool performance ↗") || ""}
+    </div><div class="launch-pool-identity"><p>${gpus.length || cluster.machines?.reduce((sum, machine) => sum + Number(machine.accelerators || 0), 0) || 0} GPUs connected · Automatic placement</p>
     </div><div class="launch-gpu-grid">${gpuMarkup}</div>`;
   }
 
