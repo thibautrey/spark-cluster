@@ -288,7 +288,15 @@ class PoolNode:
         weights = fit.resident_weights_gib / ranks
         # Replicated KV is a conservative bound for GQA/MQA and MLA under TP.
         kv = fit.resident_kv_cache_gib / launch.pipeline_parallel
-        overhead = max(2.0 if settings.active_hardware == "nvidia-gpu" else 8.0, weights * 0.08)
+        small_pooling = (
+            getattr(fit, "pipeline_tag", None) in {"feature-extraction", "sentence-similarity"}
+            and not launch.cuda_graphs
+            and launch.max_num_batched_tokens <= 1024
+        )
+        workspace = 1.5 if small_pooling else 2.0
+        overhead = max(
+            workspace if settings.active_hardware == "nvidia-gpu" else 8.0, weights * 0.08
+        )
         return RuntimeResources(
             gpu_count=ranks,
             host_memory_gib=getattr(fit, "host_memory_gib", 0),

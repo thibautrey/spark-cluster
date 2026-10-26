@@ -503,3 +503,28 @@ def test_engine_payload_keeps_offload_and_cpu_layer_controls(tmp_path):
     assert "--no-kv-offload" in payload["Cmd"][0]
     with pytest.raises(ValueError):
         docker.runtime_payload(**args, engine_id="ollama", cpu_offload_gib=3)
+
+
+def test_small_eager_pooling_reduces_workspace_without_removing_gpu_weight_budget():
+    from types import SimpleNamespace
+
+    launch = ModelLaunchRequest(
+        model_id="org/embedding",
+        served_model_name="embedding",
+        cuda_graphs=False,
+        max_num_batched_tokens=1024,
+        cpu_offload_gib=4,
+    )
+    fit = SimpleNamespace(
+        resident_weights_gib=1.16,
+        resident_kv_cache_gib=0,
+        pipeline_tag="feature-extraction",
+        host_memory_gib=5,
+    )
+    resource = PoolNode.resources_for_fit(launch, fit, Settings(active_hardware="nvidia-gpu"))
+    assert resource.required_gib_per_gpu == pytest.approx(2.66)
+    assert resource.host_memory_gib == 5
+    launch.cuda_graphs = True
+    assert PoolNode.resources_for_fit(
+        launch, fit, Settings(active_hardware="nvidia-gpu")
+    ).required_gib_per_gpu == pytest.approx(3.16)
