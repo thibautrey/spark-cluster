@@ -1,0 +1,6 @@
+{
+  "name": "spark-cluster-ui", "private": true, "version": "1.0.0", "type": "module",
+  "scripts": {"dev": "vite --host 127.0.0.1", "build": "tsc -b && vite build", "typecheck": "tsc -b", "test": "vitest run", "test:e2e": "playwright test"},
+  "dependencies": {"@radix-ui/react-dialog": "^1.1.15", "@radix-ui/react-dropdown-menu": "^2.1.16", "@radix-ui/react-slot": "^1.2.3", "@tanstack/react-query": "^5.90.5", "class-variance-authority": "^0.7.1", "clsx": "^2.1.1", "dompurify": "^3.3.0", "lucide-react": "^0.548.0", "marked": "^16.4.0", "react": "^19.2.0", "react-dom": "^19.2.0", "tailwind-merge": "^3.3.1"},
+  "devDependencies": {"@playwright/test": "^1.56.1", "@tailwindcss/vite": "^4.1.16", "@testing-library/react": "^16.3.0", "@testing-library/user-event": "^14.6.1", "@types/react": "^19.2.2", "@types/react-dom": "^19.2.2", "@vitejs/plugin-react": "^5.0.4", "jsdom": "^27.0.1", "tailwindcss": "^4.1.16", "typescript": "^5.9.3", "vite": "^7.1.12", "vitest": "^3.2.4"}
+}

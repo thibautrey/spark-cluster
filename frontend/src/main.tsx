@@ -1,0 +1,10 @@
+import { StrictMode } from 'react';
+import {createRoot} from 'react-dom/client';
+import {QueryClient,QueryClientProvider} from '@tanstack/react-query';
+import {DashboardProvider} from './lib/context';
+import {PerformanceProvider} from './components/performance';
+import {AuthDialog} from './components/auth';
+import {App} from './App';
+import './styles.css';
+const client=new QueryClient({defaultOptions:{queries:{retry:false,refetchOnWindowFocus:true}}});
+createRoot(document.getElementById('root')!).render(<StrictMode><QueryClientProvider client={client}><DashboardProvider><PerformanceProvider><App/><AuthDialog/></PerformanceProvider></DashboardProvider></QueryClientProvider></StrictMode>);

@@ -14,3 +14,9 @@ coverage.xml
 .coverage
 htmlcov/
 setup-state/
+
+# Frontend tooling (the packaged static production build is committed).
+frontend/node_modules/
+frontend/*.tsbuildinfo
+frontend/test-results/
+frontend/playwright-report/
