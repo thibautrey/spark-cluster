@@ -398,13 +398,20 @@ Read [SECURITY.md](SECURITY.md) before exposing the service beyond a trusted LAN
 
 ```bash
 pip install -e '.[test,agent]'
+npm --prefix frontend ci
+npm --prefix frontend run build
+npm --prefix frontend test
 ruff check .
 ruff format --check .
 pytest
 helm lint deploy/helm/spark-cluster
 ```
 
-The frontend is dependency-free HTML, CSS, and JavaScript served by FastAPI. No frontend build step is required.
+The dashboard is a React 19 application written in strict TypeScript. Its shadcn/ui components use
+Radix primitives and Tailwind CSS. FastAPI serves the generated production assets at `/` and
+`/assets`; Docker builds them in a separate Node stage so the runtime image contains only Python and
+the compiled files. See [the React dashboard guide](docs/react-ui-migration.md) for development,
+contract generation, parity coverage, and packaging details.
 
 ## License
 
