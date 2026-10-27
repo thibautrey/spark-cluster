@@ -555,6 +555,29 @@ export function Models() {
               key={m.id}
               onClick={() => inspect(m.id)}
             >
+              <span className="catalog-cover" aria-hidden="true">
+                <span className="catalog-cover-fallback">
+                  {(m.id.split("/").at(-1) || m.author)
+                    .replace(/[^A-Za-z0-9]+/g, " ")
+                    .trim()
+                    .split(/\s+/)
+                    .slice(0, 2)
+                    .map((part) => part[0])
+                    .join("")
+                    .toUpperCase() || "HF"}
+                </span>
+                <img
+                  src={m.thumbnail_url}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  referrerPolicy="no-referrer"
+                  onError={(event) => {
+                    event.currentTarget.hidden = true;
+                  }}
+                />
+                {m.gated && <em>License required</em>}
+              </span>
               <div className="model-identity">
                 <Avatar model={m} />
                 <small>{m.author}</small>
@@ -563,7 +586,6 @@ export function Models() {
               <div className="actions">
                 <Badge>{m.task}</Badge>
                 <Badge>{m.library}</Badge>
-                {m.gated && <Badge>License required</Badge>}
               </div>
               {m.recommendation && m.recommendation.priority > 1 && (
                 <p className="good-text">{m.recommendation.label}</p>

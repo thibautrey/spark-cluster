@@ -91,9 +91,12 @@ export function App() {
       <div className="shell">
         <aside className="sidebar">
           <a className="brand" href="#overview">
-            <Layers size={28} />
+            <span className="brand-mark" aria-hidden="true">
+              <Layers size={19} />
+            </span>
             <span>
-              SPARK<small>CLUSTER CONTROL</small>
+              <b>SPARK</b>
+              <small>CLUSTER CONTROL</small>
             </span>
           </a>
           <nav aria-label="Main navigation">
@@ -143,7 +146,8 @@ export function App() {
                 </Select>
               </Field>
               <span className="note stream-status" title={snapshot?.timestamp}>
-                {snapshot ? "● telemetry" : "○ connecting"}
+                <i aria-hidden="true" />
+                {snapshot ? "Live telemetry" : "Connecting"}
               </span>
             </div>
           </header>

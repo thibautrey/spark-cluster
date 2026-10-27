@@ -241,6 +241,19 @@ export function Launch() {
           {visible.map(({ model: m, status, capacity, job }) => (
             <article className={`model-card ${status}`} key={m.id}>
               <header>
+                <span
+                  className={`launch-model-icon ${modelTask(m).toLowerCase()}`}
+                >
+                  {
+                    {
+                      Chat: "✧",
+                      Embeddings: "⌘",
+                      Transcription: "≋",
+                      Vision: "◇",
+                      Code: "〈〉",
+                    }[modelTask(m)]
+                  }
+                </span>
                 <Badge good={["ready", "running"].includes(status)}>
                   {
                     {

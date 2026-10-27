@@ -293,7 +293,13 @@ describe("React dashboard parity", () => {
           }
         : undefined;
     mount("models");
-    await screen.findByRole("button", { name: /acme.*chat/i });
+    const modelCard = await screen.findByRole("button", {
+      name: /acme.*chat/i,
+    });
+    expect(modelCard.querySelector(".catalog-cover")).not.toBeNull();
+    expect(
+      modelCard.querySelector(".catalog-cover img")?.getAttribute("src"),
+    ).toBe(catalog.thumbnail_url);
     expect(screen.queryByLabelText("Pool capacity")).toBeNull();
     await user.click(screen.getByRole("button", { name: /^Filters$/ }));
     await user.selectOptions(screen.getByLabelText("Pool capacity"), "2");
