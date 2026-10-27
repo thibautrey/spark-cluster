@@ -449,16 +449,9 @@ def test_detail_truncates_oversized_readme(catalog):
     assert result["readme_truncated"] is True
 
 
-def test_catalog_filters_are_hidden_until_requested(catalog):
+def test_catalog_ui_is_built_as_a_react_application(catalog):
     client, _, _ = catalog
     page = client.get("/").text
-    assert 'id="catalog-filter-open"' in page
-    assert 'id="catalog-filter-sheet" hidden' in page
-    assert '<details class="catalog-secondary" id="local-models-section">' in page
-    assert '<details class="catalog-secondary" id="download-history-section">' in page
-    assert 'id="local-model-query" type="search"' in page
-    assert page.index('id="local-models-section"') < page.index('id="catalog-grid"')
-    assert page.index('id="download-history-section"') < page.index('id="catalog-grid"')
-    assert '<details class="download-options" id="download-options">' in page
-    assert "Download once, distribute over LAN" not in page
-    assert "catalog-ranking-help" not in page
+    assert 'id="root"' in page
+    assert '/assets/index-' in page
+    assert '/assets/catalog.js' not in page

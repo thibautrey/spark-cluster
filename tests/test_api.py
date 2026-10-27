@@ -102,16 +102,9 @@ def test_dashboard_and_live_snapshot(tmp_path):
     with make_client(tmp_path) as client:
         page = client.get("/")
         assert page.status_code == 200
-        assert '<details class="launch-options" id="launch-options">' in page.text
-        assert 'id="launch-pool-overview"' in page.text
-        assert 'data-launch-filter="running"' in page.text
-        assert 'data-launch-filter="ready"' in page.text
-        assert 'placeholder="Search models or publishers…"' in page.text
-        assert 'id="pool-task"' in page.text
-        assert 'id="pool-sort"' in page.text
-        assert 'id="launch-layout" hidden' in page.text
-        assert '<div class="log-terminal empty" id="log-terminal">' in page.text
-        assert "Newest entries follow automatically" not in page.text
+        assert 'id="root"' in page.text
+        assert '/assets/index-' in page.text
+        assert '/assets/app.js' not in page.text
         response = client.get("/api/v1/snapshot")
         assert response.status_code == 200
         payload = response.json()
@@ -121,27 +114,21 @@ def test_dashboard_and_live_snapshot(tmp_path):
         control = client.get("/api/v1/control")
         assert control.status_code == 200
         assert set(control.json()) == {
-            "runtime",
-            "models",
-            "downloads",
-            "launches",
-            "logs_mode",
+            "runtime", "models", "downloads", "launches", "logs_mode",
             "runtime_control_mode",
         }
-        dashboard_js = client.get("/assets/app.js").text
-        assert "api('/api/v1/runtime')" in dashboard_js
-        assert "api('/api/v1/models')" in dashboard_js
-        assert "api('/api/v1/launches')" in dashboard_js
-        assert "if (modelInventoryIsNeeded()) void refreshModelInventory();" in dashboard_js
-        assert "await api('/api/v1/control')" not in dashboard_js
-        assert "function renderPoolEndpoint(pool)" in dashboard_js
-        assert "api('/api/v1/pool').then(renderPoolEndpoint)" in dashboard_js
         assert "Direct to cluster runtime" not in page.text
-        assert "OpenAI pool endpoint" in page.text
-        assert 'id="resource-history-sheet"' in page.text
-        assert "historyButton('gpu'" in dashboard_js
-        assert "api('/api/v1/history?minutes=30'" in dashboard_js
-        assert "`${window.location.origin}/v1`" in dashboard_js
+
+
+def test_react_bundle_replaces_legacy_dashboard_assets(tmp_path):
+    with make_client(tmp_path) as client:
+        page = client.get("/").text
+        assert 'id="root"' in page
+        assert client.get("/assets/app.js").status_code == 404
+        assert client.get("/assets/setup.js").status_code == 404
+        assert client.get("/assets/pool.js").status_code == 404
+        assert client.get("/assets/catalog.js").status_code == 404
+        assert '/assets/index-' in page
 
 
 def test_history_metrics_and_capacity(tmp_path):
@@ -575,95 +562,3 @@ def test_global_v1_supports_header_query_and_multipart_model_selection(tmp_path,
         "v1/audio/transcriptions",
     ]
     assert b"RIFFtest" in calls[2][2]
-
-
-def test_admin_token_is_origin_scoped_and_requested_in_a_sheet(tmp_path):
-    with make_client(tmp_path) as client:
-        page = client.get("/").text
-        script = client.get("/assets/app.js").text
-        pool = client.get("/assets/pool.js").text
-        setup = client.get("/assets/setup.js").text
-    assert 'id="admin-token-sheet"' in page
-    assert 'id="admin-token-value"' in page
-    assert "Stored locally in this browser after validation" in page
-    for removed_id in (
-        "pool-admin-token",
-        "launch-admin-token",
-        "cache-admin-token",
-        "action-admin-token",
-        "hf-token-admin",
-        "setup-token",
-    ):
-        assert f'id="{removed_id}"' not in page
-    assert "localStorage.setItem(adminTokenStorageKey, token)" in script
-    assert "localStorage.removeItem(adminTokenStorageKey)" in script
-    assert "if (response.status === 401)" in script
-    assert "requestAdminToken(" in script
-    assert "window.adminAuthHeaders = adminAuthHeaders" in script
-    assert "window.adminAuthHeaders()" in pool
-    assert "window.adminAuthHeaders()" in setup
-    assert "loadSetup(true, false)" in setup
-    assert "promptForAdmin = true" in script
-
-
-def test_runtime_ui_uses_guided_prepare_launch_workflows(tmp_path):
-    with make_client(tmp_path) as client:
-        page = client.get("/").text
-        app_script = client.get("/assets/app.js").text
-        runtime_script = client.get("/assets/runtimes.js").text
-        styles = client.get("/assets/app.css").text
-    assert "runtime-workspace-v1" in page
-    assert 'id="runtime-pool-overview"' in page
-    assert 'data-runtime-tab="engines"' in page
-    assert 'data-runtime-tab="packages"' in page
-    assert 'placeholder="Search runtimes…"' in page
-    assert 'id="runtime-engine-filter"' in page
-    assert "Prepare and launch" in app_script
-    assert "/api/v1/runtime-management/workflows" in app_script
-    assert "Set up ${esc(engine.name)}" in runtime_script
-    assert "Retry failed step" in runtime_script
-    assert "No pinned image configured" not in runtime_script
-    assert "Native host ready" in runtime_script
-    assert "revealPackageLibrary(true)" in runtime_script
-    assert "library.hosts.length === 1" in runtime_script
-    assert "renderPoolOverview" in runtime_script
-    assert "Launch a model ↗" in runtime_script
-    assert "Revalidate" in runtime_script
-    assert "runtimeDescription" in runtime_script
-    assert "runtime-pool-overview" in styles
-    assert "runtime-engine-footer" in styles
-
-
-def test_cluster_dropdown_exposes_global_capacity_context(tmp_path):
-    with make_client(tmp_path) as client:
-        page = client.get("/").text
-        app_script = client.get("/assets/app.js").text
-        pool_script = client.get("/assets/pool.js").text
-    assert "All compute pools" in app_script
-    assert "spark-cluster.cluster-context" in app_script
-    assert "window.selectedClusterContext" in app_script
-    assert "cluster-context-changed" in app_script
-    assert "window.selectedClusterContext?.()" in pool_script
-    assert "capacities.find(item => item.cluster_id === selected)" in pool_script
-    assert "capacity?.fits || capacity?.can_load" in pool_script
-    assert "cluster_id: window.selectedClusterContext" in pool_script
-    assert 'id="launch-pool-overview"' in page
-
-
-def test_pool_ui_renders_model_first_launch_workspace(tmp_path):
-    with make_client(tmp_path) as client:
-        page = client.get("/").text
-        pool_script = client.get("/assets/pool.js").text
-        pool_styles = client.get("/assets/app.css").text
-    assert "launch-card-progress" in pool_script
-    assert "launch-pool-overview" in pool_script
-    assert "launch-model-card" in pool_script
-    assert "Ready to launch" in pool_script
-    assert "Review requirements" in pool_script
-    assert "Automatic GPU placement" in pool_script
-    assert "data-launch-filter" in pool_script
-    assert "modelTask" in pool_script
-    assert "grid-template-columns:repeat(3" in pool_styles
-    assert "reserved_gib" in pool_script
-    assert "available_gib" in pool_script
-    assert "launch-inventory-v2" in page

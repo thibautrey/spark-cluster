@@ -477,17 +477,9 @@ def test_demo_wizard_end_to_end_without_network_or_ssh(tmp_path, monkeypatch):
     monkeypatch.setattr(app.state.setup_service.transport, "trust", forbidden)
     with TestClient(app) as client:
         page = client.get("/").text
-        assert "Compute pools" in page
-        assert "Discover machines" in page
-        assert "Connect an existing compute pool" in page
-        assert "Copy the command to the selected machine" in page
-        assert 'id="setup-trust"' not in page
-        assert 'id="setup-open-sheet"' in page
-        assert 'id="setup-sheet" hidden' in page
-        tree = SectionTree()
-        tree.feed(page)
-        assert tree.parents["models"] is None
-        assert client.get("/assets/setup.js").status_code == 200
+        assert 'id="root"' in page
+        assert '/assets/index-' in page
+        assert '/assets/setup.js' not in page
         discovery = client.post("/api/v1/setup/discover", json={}).json()
         assert len(discovery["nodes"]) == 4
         assert client.post("/api/v1/setup/check", json=plan().model_dump()).status_code == 200
@@ -626,17 +618,12 @@ async def test_native_macos_setup_registers_host_without_running_linux_installer
     store.close()
 
 
-def test_adaptive_onboarding_hides_dgx_controls_initially():
+def test_adaptive_onboarding_is_owned_by_the_react_source():
     from pathlib import Path
 
-    static = Path(__file__).parents[1] / "src/spark_cluster/static"
-    page = (static / "index.html").read_text()
-    script = (static / "assets/setup.js").read_text()
-    assert 'id="hardware-assistant" hidden' in page
-    assert 'id="setup-sync-guide" hidden' in page
-    assert "function requiresDgxFabric()" in script
-    assert "metal-agent" in script and "windows-agent" in script
-    assert "isNativeMacSetup" in script
-    assert "Register Mac" in script
-    assert 'id="setup-ready-summary"' in page
-    assert "setup-check-machine-summary" in page
+    source = (Path(__file__).parents[1] / "frontend/src/pages/setup.tsx").read_text()
+    assert 'machine_kind === "dgx-spark"' in source
+    assert "native-macos" in source
+    assert "Register Mac" in source
+    assert "Inspect cables" in source
+    assert "Hardware" in source

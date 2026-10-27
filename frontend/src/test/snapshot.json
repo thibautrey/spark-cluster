@@ -1,0 +1,154 @@
+{
+  "timestamp": "2026-10-27T16:29:49.727387Z",
+  "cluster_name": "Test pool",
+  "status": "healthy",
+  "nodes": [
+    {
+      "id": "spark-1",
+      "hostname": "spark-1",
+      "role": "head",
+      "status": "healthy",
+      "address": "10.10.0.11",
+      "memory": {
+        "total_gib": 128.0,
+        "used_gib": 85.2,
+        "kv_cache_gib": 10.3,
+        "model_gib": 68.4,
+        "accelerator_used_gib": 85.2,
+        "kv_cache_source": "estimated"
+      },
+      "host": null,
+      "gpu_utilization": 63.8,
+      "temperature_c": 67.9,
+      "input_tokens_per_second": 210.3,
+      "output_tokens_per_second": 18.0,
+      "active_requests": 3,
+      "loaded_model_ids": [],
+      "last_seen": "2026-10-27T16:29:49.727326Z"
+    },
+    {
+      "id": "spark-2",
+      "hostname": "spark-2",
+      "role": "worker",
+      "status": "healthy",
+      "address": "10.10.0.12",
+      "memory": {
+        "total_gib": 128.0,
+        "used_gib": 89.8,
+        "kv_cache_gib": 11.3,
+        "model_gib": 68.4,
+        "accelerator_used_gib": 89.8,
+        "kv_cache_source": "estimated"
+      },
+      "host": null,
+      "gpu_utilization": 67.4,
+      "temperature_c": 68.3,
+      "input_tokens_per_second": 238.8,
+      "output_tokens_per_second": 20.4,
+      "active_requests": 4,
+      "loaded_model_ids": [],
+      "last_seen": "2026-10-27T16:29:49.727337Z"
+    },
+    {
+      "id": "spark-3",
+      "hostname": "spark-3",
+      "role": "worker",
+      "status": "healthy",
+      "address": "10.10.0.13",
+      "memory": {
+        "total_gib": 128.0,
+        "used_gib": 89.3,
+        "kv_cache_gib": 12.3,
+        "model_gib": 68.4,
+        "accelerator_used_gib": 89.3,
+        "kv_cache_source": "estimated"
+      },
+      "host": null,
+      "gpu_utilization": 68.5,
+      "temperature_c": 69.3,
+      "input_tokens_per_second": 237.1,
+      "output_tokens_per_second": 20.3,
+      "active_requests": 4,
+      "loaded_model_ids": [],
+      "last_seen": "2026-10-27T16:29:49.727345Z"
+    },
+    {
+      "id": "spark-4",
+      "hostname": "spark-4",
+      "role": "worker",
+      "status": "healthy",
+      "address": "10.10.0.14",
+      "memory": {
+        "total_gib": 128.0,
+        "used_gib": 91.9,
+        "kv_cache_gib": 13.3,
+        "model_gib": 68.4,
+        "accelerator_used_gib": 91.9,
+        "kv_cache_source": "estimated"
+      },
+      "host": null,
+      "gpu_utilization": 69.2,
+      "temperature_c": 69.5,
+      "input_tokens_per_second": 261.2,
+      "output_tokens_per_second": 22.3,
+      "active_requests": 5,
+      "loaded_model_ids": [],
+      "last_seen": "2026-10-27T16:29:49.727350Z"
+    }
+  ],
+  "cache_tiers": [
+    {
+      "name": "GPU KV",
+      "kind": "gpu",
+      "used_gib": 38.4,
+      "capacity_gib": 64.0,
+      "hits": 92192,
+      "misses": 11033,
+      "read_latency_ms": 0.8,
+      "persistent": false
+    },
+    {
+      "name": "Unified memory",
+      "kind": "cpu",
+      "used_gib": 119.9,
+      "capacity_gib": 220.0,
+      "hits": 41083,
+      "misses": 9015,
+      "read_latency_ms": 2.5,
+      "persistent": false
+    },
+    {
+      "name": "Local NVMe",
+      "kind": "nvme",
+      "used_gib": 734.8,
+      "capacity_gib": 2048.0,
+      "hits": 12254,
+      "misses": 3122,
+      "read_latency_ms": 6.7,
+      "persistent": true
+    },
+    {
+      "name": "Shared cache",
+      "kind": "remote",
+      "used_gib": 1214.3,
+      "capacity_gib": 4096.0,
+      "hits": 6252,
+      "misses": 2011,
+      "read_latency_ms": 14.0,
+      "persistent": true
+    }
+  ],
+  "runtime": {
+    "model": "deepseek-ai/DeepSeek-R1",
+    "quantization": "NVFP4",
+    "context_length": 524288,
+    "tensor_parallel": 4,
+    "pipeline_parallel": 1,
+    "uptime_seconds": 0,
+    "queued_requests": 2
+  },
+  "total_input_tokens_per_second": 947.4,
+  "total_output_tokens_per_second": 81.0,
+  "cache_hit_rate": 85.77,
+  "prefix_reuse_tokens": 84273191
+}

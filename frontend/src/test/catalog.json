@@ -1,0 +1,52 @@
+{
+  "id": "acme/chat",
+  "author": "acme",
+  "downloads": 0,
+  "likes": 0,
+  "task": "text-generation",
+  "library": "transformers",
+  "tags": [],
+  "gated": false,
+  "updated": null,
+  "parameters": 1000000000,
+  "thumbnail_url": "https://huggingface.co/acme/chat.png",
+  "icon_url": null,
+  "commit": null,
+  "spark": {
+    "tier": "general",
+    "score": 0,
+    "label": "General checkpoint",
+    "badges": [],
+    "reasons": [],
+    "caveats": [],
+    "version": "spark-signals-v2"
+  },
+  "recommendation": {
+    "version": "evidence-v3-mia-tonyd2wild",
+    "label": "Unverified candidate",
+    "priority": 0,
+    "evidence": 0,
+    "publisher": "community",
+    "variant": "standard",
+    "reasons": [],
+    "caveats": [],
+    "sources": [],
+    "reported_nodes": [],
+    "runtime": null,
+    "reviewed": null
+  },
+  "revision": "main",
+  "license": null,
+  "readme": "# Acme chat\n\n**Model documentation**",
+  "readme_path": null,
+  "readme_truncated": false,
+  "architecture": null,
+  "files": [
+    {
+      "name": "README.md",
+      "size": 40
+    }
+  ],
+  "repository_bytes": 1073741824,
+  "size_complete": true
+}

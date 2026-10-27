@@ -1,6 +1,115 @@
-import {useCallback,useEffect,useRef,useState} from 'react';
-import {useApi} from '@/lib/api';
-import {useSocket} from '@/lib/context';
-import type {RuntimeLog} from '@/lib/schema';
-import {Panel,Field,Select,Button,Message,Empty} from '@/components/common';
-export function Logs(){const history=useApi<RuntimeLog[]>('/api/v1/logs?limit=1000');const[entries,setEntries]=useState<RuntimeLog[]>([]);const[paused,setPaused]=useState(false);const[instance,setInstance]=useState('');const[level,setLevel]=useState('');const live=useRef<RuntimeLog[]>([]);const terminal=useRef<HTMLDivElement>(null);useEffect(()=>{if(history.data)setEntries([...history.data,...live.current].slice(-2000));},[history.data]);const receive=useCallback((entry:RuntimeLog)=>{live.current=[...live.current,entry].slice(-2000);setEntries(v=>[...v,entry].slice(-2000));},[]);useSocket('/api/v1/logs/stream',receive);const frozen=useRef<RuntimeLog[]>([]);const visible=(paused?frozen.current:entries).filter(e=>(!instance||e.pod===instance)&&(!level||e.level===level));useEffect(()=>{if(!paused&&terminal.current)terminal.current.scrollTop=terminal.current.scrollHeight;},[entries,paused,instance,level]);return <Panel title="Runtime logs" actions={<><Button variant="outline" onClick={()=>{frozen.current=entries;setPaused(v=>!v);}}>{paused?'Resume':'Pause'}</Button><Button variant="outline" onClick={()=>{setEntries([]);live.current=[];frozen.current=[];}}>Clear</Button></>}><div className="toolbar"><Field label="Instance"><Select value={instance} onChange={e=>setInstance(e.target.value)}><option value="">All instances</option>{[...new Set(entries.map(e=>e.pod))].map(x=><option key={x}>{x}</option>)}</Select></Field><Field label="Level"><Select value={level} onChange={e=>setLevel(e.target.value)}><option value="">All levels</option>{['debug','info','warning','error'].map(x=><option key={x}>{x}</option>)}</Select></Field></div><Message error={history.error}/><div className="terminal" ref={terminal} role="log" aria-live={paused?'off':'polite'}>{visible.length?visible.slice(-1000).map((e,i)=><div key={`${e.timestamp}-${i}`} className={`log-line ${e.level}`}><time>{new Date(e.timestamp).toLocaleTimeString()}</time><b>{e.pod}</b><span>{e.level}</span><span>{e.message}</span></div>):<Empty>{entries.length?'No matching logs':'Logs will appear when a runtime starts.'}</Empty>}</div><p className="note">{visible.length} lines · {paused?'paused':'streaming'}</p></Panel>;}
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useApi } from "@/lib/api";
+import { useSocket } from "@/lib/context";
+import type { RuntimeLog } from "@/lib/schema";
+import {
+  Panel,
+  Field,
+  Select,
+  Button,
+  Message,
+  Empty,
+} from "@/components/common";
+export function Logs() {
+  const history = useApi<RuntimeLog[]>("/api/v1/logs?limit=1000");
+  const [entries, setEntries] = useState<RuntimeLog[]>([]);
+  const [paused, setPaused] = useState(false);
+  const [instance, setInstance] = useState("");
+  const [level, setLevel] = useState("");
+  const live = useRef<RuntimeLog[]>([]);
+  const terminal = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (history.data)
+      setEntries([...history.data, ...live.current].slice(-2000));
+  }, [history.data]);
+  const receive = useCallback((entry: RuntimeLog) => {
+    live.current = [...live.current, entry].slice(-2000);
+    setEntries((v) => [...v, entry].slice(-2000));
+  }, []);
+  useSocket("/api/v1/logs/stream", receive);
+  const frozen = useRef<RuntimeLog[]>([]);
+  const visible = (paused ? frozen.current : entries).filter(
+    (e) => (!instance || e.pod === instance) && (!level || e.level === level),
+  );
+  useEffect(() => {
+    if (!paused && terminal.current)
+      terminal.current.scrollTop = terminal.current.scrollHeight;
+  }, [entries, paused, instance, level]);
+  return (
+    <Panel
+      title="Runtime logs"
+      actions={
+        <>
+          <Button
+            variant="outline"
+            onClick={() => {
+              frozen.current = entries;
+              setPaused((v) => !v);
+            }}
+          >
+            {paused ? "Resume" : "Pause"}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setEntries([]);
+              live.current = [];
+              frozen.current = [];
+            }}
+          >
+            Clear
+          </Button>
+        </>
+      }
+    >
+      <div className="toolbar">
+        <Field label="Instance">
+          <Select
+            value={instance}
+            onChange={(e) => setInstance(e.target.value)}
+          >
+            <option value="">All instances</option>
+            {[...new Set(entries.map((e) => e.pod))].map((x) => (
+              <option key={x}>{x}</option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Level">
+          <Select value={level} onChange={(e) => setLevel(e.target.value)}>
+            <option value="">All levels</option>
+            {["debug", "info", "warning", "error"].map((x) => (
+              <option key={x}>{x}</option>
+            ))}
+          </Select>
+        </Field>
+      </div>
+      <Message error={history.error} />
+      <div
+        className="terminal"
+        ref={terminal}
+        role="log"
+        aria-live={paused ? "off" : "polite"}
+      >
+        {visible.length ? (
+          visible.slice(-1000).map((e, i) => (
+            <div key={`${e.timestamp}-${i}`} className={`log-line ${e.level}`}>
+              <time>{new Date(e.timestamp).toLocaleTimeString()}</time>
+              <b>{e.pod}</b>
+              <span>{e.level}</span>
+              <span>{e.message}</span>
+            </div>
+          ))
+        ) : (
+          <Empty>
+            {entries.length
+              ? "No matching logs"
+              : "Logs will appear when a runtime starts."}
+          </Empty>
+        )}
+      </div>
+      <p className="note">
+        {visible.length} lines · {paused ? "paused" : "streaming"}
+      </p>
+    </Panel>
+  );
+}

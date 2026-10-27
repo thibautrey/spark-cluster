@@ -1,25 +1,832 @@
-import {useEffect,useState} from 'react';
-import {api,post,useAction,useApi} from '@/lib/api';
-import {useDashboardContext} from '@/lib/context';
-import type {Candidate,Enrollment,SetupState,SetupReport} from '@/lib/types';
-import type {SetupJob,SetupCheck,HardwareTopology} from '@/lib/schema';
-import {Panel,Button,Field,Input,Select,Message,Empty,Sheet,Copy,Badge} from '@/components/common';
-export function Setup(){const{clusters,selectCluster,action:clusterAction,refresh}=useDashboardContext();const[open,setOpen]=useState(false);const action=useAction();const[existing,setExisting]=useState('');const[port,setPort]=useState(30080);return <><Panel title="Compute pools" actions={<><Button variant="outline" disabled={action.busy} onClick={()=>void action.run(async()=>{await post('/api/v1/clusters/local-docker',{name:'Unraid GPUs'});await refresh();})}>{clusters?.clusters.some(c=>c.kind==='local-docker')?'Refresh local GPUs':'Detect local GPUs'}</Button><Button onClick={()=>setOpen(true)}>Add compute pool</Button></>}><Message error={action.error||clusterAction.error}>{action.message}</Message><div className="card-grid">{clusters?.clusters.map(c=><article className="node-card" key={c.id}><div className="split"><h3>{c.name}</h3><Badge good={c.active}>{c.active?'Active':c.status}</Badge></div><p>{c.kind==='local-docker'?`${c.gpu_count} × ${c.gpu_model||'NVIDIA GPU'} · ${c.gpu_memory_gib} GiB each`:c.endpoint}</p><Button variant="outline" disabled={clusterAction.busy} onClick={()=>void selectCluster(c.id)}>Use this pool</Button></article>)}</div>{!clusters?.clusters.length&&<Empty>No compute pool configured. Add a compute pool to begin.</Empty>}<details><summary>Connect an existing compute pool</summary><form onSubmit={e=>{e.preventDefault();void action.run(async()=>{await post('/api/v1/setup/connect',{address:existing.trim(),port});await refresh();location.hash='#overview';});}}><div className="toolbar"><Field label="Controller IPv4"><Input value={existing} onChange={e=>setExisting(e.target.value)} required/></Field><Field label="Bridge port"><Input type="number" min={1024} max={65535} value={port} onChange={e=>setPort(+e.target.value)}/></Field><Button disabled={action.busy}>Connect</Button></div></form></details></Panel>{open&&<SetupWizard close={()=>setOpen(false)}/>}</>;}
-function Checks({checks}:{checks:SetupCheck[]}){return <div className="stack">{checks.map((c,i)=><article className={`diagnostic ${c.status}`} key={`${c.node}-${c.code}-${i}`}><b>{c.status==='pass'?'✓':'!'} {c.message}</b><small>{c.node} · {c.code}{c.automatic?' · automatic repair during installation':''}</small>{c.remedy&&<p>{c.remedy}</p>}</article>)}</div>;}
-function SetupWizard({close}:{close:()=>void}){const state=useApi<SetupState>('/api/v1/setup',2000);const action=useAction();const[stage,setStage]=useState(0);const[candidates,setCandidates]=useState<Candidate[]>([]);const[nodes,setNodes]=useState<Candidate[]>([]);const[subnet,setSubnet]=useState('');const[address,setAddress]=useState('');const[name,setName]=useState('compute-pool');const[topology,setTopology]=useState('single');const[checks,setChecks]=useState<SetupCheck[]|null>(null);const[hardware,setHardware]=useState<HardwareTopology|null>(null);const[approved,setApproved]=useState(false);const[jobId,setJobId]=useState<string|null>(null);const[restored,setRestored]=useState(false);const[note,setNote]=useState('');const job=state.data?.jobs.find(j=>j.id===jobId);const dgx=nodes.length>1&&nodes.every(n=>n.machine_kind==='dgx-spark');const native=nodes.length===1&&nodes[0].setup_mode==='native-macos';
-useEffect(()=>{if(state.data&&!restored){setRestored(true);const previous=state.data.jobs[0];if(previous){setJobId(previous.id);setName(previous.request.name);setTopology(previous.request.topology);setNodes(previous.request.nodes.map(n=>({...n,hostname:n.address})));setStage(previous.status==='ready'?4:3);}}},[state.data,restored]);useEffect(()=>{if(job?.status==='ready')setStage(4);},[job?.status]);
-useEffect(()=>{if(stage!==1)return;let stopped=false;let running=false;const poll=async()=>{if(running)return;const pending=nodes.filter(n=>n.bootstrap_id&&!['ready','expired'].includes(n.access_status||''));if(!pending.length)return;running=true;try{const results=await Promise.all(pending.map(async n=>({address:n.address,enrollment:await api<Enrollment>(`/api/v1/setup/bootstrap/${encodeURIComponent(n.bootstrap_id!)}`)})));if(!stopped)setNodes(current=>current.map(n=>{const result=results.find(r=>r.address===n.address)?.enrollment;return result?{...n,access_status:result.status,access_error:result.error||'',username:result.username||n.username,fingerprint:result.fingerprint||n.fingerprint}:n;}));}catch(e){if(!stopped)action.setError(e instanceof Error?e.message:String(e));}finally{running=false;}};const timer=setInterval(()=>void poll(),1500);return()=>{stopped=true;clearInterval(timer);};},[stage,nodes]);
-function invalidate(){setChecks(null);setHardware(null);setApproved(false);}
-function payload(){return{name,topology,nodes:nodes.map(n=>({address:n.address,username:n.username||'',fingerprint:n.fingerprint,role:n.role||'worker',fabric_address:n.fabric_address||null}))};}
-async function bootstrap(n:Candidate){const result=await post<Enrollment>('/api/v1/setup/bootstrap',{address:n.address});setNodes(current=>current.map(x=>x.address===n.address?{...x,bootstrap_id:result.id,access_status:result.status,access_command:result.command,access_error:result.error,username:result.username||x.username,fingerprint:result.fingerprint||x.fingerprint}:x));}
-async function next(){if(stage===0){setNodes(current=>current.map((n,i)=>({...n,role:i===0?'head':'worker'})));setTopology(nodes.length===1?'single':'switch');setStage(1);for(const n of nodes)if(!n.bootstrap_id)await bootstrap(n);}else if(stage===1)setStage(2);else if(stage===2){const job=await post<SetupJob>('/api/v1/setup/jobs',payload());setJobId(job.id);setStage(3);}}
-async function report(kind:string){const result=await post<SetupReport>(`/api/v1/setup/${kind}`,payload());setChecks(result.checks);setHardware(result.topology);setNodes(current=>current.map(n=>({...n,...result.nodes.find(x=>x.address===n.address)})));setApproved(false);}
-const nextDisabled=action.busy||!state.data?.enabled||!nodes.length||(stage===1&&(nodes.some(n=>n.access_status!=='ready'||!n.username?.trim())||(dgx&&(!hardware||hardware.verdict==='error'))))||(stage===2&&(!checks||checks.some(c=>c.status==='error')||!approved));
-return <Sheet open onOpenChange={v=>{if(!v)close();}} title="Configure compute pool" description={state.data?.mode==='demo'?'Demo · simulated machines and installation':state.data?.connected_cluster?`Controller · ${state.data.connected_cluster.cluster_name}`:'Guided machine setup'}><ol className="step-rail">{['Discover','Connect','Check readiness','Install','Ready'].map((s,i)=><li key={s} aria-current={stage===i?'step':undefined} className={stage===i?'current':stage>i?'done':''}>{i+1}. {s}</li>)}</ol><Message error={action.error||state.error}/>{state.error&&<Button disabled={action.busy} variant="outline" onClick={()=>void action.run(()=>api('/api/v1/setup',{interactive:true}))}>Administrator access</Button>}
-{stage===0&&<><h3>Discover machines</h3><p className="note">Power on the machines and enable SSH on the management LAN.</p><div className="form-grid"><Field label="Subnet (optional)"><Input value={subnet} onChange={e=>setSubnet(e.target.value)} placeholder="192.168.1.0/24"/></Field><Field label="Machine IPv4 (optional)"><Input value={address} onChange={e=>setAddress(e.target.value)} placeholder="192.168.1.42"/></Field></div><Button disabled={action.busy} onClick={()=>void action.run(async()=>{const result=await post<{nodes:Candidate[];notes:string[]}>('/api/v1/setup/discover',{subnet:subnet.trim()||null,addresses:address.trim()?[address.trim()]:[]});setCandidates([...new Map([...result.nodes,...nodes].map(n=>[n.address,n])).values()]);setNote(result.notes.join(' '));})}>{action.busy?'Discovering…':'Discover machines'}</Button><p role="status" className="note">{note}</p>{candidates.map(n=><label className="node-choice" key={n.address}><input type="checkbox" checked={nodes.some(x=>x.address===n.address)} onChange={e=>{setNodes(current=>e.target.checked?[...current,{...n,username:'',role:'worker',access_status:'pending'}]:current.filter(x=>x.address!==n.address));invalidate();}}/><div><b>{n.hostname}</b><small>{n.address} · {n.source} · SSH reachable</small></div></label>)}</>}
-{stage===1&&<><h3>{native?'Configure native Mac':'Configure machines'}</h3><div className="form-grid"><Field label="Compute pool name"><Input value={name} pattern="[a-z][a-z0-9-]{0,39}" onChange={e=>{setName(e.target.value);invalidate();}}/></Field><Field label="Machine topology"><Select value={topology} onChange={e=>{setTopology(e.target.value);invalidate();}}>{nodes.length===1?<option value="single">Single machine · one or more GPUs</option>:<><option value="switch">Networked machines</option>{dgx&&<><option value="direct">Direct high-speed links</option>{nodes.length===4&&<option value="ring">DGX Spark ring</option>}</>}</>}</Select></Field></div>{nodes.map(n=><article className="node-card stack" key={n.address}><div className="split"><div><b>{n.hostname||n.address}</b><small>{n.machine_kind||'Hardware detected during readiness check'} · {n.platform} · {n.architecture}</small></div>{n.setup_mode!=='native-macos'&&<label className="check"><input type="radio" name="head" checked={n.role==='head'} onChange={()=>{setNodes(current=>current.map(x=>({...x,role:x.address===n.address?'head':'worker'})));invalidate();}}/>Head</label>}</div><Badge good={n.access_status==='ready'}>{n.access_status==='ready'?`✓ ${n.username} · SSH verified`:n.access_status||'Waiting for connection'}</Badge>{n.access_status!=='ready'&&n.access_command&&<div className="endpoint"><code>{n.access_command}</code><Copy value={n.access_command} label="Copy command"/></div>}{n.access_status!=='ready'&&<p className="note">Run the generated command on this machine. It expires after 15 minutes. The dedicated private key stays on the controller.</p>}{n.access_error&&<p className="error">{n.access_error}</p>}{['error','expired'].includes(n.access_status||'')&&<Button variant="outline" disabled={action.busy} onClick={()=>void action.run(()=>bootstrap(n))}>Generate a new command</Button>}{dgx&&<Field label={`Fabric IPv4 ${n.address}`}><Input value={n.fabric_address||''} onChange={e=>{setNodes(current=>current.map(x=>x.address===n.address?{...x,fabric_address:e.target.value}:x));invalidate();}}/></Field>}</article>)}{nodes.some(n=>!n.bootstrap_id)&&<Button disabled={action.busy} onClick={()=>void action.run(async()=>{for(const n of nodes)if(!n.bootstrap_id)await bootstrap(n);})}>Generate connection commands</Button>}{dgx&&<><h3>ConnectX-7 cable assistant</h3><p className="note">Keep RJ45 management Ethernet connected. Connect the wide QSFP112 ports following the selected layout, fully seat each cable, then inspect its carrier, speed, RDMA and peer network.</p><Button variant="outline" disabled={action.busy||nodes.some(n=>n.access_status!=='ready')} onClick={()=>void action.run(()=>report('hardware'))}>Inspect cables</Button>{hardware?<Hardware topology={hardware}/>:<Empty>Inspect the selected machines to verify the physical links.</Empty>}</>}</>}
-{stage===2&&<><h3>Readiness & assisted fixes</h3><p className="note">Checks adapt to OS, accelerator, memory, storage, SSH and network topology.</p><Button variant="outline" disabled={action.busy} onClick={()=>void action.run(()=>report('check'))}>Run checks</Button>{checks?<Checks checks={checks}/>:<Empty>Run readiness checks before installing.</Empty>}{hardware&&dgx&&<Hardware topology={hardware}/>}<h3>{native?'Review Mac registration':'Review installation'}</h3><p>{name}: {nodes.map(n=>`${n.username}@${n.address} (${n.setup_mode==='native-macos'?'native Metal host':n.role})`).join(', ')}</p><p className="note">{native?'The Mac is registered with its pinned SSH identity and detected darwin/arm64 platform. No Linux, k3s or NVIDIA commands will run.':'The installation plan adapts to the detected machine type. Unsupported platforms do not receive Linux or DGX commands.'}</p><label className="check"><input type="checkbox" checked={approved} onChange={e=>setApproved(e.target.checked)}/>{native?'Register this Mac as a trusted native runtime host.':'Install the proposed services on the selected machines.'}</label></>}
-{stage===3&&job&&<><div className="split"><h3>{job.mode==='native-macos'?'Registering native Mac':job.mode==='demo'?'Simulated installation':'Installing compute pool services'}</h3><Badge>{job.status}</Badge></div><p className="note">Progress is saved automatically. Resume after an interruption to verify and reconcile configuration.</p>{job.steps.map((s,i)=><article className="list-row" key={s.id}><span className="step-number">{s.status==='done'?'✓':i+1}</span><div><b>{s.label}</b><small>{s.message||s.status}</small></div></article>)}<pre className="terminal" aria-label="Setup logs">{job.logs.map(l=>`${new Date(l.timestamp).toLocaleTimeString()} ${l.node}\n${l.message}`).join('\n\n')}</pre><Checks checks={job.checks.filter(c=>c.status!=='pass')}/>{['failed','blocked'].includes(job.status)&&<><Message error={job.error}/><div className="actions"><Button disabled={action.busy} onClick={()=>void action.run(async()=>{await post(`/api/v1/setup/jobs/${job.id}/resume`);})}>Retry / resume setup</Button><Button variant="outline" onClick={()=>{setJobId(null);invalidate();setStage(1);}}>Revise plan</Button></div></>}</>}
-{stage===4&&job&&<><h3>{job.mode==='native-macos'?'Your Mac is registered':job.mode==='demo'?'Demo setup complete':'Your compute pool is ready'}</h3><p>{job.mode==='native-macos'?'SSH identity, host key, Apple Silicon and Metal passed verification. Choose a compatible native runtime package.':'Machine registration, accelerator scheduling, telemetry and model storage passed verification. Add a model and launch it to verify inference.'}</p><div className="actions"><Button asChild><a href={job.dashboard_url||(job.mode==='native-macos'?'#runtimes':'#models')} onClick={close}>{job.mode==='native-macos'?'Choose a Metal runtime':'Open pool dashboard'} ↗</a></Button><Button variant="outline" onClick={()=>{setJobId(null);setNodes([]);setCandidates([]);invalidate();setStage(0);}}>Configure another pool</Button></div></>}
-{stage<3&&<div className="split"><span className="note">{nodes.length} machines selected</span><div className="actions">{stage>0&&<Button variant="outline" disabled={action.busy} onClick={()=>setStage(s=>s-1)}>Back</Button>}<Button disabled={nextDisabled} onClick={()=>void action.run(next)}>{['Choose machines →','Check readiness →',native?'Register Mac →':'Install compute pool →'][stage]}</Button></div></div>}</Sheet>;}
-function Hardware({topology:t}:{topology:HardwareTopology}){return <div className="stack"><div className="split"><b>{t.summary}</b><Badge good={t.verdict==='pass'}>{t.detected_cables} / {t.expected_cables} cables · {t.verdict}</Badge></div><div className="hardware-diagram">{t.nodes.map(n=><div className="hardware-device" key={n.address}><b>{n.role==='head'?'H':'W'} · {n.hostname}</b><small>{n.address}</small>{n.ports.map(p=><span key={p.name} className={p.status==='connected'?'good-text':'note'}>{p.name} · {p.speed_gbps}G · {p.status}{p.rdma?' · RDMA':''}</span>)}</div>)}{t.topology==='switch'&&<div className="hardware-device"><b>Ethernet switch</b><small>200G · one link per Spark</small></div>}</div>{t.links.map((l,i)=><p key={i} className={l.status==='pass'?'good-text':'note'}>{l.source} {l.source_port} ⇄ {l.target} {l.target_port} · {l.speed_gbps}G · {l.message}</p>)}{t.instructions.map((i,n)=><article className={`diagnostic ${i.status}`} key={n}><b>{n+1}. {i.title}</b><p>{i.detail}</p></article>)}</div>;}
+import { useEffect, useState } from "react";
+import { api, post, useAction, useApi } from "@/lib/api";
+import { useDashboardContext } from "@/lib/context";
+import type {
+  Candidate,
+  Enrollment,
+  SetupState,
+  SetupReport,
+} from "@/lib/types";
+import type { SetupJob, SetupCheck, HardwareTopology } from "@/lib/schema";
+import {
+  Panel,
+  Button,
+  Field,
+  Input,
+  Select,
+  Message,
+  Empty,
+  Sheet,
+  Copy,
+  Badge,
+} from "@/components/common";
+export function Setup() {
+  const {
+    clusters,
+    selectCluster,
+    action: clusterAction,
+    refresh,
+  } = useDashboardContext();
+  const [open, setOpen] = useState(false);
+  const action = useAction();
+  const [existing, setExisting] = useState("");
+  const [port, setPort] = useState(30080);
+  return (
+    <>
+      <Panel
+        title="Compute pools"
+        actions={
+          <>
+            <Button
+              variant="outline"
+              disabled={action.busy}
+              onClick={() =>
+                void action.run(async () => {
+                  await post("/api/v1/clusters/local-docker", {
+                    name: "Unraid GPUs",
+                  });
+                  await refresh();
+                })
+              }
+            >
+              {clusters?.clusters.some((c) => c.kind === "local-docker")
+                ? "Refresh local GPUs"
+                : "Detect local GPUs"}
+            </Button>
+            <Button onClick={() => setOpen(true)}>Add compute pool</Button>
+          </>
+        }
+      >
+        <Message error={action.error || clusterAction.error}>
+          {action.message}
+        </Message>
+        <div className="card-grid">
+          {clusters?.clusters.map((c) => (
+            <article className="node-card" key={c.id}>
+              <div className="split">
+                <h3>{c.name}</h3>
+                <Badge good={c.active}>{c.active ? "Active" : c.status}</Badge>
+              </div>
+              <p>
+                {c.kind === "local-docker"
+                  ? `${c.gpu_count} × ${c.gpu_model || "NVIDIA GPU"} · ${c.gpu_memory_gib} GiB each`
+                  : c.endpoint}
+              </p>
+              <Button
+                variant="outline"
+                disabled={clusterAction.busy}
+                onClick={() => void selectCluster(c.id)}
+              >
+                Use this pool
+              </Button>
+            </article>
+          ))}
+        </div>
+        {!clusters?.clusters.length && (
+          <Empty>
+            No compute pool configured. Add a compute pool to begin.
+          </Empty>
+        )}
+        <details>
+          <summary>Connect an existing compute pool</summary>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void action.run(async () => {
+                await post("/api/v1/setup/connect", {
+                  address: existing.trim(),
+                  port,
+                });
+                await refresh();
+                location.hash = "#overview";
+              });
+            }}
+          >
+            <div className="toolbar">
+              <Field label="Controller IPv4">
+                <Input
+                  value={existing}
+                  onChange={(e) => setExisting(e.target.value)}
+                  required
+                />
+              </Field>
+              <Field label="Bridge port">
+                <Input
+                  type="number"
+                  min={1024}
+                  max={65535}
+                  value={port}
+                  onChange={(e) => setPort(+e.target.value)}
+                />
+              </Field>
+              <Button disabled={action.busy}>Connect</Button>
+            </div>
+          </form>
+        </details>
+      </Panel>
+      {open && <SetupWizard close={() => setOpen(false)} />}
+    </>
+  );
+}
+function Checks({ checks }: { checks: SetupCheck[] }) {
+  return (
+    <div className="stack">
+      {checks.map((c, i) => (
+        <article
+          className={`diagnostic ${c.status}`}
+          key={`${c.node}-${c.code}-${i}`}
+        >
+          <b>
+            {c.status === "pass" ? "✓" : "!"} {c.message}
+          </b>
+          <small>
+            {c.node} · {c.code}
+            {c.automatic ? " · automatic repair during installation" : ""}
+          </small>
+          {c.remedy && <p>{c.remedy}</p>}
+        </article>
+      ))}
+    </div>
+  );
+}
+function SetupWizard({ close }: { close: () => void }) {
+  const state = useApi<SetupState>("/api/v1/setup", 2000);
+  const action = useAction();
+  const [stage, setStage] = useState(0);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [nodes, setNodes] = useState<Candidate[]>([]);
+  const [subnet, setSubnet] = useState("");
+  const [address, setAddress] = useState("");
+  const [name, setName] = useState("compute-pool");
+  const [topology, setTopology] = useState("single");
+  const [checks, setChecks] = useState<SetupCheck[] | null>(null);
+  const [hardware, setHardware] = useState<HardwareTopology | null>(null);
+  const [approved, setApproved] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [restored, setRestored] = useState(false);
+  const [note, setNote] = useState("");
+  const job = state.data?.jobs.find((j) => j.id === jobId);
+  const dgx =
+    nodes.length > 1 && nodes.every((n) => n.machine_kind === "dgx-spark");
+  const native = nodes.length === 1 && nodes[0].setup_mode === "native-macos";
+  useEffect(() => {
+    if (state.data && !restored) {
+      setRestored(true);
+      const previous = state.data.jobs[0];
+      if (previous) {
+        setJobId(previous.id);
+        setName(previous.request.name);
+        setTopology(previous.request.topology);
+        setNodes(
+          previous.request.nodes.map((n) => ({ ...n, hostname: n.address })),
+        );
+        setStage(previous.status === "ready" ? 4 : 3);
+      }
+    }
+  }, [state.data, restored]);
+  useEffect(() => {
+    if (job?.status === "ready") setStage(4);
+  }, [job?.status]);
+  useEffect(() => {
+    if (stage !== 1) return;
+    let stopped = false;
+    let running = false;
+    const poll = async () => {
+      if (running) return;
+      const pending = nodes.filter(
+        (n) =>
+          n.bootstrap_id &&
+          !["ready", "expired"].includes(n.access_status || ""),
+      );
+      if (!pending.length) return;
+      running = true;
+      try {
+        const results = await Promise.all(
+          pending.map(async (n) => ({
+            address: n.address,
+            enrollment: await api<Enrollment>(
+              `/api/v1/setup/bootstrap/${encodeURIComponent(n.bootstrap_id!)}`,
+            ),
+          })),
+        );
+        if (!stopped)
+          setNodes((current) =>
+            current.map((n) => {
+              const result = results.find(
+                (r) => r.address === n.address,
+              )?.enrollment;
+              return result
+                ? {
+                    ...n,
+                    access_status: result.status,
+                    access_error: result.error || "",
+                    username: result.username || n.username,
+                    fingerprint: result.fingerprint || n.fingerprint,
+                  }
+                : n;
+            }),
+          );
+      } catch (e) {
+        if (!stopped)
+          action.setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        running = false;
+      }
+    };
+    const timer = setInterval(() => void poll(), 1500);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [stage, nodes]);
+  function invalidate() {
+    setChecks(null);
+    setHardware(null);
+    setApproved(false);
+  }
+  function payload() {
+    return {
+      name,
+      topology,
+      nodes: nodes.map((n) => ({
+        address: n.address,
+        username: n.username || "",
+        fingerprint: n.fingerprint,
+        role: n.role || "worker",
+        fabric_address: n.fabric_address || null,
+      })),
+    };
+  }
+  async function bootstrap(n: Candidate) {
+    const result = await post<Enrollment>("/api/v1/setup/bootstrap", {
+      address: n.address,
+    });
+    setNodes((current) =>
+      current.map((x) =>
+        x.address === n.address
+          ? {
+              ...x,
+              bootstrap_id: result.id,
+              access_status: result.status,
+              access_command: result.command,
+              access_error: result.error,
+              username: result.username || x.username,
+              fingerprint: result.fingerprint || x.fingerprint,
+            }
+          : x,
+      ),
+    );
+  }
+  async function next() {
+    if (stage === 0) {
+      setNodes((current) =>
+        current.map((n, i) => ({ ...n, role: i === 0 ? "head" : "worker" })),
+      );
+      setTopology(nodes.length === 1 ? "single" : "switch");
+      setStage(1);
+      for (const n of nodes) if (!n.bootstrap_id) await bootstrap(n);
+    } else if (stage === 1) setStage(2);
+    else if (stage === 2) {
+      const job = await post<SetupJob>("/api/v1/setup/jobs", payload());
+      setJobId(job.id);
+      setStage(3);
+    }
+  }
+  async function report(kind: string) {
+    const result = await post<SetupReport>(`/api/v1/setup/${kind}`, payload());
+    setChecks(result.checks);
+    setHardware(result.topology);
+    setNodes((current) =>
+      current.map((n) => ({
+        ...n,
+        ...result.nodes.find((x) => x.address === n.address),
+      })),
+    );
+    setApproved(false);
+  }
+  const nextDisabled =
+    action.busy ||
+    !state.data?.enabled ||
+    !nodes.length ||
+    (stage === 1 &&
+      (nodes.some((n) => n.access_status !== "ready" || !n.username?.trim()) ||
+        (dgx && (!hardware || hardware.verdict === "error")))) ||
+    (stage === 2 &&
+      (!checks || checks.some((c) => c.status === "error") || !approved));
+  return (
+    <Sheet
+      open
+      onOpenChange={(v) => {
+        if (!v) close();
+      }}
+      title="Configure compute pool"
+      description={
+        state.data?.mode === "demo"
+          ? "Demo · simulated machines and installation"
+          : state.data?.connected_cluster
+            ? `Controller · ${state.data.connected_cluster.cluster_name}`
+            : "Guided machine setup"
+      }
+    >
+      <ol className="step-rail">
+        {["Discover", "Connect", "Check readiness", "Install", "Ready"].map(
+          (s, i) => (
+            <li
+              key={s}
+              aria-current={stage === i ? "step" : undefined}
+              className={stage === i ? "current" : stage > i ? "done" : ""}
+            >
+              {i + 1}. {s}
+            </li>
+          ),
+        )}
+      </ol>
+      <Message error={action.error || state.error} />
+      {state.error && (
+        <Button
+          disabled={action.busy}
+          variant="outline"
+          onClick={() =>
+            void action.run(() => api("/api/v1/setup", { interactive: true }))
+          }
+        >
+          Administrator access
+        </Button>
+      )}
+      {stage === 0 && (
+        <>
+          <h3>Discover machines</h3>
+          <p className="note">
+            Power on the machines and enable SSH on the management LAN.
+          </p>
+          <div className="form-grid">
+            <Field label="Subnet (optional)">
+              <Input
+                value={subnet}
+                onChange={(e) => setSubnet(e.target.value)}
+                placeholder="192.168.1.0/24"
+              />
+            </Field>
+            <Field label="Machine IPv4 (optional)">
+              <Input
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                placeholder="192.168.1.42"
+              />
+            </Field>
+          </div>
+          <Button
+            disabled={action.busy}
+            onClick={() =>
+              void action.run(async () => {
+                const result = await post<{
+                  nodes: Candidate[];
+                  notes: string[];
+                }>("/api/v1/setup/discover", {
+                  subnet: subnet.trim() || null,
+                  addresses: address.trim() ? [address.trim()] : [],
+                });
+                setCandidates([
+                  ...new Map(
+                    [...result.nodes, ...nodes].map((n) => [n.address, n]),
+                  ).values(),
+                ]);
+                setNote(result.notes.join(" "));
+              })
+            }
+          >
+            {action.busy ? "Discovering…" : "Discover machines"}
+          </Button>
+          <p role="status" className="note">
+            {note}
+          </p>
+          {candidates.map((n) => (
+            <label className="node-choice" key={n.address}>
+              <input
+                type="checkbox"
+                checked={nodes.some((x) => x.address === n.address)}
+                onChange={(e) => {
+                  setNodes((current) =>
+                    e.target.checked
+                      ? [
+                          ...current,
+                          {
+                            ...n,
+                            username: "",
+                            role: "worker",
+                            access_status: "pending",
+                          },
+                        ]
+                      : current.filter((x) => x.address !== n.address),
+                  );
+                  invalidate();
+                }}
+              />
+              <div>
+                <b>{n.hostname}</b>
+                <small>
+                  {n.address} · {n.source} · SSH reachable
+                </small>
+              </div>
+            </label>
+          ))}
+        </>
+      )}
+      {stage === 1 && (
+        <>
+          <h3>{native ? "Configure native Mac" : "Configure machines"}</h3>
+          <div className="form-grid">
+            <Field label="Compute pool name">
+              <Input
+                value={name}
+                pattern="[a-z][a-z0-9-]{0,39}"
+                onChange={(e) => {
+                  setName(e.target.value);
+                  invalidate();
+                }}
+              />
+            </Field>
+            <Field label="Machine topology">
+              <Select
+                value={topology}
+                onChange={(e) => {
+                  setTopology(e.target.value);
+                  invalidate();
+                }}
+              >
+                {nodes.length === 1 ? (
+                  <option value="single">
+                    Single machine · one or more GPUs
+                  </option>
+                ) : (
+                  <>
+                    <option value="switch">Networked machines</option>
+                    {dgx && (
+                      <>
+                        <option value="direct">Direct high-speed links</option>
+                        {nodes.length === 4 && (
+                          <option value="ring">DGX Spark ring</option>
+                        )}
+                      </>
+                    )}
+                  </>
+                )}
+              </Select>
+            </Field>
+          </div>
+          {nodes.map((n) => (
+            <article className="node-card stack" key={n.address}>
+              <div className="split">
+                <div>
+                  <b>{n.hostname || n.address}</b>
+                  <small>
+                    {n.machine_kind ||
+                      "Hardware detected during readiness check"}{" "}
+                    · {n.platform} · {n.architecture}
+                  </small>
+                </div>
+                {n.setup_mode !== "native-macos" && (
+                  <label className="check">
+                    <input
+                      type="radio"
+                      name="head"
+                      checked={n.role === "head"}
+                      onChange={() => {
+                        setNodes((current) =>
+                          current.map((x) => ({
+                            ...x,
+                            role: x.address === n.address ? "head" : "worker",
+                          })),
+                        );
+                        invalidate();
+                      }}
+                    />
+                    Head
+                  </label>
+                )}
+              </div>
+              <Badge good={n.access_status === "ready"}>
+                {n.access_status === "ready"
+                  ? `✓ ${n.username} · SSH verified`
+                  : n.access_status || "Waiting for connection"}
+              </Badge>
+              {n.access_status !== "ready" && n.access_command && (
+                <div className="endpoint">
+                  <code>{n.access_command}</code>
+                  <Copy value={n.access_command} label="Copy command" />
+                </div>
+              )}
+              {n.access_status !== "ready" && (
+                <p className="note">
+                  Run the generated command on this machine. It expires after 15
+                  minutes. The dedicated private key stays on the controller.
+                </p>
+              )}
+              {n.access_error && <p className="error">{n.access_error}</p>}
+              {["error", "expired"].includes(n.access_status || "") && (
+                <Button
+                  variant="outline"
+                  disabled={action.busy}
+                  onClick={() => void action.run(() => bootstrap(n))}
+                >
+                  Generate a new command
+                </Button>
+              )}
+              {dgx && (
+                <Field label={`Fabric IPv4 ${n.address}`}>
+                  <Input
+                    value={n.fabric_address || ""}
+                    onChange={(e) => {
+                      setNodes((current) =>
+                        current.map((x) =>
+                          x.address === n.address
+                            ? { ...x, fabric_address: e.target.value }
+                            : x,
+                        ),
+                      );
+                      invalidate();
+                    }}
+                  />
+                </Field>
+              )}
+            </article>
+          ))}
+          {nodes.some((n) => !n.bootstrap_id) && (
+            <Button
+              disabled={action.busy}
+              onClick={() =>
+                void action.run(async () => {
+                  for (const n of nodes)
+                    if (!n.bootstrap_id) await bootstrap(n);
+                })
+              }
+            >
+              Generate connection commands
+            </Button>
+          )}
+          {dgx && (
+            <>
+              <h3>ConnectX-7 cable assistant</h3>
+              <p className="note">
+                Keep RJ45 management Ethernet connected. Connect the wide
+                QSFP112 ports following the selected layout, fully seat each
+                cable, then inspect its carrier, speed, RDMA and peer network.
+              </p>
+              <Button
+                variant="outline"
+                disabled={
+                  action.busy || nodes.some((n) => n.access_status !== "ready")
+                }
+                onClick={() => void action.run(() => report("hardware"))}
+              >
+                Inspect cables
+              </Button>
+              {hardware ? (
+                <Hardware topology={hardware} />
+              ) : (
+                <Empty>
+                  Inspect the selected machines to verify the physical links.
+                </Empty>
+              )}
+            </>
+          )}
+        </>
+      )}
+      {stage === 2 && (
+        <>
+          <h3>Readiness & assisted fixes</h3>
+          <p className="note">
+            Checks adapt to OS, accelerator, memory, storage, SSH and network
+            topology.
+          </p>
+          <Button
+            variant="outline"
+            disabled={action.busy}
+            onClick={() => void action.run(() => report("check"))}
+          >
+            Run checks
+          </Button>
+          {checks ? (
+            <Checks checks={checks} />
+          ) : (
+            <Empty>Run readiness checks before installing.</Empty>
+          )}
+          {hardware && dgx && <Hardware topology={hardware} />}
+          <h3>{native ? "Review Mac registration" : "Review installation"}</h3>
+          <p>
+            {name}:{" "}
+            {nodes
+              .map(
+                (n) =>
+                  `${n.username}@${n.address} (${n.setup_mode === "native-macos" ? "native Metal host" : n.role})`,
+              )
+              .join(", ")}
+          </p>
+          <p className="note">
+            {native
+              ? "The Mac is registered with its pinned SSH identity and detected darwin/arm64 platform. No Linux, k3s or NVIDIA commands will run."
+              : "The installation plan adapts to the detected machine type. Unsupported platforms do not receive Linux or DGX commands."}
+          </p>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={approved}
+              onChange={(e) => setApproved(e.target.checked)}
+            />
+            {native
+              ? "Register this Mac as a trusted native runtime host."
+              : "Install the proposed services on the selected machines."}
+          </label>
+        </>
+      )}
+      {stage === 3 && job && (
+        <>
+          <div className="split">
+            <h3>
+              {job.mode === "native-macos"
+                ? "Registering native Mac"
+                : job.mode === "demo"
+                  ? "Simulated installation"
+                  : "Installing compute pool services"}
+            </h3>
+            <Badge>{job.status}</Badge>
+          </div>
+          <p className="note">
+            Progress is saved automatically. Resume after an interruption to
+            verify and reconcile configuration.
+          </p>
+          {job.steps.map((s, i) => (
+            <article className="list-row" key={s.id}>
+              <span className="step-number">
+                {s.status === "done" ? "✓" : i + 1}
+              </span>
+              <div>
+                <b>{s.label}</b>
+                <small>{s.message || s.status}</small>
+              </div>
+            </article>
+          ))}
+          <pre className="terminal" aria-label="Setup logs">
+            {job.logs
+              .map(
+                (l) =>
+                  `${new Date(l.timestamp).toLocaleTimeString()} ${l.node}\n${l.message}`,
+              )
+              .join("\n\n")}
+          </pre>
+          <Checks checks={job.checks.filter((c) => c.status !== "pass")} />
+          {["failed", "blocked"].includes(job.status) && (
+            <>
+              <Message error={job.error} />
+              <div className="actions">
+                <Button
+                  disabled={action.busy}
+                  onClick={() =>
+                    void action.run(async () => {
+                      await post(`/api/v1/setup/jobs/${job.id}/resume`);
+                    })
+                  }
+                >
+                  Retry / resume setup
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setJobId(null);
+                    invalidate();
+                    setStage(1);
+                  }}
+                >
+                  Revise plan
+                </Button>
+              </div>
+            </>
+          )}
+        </>
+      )}
+      {stage === 4 && job && (
+        <>
+          <h3>
+            {job.mode === "native-macos"
+              ? "Your Mac is registered"
+              : job.mode === "demo"
+                ? "Demo setup complete"
+                : "Your compute pool is ready"}
+          </h3>
+          <p>
+            {job.mode === "native-macos"
+              ? "SSH identity, host key, Apple Silicon and Metal passed verification. Choose a compatible native runtime package."
+              : "Machine registration, accelerator scheduling, telemetry and model storage passed verification. Add a model and launch it to verify inference."}
+          </p>
+          <div className="actions">
+            <Button asChild>
+              <a
+                href={
+                  job.dashboard_url ||
+                  (job.mode === "native-macos" ? "#runtimes" : "#models")
+                }
+                onClick={close}
+              >
+                {job.mode === "native-macos"
+                  ? "Choose a Metal runtime"
+                  : "Open pool dashboard"}{" "}
+                ↗
+              </a>
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setJobId(null);
+                setNodes([]);
+                setCandidates([]);
+                invalidate();
+                setStage(0);
+              }}
+            >
+              Configure another pool
+            </Button>
+          </div>
+        </>
+      )}
+      {stage < 3 && (
+        <div className="split">
+          <span className="note">{nodes.length} machines selected</span>
+          <div className="actions">
+            {stage > 0 && (
+              <Button
+                variant="outline"
+                disabled={action.busy}
+                onClick={() => setStage((s) => s - 1)}
+              >
+                Back
+              </Button>
+            )}
+            <Button
+              disabled={nextDisabled}
+              onClick={() => void action.run(next)}
+            >
+              {
+                [
+                  "Choose machines →",
+                  "Check readiness →",
+                  native ? "Register Mac →" : "Install compute pool →",
+                ][stage]
+              }
+            </Button>
+          </div>
+        </div>
+      )}
+    </Sheet>
+  );
+}
+function Hardware({ topology: t }: { topology: HardwareTopology }) {
+  return (
+    <div className="stack">
+      <div className="split">
+        <b>{t.summary}</b>
+        <Badge good={t.verdict === "pass"}>
+          {t.detected_cables} / {t.expected_cables} cables · {t.verdict}
+        </Badge>
+      </div>
+      <div className="hardware-diagram">
+        {t.nodes.map((n) => (
+          <div className="hardware-device" key={n.address}>
+            <b>
+              {n.role === "head" ? "H" : "W"} · {n.hostname}
+            </b>
+            <small>{n.address}</small>
+            {n.ports.map((p) => (
+              <span
+                key={p.name}
+                className={p.status === "connected" ? "good-text" : "note"}
+              >
+                {p.name} · {p.speed_gbps}G · {p.status}
+                {p.rdma ? " · RDMA" : ""}
+              </span>
+            ))}
+          </div>
+        ))}
+        {t.topology === "switch" && (
+          <div className="hardware-device">
+            <b>Ethernet switch</b>
+            <small>200G · one link per Spark</small>
+          </div>
+        )}
+      </div>
+      {t.links.map((l, i) => (
+        <p key={i} className={l.status === "pass" ? "good-text" : "note"}>
+          {l.source} {l.source_port} ⇄ {l.target} {l.target_port} ·{" "}
+          {l.speed_gbps}G · {l.message}
+        </p>
+      ))}
+      {t.instructions.map((i, n) => (
+        <article className={`diagnostic ${i.status}`} key={n}>
+          <b>
+            {n + 1}. {i.title}
+          </b>
+          <p>{i.detail}</p>
+        </article>
+      ))}
+    </div>
+  );
+}

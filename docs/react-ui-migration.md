@@ -10,7 +10,7 @@ Run these commands from the main checkout:
 npm --prefix frontend ci
 npm --prefix frontend run build
 npm --prefix frontend test
-npm --prefix frontend run test:e2e
+npm --prefix frontend run test:ui
 .venv/bin/pytest -q
 ```
 
