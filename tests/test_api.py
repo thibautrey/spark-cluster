@@ -103,8 +103,8 @@ def test_dashboard_and_live_snapshot(tmp_path):
         page = client.get("/")
         assert page.status_code == 200
         assert 'id="root"' in page.text
-        assert '/assets/index-' in page.text
-        assert '/assets/app.js' not in page.text
+        assert "/assets/index-" in page.text
+        assert "/assets/app.js" not in page.text
         response = client.get("/api/v1/snapshot")
         assert response.status_code == 200
         payload = response.json()
@@ -114,7 +114,11 @@ def test_dashboard_and_live_snapshot(tmp_path):
         control = client.get("/api/v1/control")
         assert control.status_code == 200
         assert set(control.json()) == {
-            "runtime", "models", "downloads", "launches", "logs_mode",
+            "runtime",
+            "models",
+            "downloads",
+            "launches",
+            "logs_mode",
             "runtime_control_mode",
         }
         assert "Direct to cluster runtime" not in page.text
@@ -128,7 +132,7 @@ def test_react_bundle_replaces_legacy_dashboard_assets(tmp_path):
         assert client.get("/assets/setup.js").status_code == 404
         assert client.get("/assets/pool.js").status_code == 404
         assert client.get("/assets/catalog.js").status_code == 404
-        assert '/assets/index-' in page
+        assert "/assets/index-" in page
 
 
 def test_history_metrics_and_capacity(tmp_path):

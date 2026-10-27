@@ -745,12 +745,7 @@ export type RuntimeNodeState = {
   address: string;
   role: "head" | "worker";
   status:
-    | "ready"
-    | "missing"
-    | "outdated"
-    | "unreachable"
-    | "installing"
-    | "failed";
+    "ready" | "missing" | "outdated" | "unreachable" | "installing" | "failed";
   installed_version: string | null;
   required_version: string;
   message: string;

@@ -37,7 +37,7 @@ def test_token_api_auth_persistence_and_no_secret_response(tmp_path, monkeypatch
     with TestClient(app) as client:
         page = client.get("/").text
         assert 'id="root"' in page
-        assert '/assets/index-' in page
+        assert "/assets/index-" in page
         path = "/api/v1/controller/huggingface"
         assert client.get(path).json() == {"configured": False, "requires_admin": True}
         assert client.put(path, json={"token": "hf_test_valid"}).status_code == 401

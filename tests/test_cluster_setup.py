@@ -478,8 +478,8 @@ def test_demo_wizard_end_to_end_without_network_or_ssh(tmp_path, monkeypatch):
     with TestClient(app) as client:
         page = client.get("/").text
         assert 'id="root"' in page
-        assert '/assets/index-' in page
-        assert '/assets/setup.js' not in page
+        assert "/assets/index-" in page
+        assert "/assets/setup.js" not in page
         discovery = client.post("/api/v1/setup/discover", json={}).json()
         assert len(discovery["nodes"]) == 4
         assert client.post("/api/v1/setup/check", json=plan().model_dump()).status_code == 200

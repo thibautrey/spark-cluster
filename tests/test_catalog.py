@@ -453,5 +453,5 @@ def test_catalog_ui_is_built_as_a_react_application(catalog):
     client, _, _ = catalog
     page = client.get("/").text
     assert 'id="root"' in page
-    assert '/assets/index-' in page
-    assert '/assets/catalog.js' not in page
+    assert "/assets/index-" in page
+    assert "/assets/catalog.js" not in page
