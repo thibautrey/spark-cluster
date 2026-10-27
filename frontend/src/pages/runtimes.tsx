@@ -56,7 +56,22 @@ export function Runtimes() {
   const action = useAction();
   return (
     <>
-      <Panel title={cluster?.name || "Runtime readiness"}>
+      <Panel
+        title={cluster?.name || "Runtime readiness"}
+        actions={
+          <Button
+            variant="outline"
+            disabled={action.busy}
+            onClick={() =>
+              void action.run(() =>
+                api("/api/v1/controller/verify", { interactive: true }),
+              )
+            }
+          >
+            Administrator access
+          </Button>
+        }
+      >
         <p className="note">
           {cluster
             ? `${cluster.gpu_count} GPUs · Automatic placement`
@@ -96,7 +111,7 @@ export function Runtimes() {
                 )
               }
             >
-              Administrator access / Revalidate
+              Revalidate
             </Button>
           }
         >

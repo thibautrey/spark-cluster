@@ -469,6 +469,28 @@ describe("React dashboard parity", () => {
       ).toEqual({ artifact_id: "artifact-1", host_id: "host-abc123abc123" }),
     );
   });
+  it("offers administrator authentication for runtime packages even without a compute pool", async () => {
+    const user = userEvent.setup();
+    override = (path) =>
+      path === "/api/v1/clusters"
+        ? { clusters: [], active_cluster_id: null }
+        : path === "/api/v1/runtime-library" ||
+            path === "/api/v1/controller/verify"
+          ? new Response(
+              JSON.stringify({ detail: "Invalid model administration token" }),
+              { status: 401 },
+            )
+          : undefined;
+    mount("runtimes");
+    const access = await screen.findByRole("button", {
+      name: "Administrator access",
+    });
+    expect((access as HTMLButtonElement).disabled).toBe(false);
+    await user.click(access);
+    expect((await screen.findByRole("dialog")).textContent).toContain(
+      "Controller token required",
+    );
+  });
   it("reviews runtime preparation before creating its guided workflow", async () => {
     const user = userEvent.setup();
     override = (path) =>
