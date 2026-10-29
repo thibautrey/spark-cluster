@@ -687,6 +687,31 @@ async def test_local_fit_uses_recorded_metadata_without_scanning_storage(tmp_pat
     store.close()
 
 
+@pytest.mark.asyncio
+async def test_local_gguf_fit_replaces_legacy_external_tables_with_bundled_files(tmp_path):
+    settings = Settings(model_cache_path=tmp_path / "models")
+    store = SnapshotStore(tmp_path / "fit.db")
+    runtime = SimpleNamespace(latest=ClusterSimulator("test").snapshot())
+    manager = ModelManager(settings, store, runtime)
+    files = (("model-Q4.gguf", 4 * GIB), ("model-Engram-Q4.gguf", 2 * GIB))
+    model_path = settings.model_cache_path / "acme" / "model"
+    model_path.mkdir(parents=True)
+    for name, size in files:
+        with (model_path / name).open("wb") as file:
+            file.truncate(size)
+    previous = build_fit_plan(
+        ModelFitRequest(repo_id="acme/model", context_length=512),
+        metadata(files=files, external_artifacts_bytes=10 * GIB),
+        runtime.latest,
+        settings,
+    )
+    (model_path / ".spark-cluster.json").write_text(json.dumps({"fit": previous.model_dump()}))
+    result = await manager.fit_for_local(ModelFitRequest(repo_id="acme/model", context_length=512))
+    assert result.additional_artifacts_bytes == 0
+    assert result.weights_gib == 6
+    store.close()
+
+
 def test_nvfp4_download_is_allowed_but_launch_is_blocked_on_ampere(tmp_path):
     settings = Settings(
         model_cache_path=tmp_path,

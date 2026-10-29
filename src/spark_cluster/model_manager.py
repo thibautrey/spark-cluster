@@ -1198,6 +1198,20 @@ class ModelManager:
                 )
             except (OSError, ValueError):
                 pass
+        local_gguf_files = (
+            tuple(
+                (str(file.relative_to(model_path)), file.stat().st_size)
+                for file in model_path.rglob("*.gguf")
+            )
+            if previous.detected_format.startswith("GGUF")
+            else ()
+        )
+        local_engram_bytes = sum(
+            size for name, size in local_gguf_files if "engram" in Path(name).name.lower()
+        )
+        additional_artifacts_bytes = (
+            0 if local_engram_bytes else previous.additional_artifacts_bytes
+        )
         metadata = RepositoryMetadata(
             repo_id=request.repo_id,
             revision=request.revision,
@@ -1207,22 +1221,17 @@ class ModelManager:
             parameter_count=previous.parameter_count,
             architecture=previous.architecture,
             config=local_config,
-            files=tuple(
-                (str(file.relative_to(model_path)), file.stat().st_size)
-                for file in model_path.rglob("*.gguf")
-            )
-            if previous.detected_format.startswith("GGUF")
-            else (),
+            files=local_gguf_files,
             library_name=previous.library_name,
             pipeline_tag=previous.pipeline_tag,
             engram_bytes=(
-                int(previous.offloaded_weights_gib * GIB)
-                if not previous.additional_artifacts_bytes
+                local_engram_bytes or int(previous.offloaded_weights_gib * GIB)
+                if not additional_artifacts_bytes
                 else 0
             ),
-            external_artifacts_bytes=previous.additional_artifacts_bytes,
+            external_artifacts_bytes=additional_artifacts_bytes,
             external_artifacts=("base Engram shards (see original repository metadata)",)
-            if previous.additional_artifacts_bytes
+            if additional_artifacts_bytes
             else (),
             kv_bytes_per_token_bf16=kv_bytes_per_token,
         )

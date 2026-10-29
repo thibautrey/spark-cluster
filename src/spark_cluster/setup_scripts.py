@@ -123,8 +123,10 @@ sudo -n mkdir -p /var/lib/spark-cluster
                 "--disable=traefik --disable=servicelb --default-runtime=nvidia "
                 "--write-kubeconfig-mode=600"
             )
-            + "sudo -n k3s kubectl wait --for=condition=Ready nodes "
-            "--all --timeout=240s >/dev/null\n"
+            + "ready=0\nfor attempt in $(seq 1 30); do\n"
+            "  if sudo -n k3s kubectl wait --for=condition=Ready nodes "
+            "--all --timeout=10s >/dev/null 2>&1; then ready=1; break; fi\n"
+            '  sleep 2\ndone\ntest "$ready" = 1\n'
         )
         await run(head, script, timeout=600)
     elif step == "workers":
@@ -174,6 +176,15 @@ plugin_url=$plugin_url/{GPU_PLUGIN_VERSION}/deployments/static/nvidia-device-plu
 sudo -n k3s kubectl apply -f "$plugin_url" >/dev/null
 sudo -n k3s kubectl -n kube-system rollout status \
   daemonset/nvidia-device-plugin-daemonset --timeout=240s >/dev/null
+for attempt in $(seq 1 60); do
+  ready=$(sudo -n k3s kubectl get nodes -o json | python3 -c \
+    'import json,sys
+nodes=json.load(sys.stdin)["items"]
+print(int(bool(nodes) and all(
+    int(n["status"].get("allocatable",{{}}).get("nvidia.com/gpu",0)) > 0 for n in nodes)))')
+  test "$ready" = 1 && break
+  sleep 2
+done
 sudo -n k3s kubectl get nodes -o json
 """
         result = json.loads(await run(head, script, timeout=360))
@@ -216,6 +227,7 @@ sudo -n k3s kubectl get nodes -o json
             """
 sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nfs-kernel-server >/dev/null 2>&1
 sudo -n install -d -o 10001 -g 10001 -m 0770 /var/lib/spark-cluster/models
+sudo -n install -d -o root -g root -m 0755 /etc/exports.d
 """
             + f"echo {shlex.quote(encoded)} | base64 -d | sudo -n tee "
             "/etc/exports.d/spark-cluster.exports >/dev/null\n"
