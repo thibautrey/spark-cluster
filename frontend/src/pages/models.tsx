@@ -199,11 +199,11 @@ function ModelDetails({
             await post("/api/v1/models/download", {
               ...JSON.parse(signature),
               allow_oversized: false,
-              smallest_gguf_transfer_only: Boolean(
-                reusableCopy &&
-                smallestGgufOnly &&
-                md?.files.some((file) => file.name.endsWith(".gguf")),
-              ),
+              ...(reusableCopy &&
+              smallestGgufOnly &&
+              md?.files.some((file) => file.name.endsWith(".gguf"))
+                ? { smallest_gguf_transfer_only: true }
+                : {}),
             });
           }, "Download queued.");
         }}

@@ -208,6 +208,40 @@ describe("React dashboard parity", () => {
       }),
     );
   });
+  it("copies an existing controller GGUF subset to the selected remote pool", async () => {
+    const user = userEvent.setup();
+    override = (path) =>
+      path === "/api/v1/clusters"
+        ? {
+            clusters: [{ ...cluster, kind: "remote-bridge" }],
+            active_cluster_id: cluster.id,
+          }
+        : path === "/api/v1/controller/models"
+          ? [{ id: "acme/chat" }]
+          : path === "/api/v1/catalog/models/acme/chat"
+            ? { ...catalog, files: [{ name: "model-Q2.gguf", size: 100 }] }
+            : undefined;
+    mount("models");
+    await user.click(
+      await screen.findByRole("button", { name: /acme.*chat/i }),
+    );
+    const dialog = screen.getByRole("dialog");
+    await within(dialog).findByText(/Already on controller storage/);
+    await user.click(within(dialog).getByRole("button", { name: "Check fit" }));
+    await screen.findByText("Estimated fit in cluster memory");
+    await user.click(
+      within(dialog).getByRole("button", { name: "Copy from controller" }),
+    );
+    await waitFor(() =>
+      expect(
+        requests.find((request) => request.path === "/api/v1/models/download")
+          ?.body,
+      ).toMatchObject({
+        repo_id: "acme/chat",
+        smallest_gguf_transfer_only: true,
+      }),
+    );
+  });
   it("discards a late fit response after parameters change", async () => {
     const user = userEvent.setup();
     let resolve: (data: unknown) => void = () => {};
