@@ -223,7 +223,9 @@ async def test_controller_transfer_endpoints_require_signatures_and_support_rang
 
 
 @pytest.mark.asyncio
-async def test_resumed_copy_verifies_prefix_and_discards_streaming_page_cache(tmp_path, monkeypatch):
+async def test_resumed_copy_verifies_prefix_and_discards_streaming_page_cache(
+    tmp_path, monkeypatch
+):
     from pathlib import Path
 
     from spark_cluster import model_relay
@@ -247,8 +249,10 @@ async def test_resumed_copy_verifies_prefix_and_discards_streaming_page_cache(tm
     monkeypatch.setattr(model_relay, "CACHE_FLUSH_BYTES", 4)
     monkeypatch.setattr(model_relay.os, "POSIX_FADV_DONTNEED", 4, raising=False)
     monkeypatch.setattr(
-        model_relay.os, "posix_fadvise",
-        lambda fd, start, size, advice: discarded.append(size), raising=False,
+        model_relay.os,
+        "posix_fadvise",
+        lambda fd, start, size, advice: discarded.append(size),
+        raising=False,
     )
     bridge.state.model_relay.transport = httpx.ASGITransport(app=controller)
     await bridge.state.model_relay.pull(remote)
@@ -281,7 +285,8 @@ async def test_relay_status_recovers_transport_outages_but_not_auth_errors(
         if polls == 2:
             return httpx.Response(503)
         return httpx.Response(
-            terminal_status, json=job.model_copy(update={"status": "completed"}).model_dump(mode="json")
+            terminal_status,
+            json=job.model_copy(update={"status": "completed"}).model_dump(mode="json"),
         )
 
     app.state.model_relay.transport = httpx.MockTransport(handle)
