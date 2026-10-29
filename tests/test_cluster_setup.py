@@ -253,7 +253,7 @@ async def test_dedicated_bootstrap_command_confirms_host_key_and_ssh(tmp_path, m
 
     async def generate(enrollment_id):
         private_key = service.bootstrap_keys_path / enrollment_id
-        private_key.parent.mkdir(mode=0o700, parents=True)
+        private_key.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         private_key.write_text("private-key-material")
         private_key.chmod(0o600)
         return private_key, generated_public_key
