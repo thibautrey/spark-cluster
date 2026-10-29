@@ -348,5 +348,9 @@ async def test_remote_activation_is_authenticated_and_persists_for_bridge_launch
     )
     assert plan.executable
     assert plan.image == expected
+    service.transport = httpx.MockTransport(lambda request: httpx.Response(503))
+    with pytest.raises(httpx.HTTPStatusError):
+        await service.activate(cluster_id=target.id, **{**payload, "engine_id": "vllm"})
+    assert service.activation(target.id, "vllm") is None
     restarted.state.runtime.store.close()
     store.close()
