@@ -226,6 +226,7 @@ export type DownloadJob = {
   message: string;
   error: string | null;
   attempts: number;
+  smallest_gguf_transfer_only: boolean;
   fit: ModelFitPlan;
   created_at: string;
   updated_at: string;
@@ -317,6 +318,7 @@ export type ModelDownloadRequest = {
   cpu_offload_gib: number;
   gpu_layers: number | null;
   allow_oversized: boolean;
+  smallest_gguf_transfer_only: boolean;
 };
 export type ModelFitPlan = {
   repo_id: string;
