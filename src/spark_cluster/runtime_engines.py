@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import Settings
-from .gguf_models import smallest_gguf
 from .deepseek_mia import MANAGED_LAUNCH_BLOCKER, MODEL_ID
 from .deepseek_tonyd2wild import (
     MANAGED_LAUNCH_BLOCKER as TONY_MANAGED_LAUNCH_BLOCKER,
 )
 from .deepseek_tonyd2wild import profile_for_model
+from .gguf_models import smallest_gguf
 from .models import ModelLaunchRequest, RuntimeExecutionPlan
 
 
