@@ -123,6 +123,18 @@ describe("React dashboard parity", () => {
       ).toBe(cluster.id),
     );
   });
+  it("checks advanced launch compatibility with the selected GPU and offload placement", async () => {
+    const user = userEvent.setup();
+    mount("launch");
+    await user.click(await screen.findByText("Advanced launch & tuning"));
+    await user.selectOptions(await screen.findByLabelText("Downloaded model"), model.id);
+    fireEvent.change(screen.getByLabelText("Layers on GPU"), { target: { value: "8" } });
+    fireEvent.change(screen.getByLabelText("tensor parallel"), { target: { value: "2" } });
+    await user.click(screen.getByRole("button", { name: "Check launch compatibility" }));
+    await waitFor(() => expect(requests.find((r) => r.path === "/api/v1/models/fit-local")?.body).toMatchObject({
+      repo_id: model.id, gpu_layers: 8, cpu_offload_gib: 0, offload_ranks: 2,
+    }));
+  });
   it("rolls back a failed pool selection without overwriting browser context", async () => {
     const user = userEvent.setup();
     override = (path, method) =>

@@ -911,6 +911,9 @@ function ManualLaunch() {
                         context_length: s.context_length,
                         concurrent_sequences: s.concurrent_sequences,
                         kv_cache_dtype: s.kv_cache_dtype,
+                        cpu_offload_gib: s.cpu_offload_gib,
+                        offload_ranks: s.tensor_parallel * s.pipeline_parallel,
+                        gpu_layers: s.gpu_layers,
                       },
                     );
                     if (latest.current === current) setFit(result);
