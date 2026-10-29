@@ -860,6 +860,63 @@ def test_gguf_layer_reader_is_bounded_and_reads_architecture_block_count(tmp_pat
     assert gguf_layer_count(tmp_path) is None
 
 
+def attention_gguf():
+    import struct
+
+    fields = {
+        "test.block_count": 4,
+        "test.context_length": 1048576,
+        "test.embedding_length": 1024,
+        "test.attention.head_count": 8,
+        "test.attention.head_count_kv": 2,
+        "test.attention.key_length": 64,
+        "test.attention.value_length": 32,
+    }
+    payload = b"GGUF" + struct.pack("<IQQ", 3, 0, len(fields) + 1)
+    for key, value in fields.items():
+        encoded = key.encode()
+        payload += struct.pack("<Q", len(encoded)) + encoded + struct.pack("<II", 4, value)
+    key = b"tokenizer.ggml.tokens"
+    # Deliberately omit the vocabulary; geometry must not need to read it.
+    return payload + struct.pack("<Q", len(key)) + key + struct.pack("<I", 9)
+
+
+def test_gguf_attention_geometry_keeps_gqa_and_asymmetric_dimensions(tmp_path):
+    from spark_cluster.model_manager import gguf_attention_metadata
+
+    (tmp_path / "model.gguf").write_bytes(attention_gguf())
+    (tmp_path / "mmproj.gguf").write_bytes(b"GGUF")
+    geometry = gguf_attention_metadata(tmp_path)
+    assert geometry["context_length"] == 1048576
+    assert geometry["num_hidden_layers"] == 4
+    assert geometry["num_key_value_heads"] == 2
+    assert geometry["kv_bytes_per_token_bf16"] == 4 * 2 * (64 + 32) * 2
+
+
+@pytest.mark.asyncio
+async def test_local_gguf_context_fit_uses_header_geometry_instead_of_fallback(tmp_path):
+    settings = Settings(model_cache_path=tmp_path / "models")
+    store = SnapshotStore(tmp_path / "fit.db")
+    runtime = SimpleNamespace(latest=ClusterSimulator("test").snapshot())
+    manager = ModelManager(settings, store, runtime)
+    data = metadata(files=(("model.gguf", GIB),))
+    data.config.clear()
+    previous = build_fit_plan(ModelFitRequest(repo_id="acme/model"), data, runtime.latest, settings)
+    target = settings.model_cache_path / "acme" / "model"
+    target.mkdir(parents=True)
+    (target / "model.gguf").write_bytes(attention_gguf())
+    store.save_download(DownloadJob(
+        id="geometry", repo_id="acme/model", revision="main", status="completed",
+        target_path=str(target), staging_path=str(tmp_path / "staging"), fit=previous,
+    ))
+    result = await manager.fit_for_local(ModelFitRequest(
+        repo_id="acme/model", context_length=1048576, gpu_layers=0,
+    ))
+    assert result.kv_cache_gib == 1.5
+    assert result.model_layers == 4
+    store.close()
+
+
 def test_weight_offload_preserves_unquantized_embedding_residency(tmp_path, monkeypatch):
     monkeypatch.setattr("spark_cluster.model_manager.host_memory_available_gib", lambda: 40)
     settings = Settings(

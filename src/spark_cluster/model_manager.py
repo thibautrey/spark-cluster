@@ -391,22 +391,25 @@ def _minimum_nodes(
     return len(capacities) + 1, overhead, total, headroom
 
 
-def gguf_layer_count(model_path: Path) -> int | None:
-    """Read block_count without loading tensors or trusting unbounded metadata lengths."""
+def gguf_attention_metadata(model_path: Path) -> dict:
+    """Read bounded attention geometry, never tensors or the tokenizer vocabulary."""
     files = (
-        sorted(model_path.rglob("*.gguf"), key=lambda p: p.stat().st_size)
+        sorted(
+            (p for p in model_path.rglob("*.gguf") if not p.name.lower().startswith("mmproj")),
+            key=lambda p: p.stat().st_size,
+        )
         if model_path.is_dir()
         else [model_path]
     )
     if not files:
-        return None
+        return {}
     try:
         with files[0].open("rb") as stream:
             if stream.read(4) != b"GGUF":
-                return None
+                return {}
             version, _, count = struct.unpack("<IQQ", stream.read(20))
             if version not in {2, 3} or count > 100000:
-                return None
+                return {}
 
             def number(fmt):
                 return struct.unpack("<" + fmt, stream.read(struct.calcsize("<" + fmt)))[0]
@@ -445,14 +448,47 @@ def gguf_layer_count(model_path: Path) -> int | None:
                     }[kind]
                 )
 
+            fields = {}
+            mapping = {
+                "block_count": "num_hidden_layers",
+                "context_length": "context_length",
+                "embedding_length": "hidden_size",
+                "attention.head_count": "num_attention_heads",
+                "attention.head_count_kv": "num_key_value_heads",
+                "attention.key_length": "key_head_dim",
+                "attention.value_length": "value_head_dim",
+            }
             for _ in range(count):
                 key, kind = string(), number("I")
+                if key.startswith(b"tokenizer."):
+                    break
                 result = value(kind)
-                if key.endswith(b".block_count") and isinstance(result, int) and result > 0:
-                    return result
+                key = key.decode("utf-8")
+                if key == "general.architecture" and isinstance(result, bytes):
+                    fields["architecture"] = result.decode("utf-8")
+                architecture = fields.get("architecture")
+                if architecture and not key.startswith(architecture + "."):
+                    continue
+                for suffix, field in mapping.items():
+                    if key.endswith("." + suffix) and isinstance(result, int) and result > 0:
+                        fields[field] = result
+            layers = fields.get("num_hidden_layers", 0)
+            heads = fields.get("num_attention_heads", 0)
+            kv_heads = fields.get("num_key_value_heads", heads)
+            default_dim = fields.get("hidden_size", 0) // heads if heads else 0
+            key_dim = fields.get("key_head_dim", default_dim)
+            value_dim = fields.get("value_head_dim", default_dim)
+            if layers and kv_heads and key_dim and value_dim:
+                # Full attention is a conservative upper bound for compressed/windowed engines.
+                fields["kv_bytes_per_token_bf16"] = layers * kv_heads * (key_dim + value_dim) * 2
+            return fields
     except (OSError, ValueError, KeyError, struct.error):
         pass
-    return None
+    return {}
+
+
+def gguf_layer_count(model_path: Path) -> int | None:
+    return gguf_attention_metadata(model_path).get("num_hidden_layers")
 
 
 def build_fit_plan(
@@ -1216,10 +1252,17 @@ class ModelManager:
         kv_bytes_per_token = previous.kv_cache_gib * GIB / (previous_context * previous_sequences)
         if previous.kv_cache_dtype == "fp8_e4m3":
             kv_bytes_per_token *= 2
+        gguf_geometry = (
+            await asyncio.to_thread(gguf_attention_metadata, model_path)
+            if previous.detected_format.startswith("GGUF")
+            else {}
+        )
+        kv_bytes_per_token = gguf_geometry.get("kv_bytes_per_token_bf16", kv_bytes_per_token)
         layers = previous.model_layers
-        if request.gpu_layers is not None and not layers:
-            layers = await asyncio.to_thread(gguf_layer_count, model_path)
-        local_config = {"num_hidden_layers": layers} if layers else {}
+        layers = layers or gguf_geometry.get("num_hidden_layers")
+        local_config = dict(gguf_geometry)
+        if layers:
+            local_config["num_hidden_layers"] = layers
         if request.cpu_offload_gib:
             try:
                 local_config = await asyncio.to_thread(
@@ -1248,7 +1291,7 @@ class ModelManager:
             repository_bytes=previous.repository_bytes,
             weight_bytes=previous.weight_bytes,
             parameter_count=previous.parameter_count,
-            architecture=previous.architecture,
+            architecture=previous.architecture or gguf_geometry.get("architecture"),
             config=local_config,
             files=local_gguf_files,
             library_name=previous.library_name,
