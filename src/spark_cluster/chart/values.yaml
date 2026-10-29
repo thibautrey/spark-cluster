@@ -47,6 +47,10 @@ runtime:
   enabled: false
   deferStart: false
   hostNetwork: false
+  securityContext:
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
   image:
     repository: nvcr.io/nvidia/vllm
     tag: 25.09-py3

@@ -227,6 +227,7 @@ sudo -n k3s kubectl get nodes -o json
             """
 sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nfs-kernel-server >/dev/null 2>&1
 sudo -n install -d -o 10001 -g 10001 -m 0770 /var/lib/spark-cluster/models
+sudo -n install -d -o 10001 -g 10001 -m 0770 /var/lib/spark-cluster/lmcache
 sudo -n install -d -o root -g root -m 0755 /etc/exports.d
 """
             + f"echo {shlex.quote(encoded)} | base64 -d | sudo -n tee "

@@ -43,6 +43,7 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       {{- end }}
       runtimeClassName: nvidia
+      securityContext: {{- toYaml .Values.runtime.securityContext | nindent 8 }}
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -172,6 +173,7 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       {{- end }}
       runtimeClassName: nvidia
+      securityContext: {{- toYaml .Values.runtime.securityContext | nindent 8 }}
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

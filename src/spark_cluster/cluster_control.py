@@ -631,6 +631,11 @@ class RuntimeDeploymentService:
         if not plan or not plan.executable:
             raise RuntimeError("Launch has no executable inference-engine plan")
         workers = max(0, request.tensor_parallel * request.pipeline_parallel - 1)
+        storage_security = {
+            "runAsUser": self.settings.runtime_storage_uid,
+            "runAsGroup": self.settings.runtime_storage_gid,
+            "fsGroup": self.settings.runtime_storage_gid,
+        }
         await self._update(
             job, "scaling-workers", 25, f"Scaling runtime to {workers + 1} GB10 instances"
         )
@@ -641,6 +646,7 @@ class RuntimeDeploymentService:
                     "replicas": workers,
                     "template": {
                         "spec": {
+                            "securityContext": storage_security,
                             "containers": [
                                 {
                                     "name": "ray-worker",
@@ -656,7 +662,7 @@ class RuntimeDeploymentService:
                                         },
                                     ],
                                 }
-                            ]
+                            ],
                         }
                     },
                 }
@@ -674,7 +680,7 @@ class RuntimeDeploymentService:
                 "httpGet": {"path": plan.readiness_path, "port": "api"},
                 "initialDelaySeconds": 10,
                 "periodSeconds": 5,
-                "failureThreshold": 360,
+                "failureThreshold": 720,
             },
         }
         container.update(
@@ -692,13 +698,16 @@ class RuntimeDeploymentService:
                                 "spark-cluster.io/launched-at": datetime.now(UTC).isoformat()
                             }
                         },
-                        "spec": {"containers": [container]},
+                        "spec": {
+                            "securityContext": storage_security,
+                            "containers": [container],
+                        },
                     },
                 }
             },
         )
         await self._update(job, "waiting-ready", 75, "Waiting for runtime pods to become ready")
-        deadline = asyncio.get_running_loop().time() + 900
+        deadline = asyncio.get_running_loop().time() + 3600
         while asyncio.get_running_loop().time() < deadline:
             worker_resource = await self.kubernetes.get_statefulset(
                 self.settings.runtime_worker_statefulset
@@ -714,7 +723,7 @@ class RuntimeDeploymentService:
                 await self._update(job, "ready", 100, "Model is ready to serve")
                 return
             await asyncio.sleep(3)
-        raise TimeoutError("Runtime rollout did not become ready within 15 minutes")
+        raise TimeoutError("Runtime rollout did not become ready within 60 minutes")
 
     async def _validate_rank_order(self, expected: list[str]) -> None:
         pods = await self.kubernetes.runtime_pods()

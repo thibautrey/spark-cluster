@@ -298,10 +298,21 @@ async def test_kubernetes_launch_patches_runtime_resources_and_waits_for_readine
         assert completed.status == "ready"
         worker_spec = kubernetes.statefulset_patch[1]["spec"]
         assert worker_spec["replicas"] == 3
+        assert worker_spec["template"]["spec"]["securityContext"] == {
+            "runAsUser": 10001,
+            "runAsGroup": 10001,
+            "fsGroup": 10001,
+        }
         assert worker_spec["template"]["spec"]["containers"][0]["image"].startswith(
             "nvcr.io/nvidia/vllm:"
         )
-        containers = kubernetes.deployment_patch[1]["spec"]["template"]["spec"]["containers"]
+        head_spec = kubernetes.deployment_patch[1]["spec"]["template"]["spec"]
+        assert head_spec["securityContext"] == {
+            "runAsUser": 10001,
+            "runAsGroup": 10001,
+            "fsGroup": 10001,
+        }
+        containers = head_spec["containers"]
         environment = {item["name"]: item["value"] for item in containers[0]["env"]}
         assert environment["MODEL_ID"] == "/models/acme/model"
         assert environment["TENSOR_PARALLEL_SIZE"] == "2"

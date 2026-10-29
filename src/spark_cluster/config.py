@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     runtime_pod_selector: str = "app.kubernetes.io/name=spark-cluster-runtime"
     runtime_head_deployment: str = "spark-cluster-runtime-head"
     runtime_worker_statefulset: str = "spark-cluster-runtime-worker"
+    runtime_storage_uid: int = 10001
+    runtime_storage_gid: int = 10001
     runtime_vllm_image: str = "nvcr.io/nvidia/vllm:25.09-py3"
     runtime_vllm_speculative_methods: str = "off,auto,mtp"
     runtime_sglang_image: str | None = None
