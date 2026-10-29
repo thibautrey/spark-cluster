@@ -1,4 +1,5 @@
 import json
+import os
 from hashlib import sha256
 from unittest.mock import AsyncMock
 
@@ -106,6 +107,53 @@ async def test_selective_gguf_transfer_never_hashes_or_serves_other_variants(tmp
     assert "model-Q8.gguf" not in names
     with pytest.raises(FileNotFoundError):
         app.state.model_relay.model_file(job.id, "model-Q8.gguf")
+    app.state.runtime.store.close()
+
+
+@pytest.mark.asyncio
+async def test_recorded_hub_hash_skips_source_reread_but_modified_files_are_rehashed(
+    tmp_path, monkeypatch
+):
+    from spark_cluster import model_relay
+
+    app = create_app(settings(tmp_path, "controller"))
+    job = staged_job(app)
+    job.fit.checkpoint_commit = "c" * 40
+    root = app.state.settings.model_cache_path / "acme" / "model"
+    weights = root / "weights.bin"
+    digest = sha256(weights.read_bytes()).hexdigest()
+    verified_at = weights.stat().st_mtime + 1
+    sidecar = root / ".cache" / "huggingface" / "download" / "weights.bin.metadata"
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_text(f"{'c' * 40}\n{digest}\n{verified_at}\n")
+    original = model_relay._sha256
+    reread = []
+
+    def tracked_hash(path):
+        if path == weights:
+            reread.append(path)
+        return original(path)
+
+    monkeypatch.setattr(model_relay, "_sha256", tracked_hash)
+    manifest = await app.state.model_relay.prepare_manifest(job)
+    assert not reread
+    assert (
+        next(item for item in manifest["files"] if item["path"] == "weights.bin")["sha256"]
+        == digest
+    )
+    job.fit.checkpoint_commit = "d" * 40
+    await app.state.model_relay.prepare_manifest(job)
+    assert reread == [weights]
+    job.fit.checkpoint_commit = "c" * 40
+    reread.clear()
+    weights.write_bytes(b"modified")
+    os.utime(weights, (verified_at + 2, verified_at + 2))
+    manifest = await app.state.model_relay.prepare_manifest(job)
+    assert reread == [weights]
+    assert (
+        next(item for item in manifest["files"] if item["path"] == "weights.bin")["sha256"]
+        == sha256(b"modified").hexdigest()
+    )
     app.state.runtime.store.close()
 
 

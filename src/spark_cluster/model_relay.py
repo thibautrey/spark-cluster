@@ -4,6 +4,9 @@ import asyncio
 import hashlib
 import hmac
 import json
+import math
+import re
+import time
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote
@@ -36,6 +39,30 @@ def _sha256(path: Path) -> str:
         while chunk := stream.read(CHUNK_SIZE):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _recorded_hub_sha256(root: Path, path: Path, commit: str | None) -> str | None:
+    """Reuse a revision-bound LFS digest; the receiver still hashes every copied byte."""
+    if not commit or not re.fullmatch(r"[a-f0-9]{40}", commit):
+        return None
+    relative = path.relative_to(root).as_posix()
+    metadata = root / ".cache" / "huggingface" / "download" / (relative + ".metadata")
+    try:
+        if metadata.is_symlink() or root not in metadata.resolve().parents:
+            return None
+        if metadata.stat().st_size > 1024:
+            return None
+        lines = metadata.read_text().splitlines()
+        if len(lines) != 3 or lines[0] != commit or not re.fullmatch(r"[a-f0-9]{64}", lines[1]):
+            return None
+        verified_at = float(lines[2])
+        if not math.isfinite(verified_at) or path.stat().st_mtime > verified_at:
+            return None
+        if verified_at > time.time() + 300:
+            return None
+        return lines[1]
+    except (OSError, ValueError):
+        return None
 
 
 class ModelRelay:
@@ -95,7 +122,8 @@ class ModelRelay:
                 {
                     "path": path.relative_to(root).as_posix(),
                     "size": path.stat().st_size,
-                    "sha256": _sha256(path),
+                    "sha256": _recorded_hub_sha256(root, path, job.fit.checkpoint_commit)
+                    or _sha256(path),
                 }
             )
         manifest = {
