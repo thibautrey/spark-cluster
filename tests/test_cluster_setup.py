@@ -280,6 +280,14 @@ async def test_dedicated_bootstrap_command_confirms_host_key_and_ssh(tmp_path, m
     assert "private_key" not in status and "token_hash" not in status and "command" not in status
     with pytest.raises(KeyError):
         await service.confirm_bootstrap(token, "spark", f"ssh-ed25519 {host_key}")
+    reused = await service.create_bootstrap("192.168.50.10", "http://192.168.50.5:8080")
+    assert reused["id"] == enrollment["id"]
+    assert reused["status"] == "ready"
+    assert "command" not in reused
+    transport.host_key_value = base64.b64encode(b"replacement-machine").decode()
+    replacement = await service.create_bootstrap("192.168.50.10", "http://192.168.50.5:8080")
+    assert replacement["id"] != enrollment["id"]
+    assert replacement["status"] == "waiting"
     service.store.close()
 
 

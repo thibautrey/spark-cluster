@@ -415,6 +415,28 @@ class ClusterSetupService:
                 "command": "printf 'Demo mode: no machine is modified.\\n'",
             }
         async with self.bootstrap_lock:
+            sessions = self._bootstrap_sessions()
+            for previous in reversed(list(sessions.values())):
+                if previous["address"] != address or previous["status"] != "ready":
+                    continue
+                try:
+                    _, current_fingerprint = await self.transport.host_key(address)
+                    if current_fingerprint != previous["fingerprint"]:
+                        continue
+                    node = SetupNode(
+                        address=address,
+                        username=previous["username"],
+                        fingerprint=current_fingerprint,
+                    )
+                    self.transport.activate_identity(node, Path(previous["private_key"]))
+                    await self.transport.trust([node])
+                    response = await self.transport.run(
+                        node, "printf spark-cluster-bootstrap-ready"
+                    )
+                    if response == "spark-cluster-bootstrap-ready":
+                        return self._public_bootstrap(previous)
+                except (OSError, SetupFailure):
+                    continue
             enrollment_id = str(uuid4())
             token = secrets.token_urlsafe(32)
             private_key, public_key = await self._generate_bootstrap_key(enrollment_id)
