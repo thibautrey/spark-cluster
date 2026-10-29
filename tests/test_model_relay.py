@@ -82,6 +82,34 @@ def staged_job(app, payload=b"model-bytes"):
 
 
 @pytest.mark.asyncio
+async def test_selective_gguf_transfer_never_hashes_or_serves_other_variants(tmp_path, monkeypatch):
+    app = create_app(settings(tmp_path, "controller"))
+    job = staged_job(app)
+    root = app.state.settings.model_cache_path / "acme" / "model"
+    (root / "model-Q2.gguf").write_bytes(b"small")
+    (root / "model-Q8.gguf").write_bytes(b"larger-checkpoint")
+    (root / "model-Engram.gguf").write_bytes(b"shared")
+    job.smallest_gguf_transfer_only = True
+    app.state.runtime.store.save_download(job)
+    from spark_cluster import model_relay
+
+    original = model_relay._sha256
+
+    def selected_hash(path):
+        assert path.name != "model-Q8.gguf"
+        return original(path)
+
+    monkeypatch.setattr(model_relay, "_sha256", selected_hash)
+    manifest = await app.state.model_relay.prepare_manifest(job)
+    names = {item["path"] for item in manifest["files"]}
+    assert {"model-Q2.gguf", "model-Engram.gguf"} <= names
+    assert "model-Q8.gguf" not in names
+    with pytest.raises(FileNotFoundError):
+        app.state.model_relay.model_file(job.id, "model-Q8.gguf")
+    app.state.runtime.store.close()
+
+
+@pytest.mark.asyncio
 async def test_controller_transfer_endpoints_require_signatures_and_support_ranges(tmp_path):
     app = create_app(settings(tmp_path, "controller"))
     job = staged_job(app)

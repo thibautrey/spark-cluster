@@ -195,6 +195,7 @@ class ModelFitPlan(BaseModel):
 
 class ModelDownloadRequest(ModelFitRequest):
     allow_oversized: bool = False
+    smallest_gguf_transfer_only: bool = False
 
 
 DownloadStatus = Literal[
@@ -233,6 +234,7 @@ class DownloadJob(BaseModel):
     message: str = "Queued"
     error: str | None = None
     attempts: int = 0
+    smallest_gguf_transfer_only: bool = False
     fit: ModelFitPlan
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

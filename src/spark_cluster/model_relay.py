@@ -11,6 +11,7 @@ from urllib.parse import quote
 import httpx
 
 from .config import Settings
+from .gguf_models import smallest_gguf
 from .models import ControllerModelImportRequest, DownloadJob, ModelMutationResult
 from .remote_cluster import signed_controller_headers, validated_cluster_url
 from .store import SnapshotStore
@@ -72,9 +73,21 @@ class ModelRelay:
         if not (root / ".spark-cluster.json").is_file():
             raise FileNotFoundError("Managed model manifest is unavailable")
         files = []
+        selection = None
+        if job.smallest_gguf_transfer_only:
+            selection = smallest_gguf(
+                tuple(
+                    (path.relative_to(root).as_posix(), path.stat().st_size)
+                    for path in root.rglob("*.gguf")
+                    if path.is_file() and not path.is_symlink()
+                )
+            )
         for path in sorted(root.rglob("*")):
             if not path.is_file() or path.is_symlink() or ".cache" in path.relative_to(root).parts:
                 continue
+            if selection and path.suffix.lower() == ".gguf":
+                if path.relative_to(root).as_posix() not in selection.files:
+                    continue
             resolved = path.resolve()
             if root not in resolved.parents:
                 raise ValueError("Model file resolves outside its managed directory")
@@ -210,6 +223,18 @@ class ModelRelay:
             raise RuntimeError("No target cluster or reachable controller URL for model relay")
         manifest = await self.prepare_manifest(job)
         job.total_bytes = manifest["total_bytes"]
+        if job.smallest_gguf_transfer_only:
+            job.fit = job.fit.model_copy(
+                update={
+                    "repository_bytes": manifest["total_bytes"],
+                    "weight_bytes": sum(
+                        item["size"]
+                        for item in manifest["files"]
+                        if item["path"].lower().endswith(".gguf")
+                    ),
+                    "runtime_storage_required_gib": manifest["total_bytes"] / 2**30,
+                }
+            )
         job.status = "distributing"
         job.message = "Cluster is copying the model from this controller over the LAN"
         job.updated_at = datetime.now(UTC)

@@ -1035,6 +1035,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def local_models() -> list[LocalModel]:
         return await model_manager.local_models()
 
+    @app.get("/api/v1/controller/models", response_model=list[LocalModel])
+    async def controller_models() -> list[LocalModel]:
+        return await model_manager.local_models()
+
     @app.post("/api/v1/models/fit", response_model=ModelFitPlan)
     async def model_fit(request: ModelFitRequest) -> ModelFitPlan:
         try:

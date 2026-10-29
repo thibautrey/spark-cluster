@@ -9,6 +9,7 @@ import {
 } from "react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { api, post, useAction, useApi } from "@/lib/api";
+import { useDashboardContext } from "@/lib/context";
 import type {
   CatalogPage,
   CatalogModel,
@@ -67,6 +68,17 @@ function ModelDetails({
 }) {
   const [repo, setRepo] = useState(model.id);
   const [revision, setRevision] = useState(model.revision);
+  const { clusters } = useDashboardContext();
+  const target = clusters?.clusters.find(
+    (item) => item.id === clusters.active_cluster_id,
+  );
+  const controllerModels = useApi<LocalModel[]>(
+    target?.kind === "remote-bridge" ? "/api/v1/controller/models" : null,
+  );
+  const reusableCopy = controllerModels.data?.find(
+    (item) => item.id === repo.trim(),
+  );
+  const [smallestGgufOnly, setSmallestGgufOnly] = useState(true);
   const detail = useApi<CatalogDetail>(
     repo
       ? `/api/v1/catalog/models/${repoPath(repo)}?revision=${encodeURIComponent(revision)}`
@@ -187,10 +199,32 @@ function ModelDetails({
             await post("/api/v1/models/download", {
               ...JSON.parse(signature),
               allow_oversized: false,
+              smallest_gguf_transfer_only: Boolean(
+                reusableCopy &&
+                smallestGgufOnly &&
+                md?.files.some((file) => file.name.endsWith(".gguf")),
+              ),
             });
           }, "Download queued.");
         }}
       >
+        {reusableCopy && (
+          <p className="note">
+            Already on controller storage. Files will be copied over the LAN to{" "}
+            {target?.name}; no Hugging Face download is needed.
+          </p>
+        )}
+        {reusableCopy &&
+          md?.files.some((file) => file.name.endsWith(".gguf")) && (
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={smallestGgufOnly}
+                onChange={(event) => setSmallestGgufOnly(event.target.checked)}
+              />
+              Copy only the smallest GGUF variant and its shared files
+            </label>
+          )}
         <div className="form-grid">
           <Field label="Repository ID">
             <Input
@@ -270,7 +304,11 @@ function ModelDetails({
             Check fit
           </Button>
           <Button disabled={action.busy || !fit?.download_fits}>
-            {fit?.runtime_fits ? "Download model" : "Download for later"}
+            {reusableCopy
+              ? "Copy from controller"
+              : fit?.runtime_fits
+                ? "Download model"
+                : "Download for later"}
           </Button>
         </div>
       </form>

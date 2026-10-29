@@ -1282,6 +1282,8 @@ class ModelManager:
         parts = safe_repo_parts(request.repo_id)
         target = self.settings.model_cache_path.joinpath(*parts)
         local_exists = (target / ".spark-cluster.json").exists()
+        if request.smallest_gguf_transfer_only and not (local_exists and destination == "cluster"):
+            raise ValueError("Selective GGUF transfer requires an existing controller copy")
         if local_exists and destination == "local":
             raise ModelAlreadyInstalled(request.repo_id)
         active = [
@@ -1322,6 +1324,7 @@ class ModelManager:
                 else "Queued for download"
             ),
             fit=fit,
+            smallest_gguf_transfer_only=request.smallest_gguf_transfer_only,
         )
         await asyncio.to_thread(self.store.save_download, job)
         await self.queue.put(job.id)
@@ -1828,6 +1831,17 @@ class ModelManager:
             if not self.relay:
                 raise RuntimeError("Model relay is unavailable")
             await self.relay.pull(job)
+            (staging / ".spark-cluster.json").write_text(
+                json.dumps(
+                    {
+                        "repo_id": job.repo_id,
+                        "revision": job.revision,
+                        "downloaded_at": datetime.now(UTC).isoformat(),
+                        "fit": job.fit.model_dump(mode="json"),
+                    },
+                    indent=2,
+                )
+            )
             await self._install_staging(job, staging)
             return
 
