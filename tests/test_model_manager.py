@@ -905,13 +905,24 @@ async def test_local_gguf_context_fit_uses_header_geometry_instead_of_fallback(t
     target = settings.model_cache_path / "acme" / "model"
     target.mkdir(parents=True)
     (target / "model.gguf").write_bytes(attention_gguf())
-    store.save_download(DownloadJob(
-        id="geometry", repo_id="acme/model", revision="main", status="completed",
-        target_path=str(target), staging_path=str(tmp_path / "staging"), fit=previous,
-    ))
-    result = await manager.fit_for_local(ModelFitRequest(
-        repo_id="acme/model", context_length=1048576, gpu_layers=0,
-    ))
+    store.save_download(
+        DownloadJob(
+            id="geometry",
+            repo_id="acme/model",
+            revision="main",
+            status="completed",
+            target_path=str(target),
+            staging_path=str(tmp_path / "staging"),
+            fit=previous,
+        )
+    )
+    result = await manager.fit_for_local(
+        ModelFitRequest(
+            repo_id="acme/model",
+            context_length=1048576,
+            gpu_layers=0,
+        )
+    )
     assert result.kv_cache_gib == 1.5
     assert result.model_layers == 4
     store.close()
