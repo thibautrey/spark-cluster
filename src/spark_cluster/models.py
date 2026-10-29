@@ -664,6 +664,7 @@ class RuntimeActivationRequest(BaseModel):
     digest: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
     platform: Literal["linux/arm64", "linux/amd64"]
     artifact_id: str | None = None
+    source_digest: str | None = Field(default=None, pattern=r"^sha256:[a-f0-9]{64}$")
 
 
 class RuntimeWorkflowRequest(BaseModel):

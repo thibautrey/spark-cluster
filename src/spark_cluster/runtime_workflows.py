@@ -290,7 +290,10 @@ class RuntimeWorkflowService:
             await self._step(job, current, "completed", f"Resolved {job.version} to {job.digest}")
 
             activation = self.prerequisites.activation(job.request.cluster_id, job.engine_id)
-            already_prepared = bool(activation and activation.get("digest") == job.digest)
+            already_prepared = bool(
+                activation
+                and (activation.get("source_digest") or activation.get("digest")) == job.digest
+            )
             if already_prepared:
                 report = await self.prerequisites.inspect(
                     job.request.model_id or f"engine:{job.engine_id}",

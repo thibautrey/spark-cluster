@@ -1,4 +1,6 @@
 import asyncio
+import json
+import subprocess
 
 import httpx
 import pytest
@@ -353,4 +355,73 @@ async def test_remote_activation_is_authenticated_and_persists_for_bridge_launch
         await service.activate(cluster_id=target.id, **{**payload, "engine_id": "vllm"})
     assert service.activation(target.id, "vllm") is None
     restarted.state.runtime.store.close()
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_archive_activation_pins_the_verified_imported_manifest_on_every_node(tmp_path):
+    settings = Settings(
+        mode="live",
+        model_admin_token="shared-test",
+        database_path=tmp_path / "state.db",
+        setup_state_path=tmp_path / "state",
+        model_cache_path=tmp_path / "models",
+    )
+    store = SnapshotStore(settings.database_path)
+    registry = ClusterRegistry(settings)
+    target = registry.add_remote(
+        name="test",
+        endpoint="http://192.168.50.10:30080",
+        head_address="192.168.50.10",
+        hardware="dgx-spark",
+    )
+    transport = RuntimeTransport("unused")
+    inspected = []
+    pinned = "ghcr.io/acme/runtime@sha256:" + "e" * 64
+
+    async def imported(node, script, timeout=45):
+        assert (
+            subprocess.run(["bash", "-n"], input=script, text=True, capture_output=True).returncode
+            == 0
+        )
+        assert "sha256:" + "c" * 64 in script
+        assert 'images tag "$image" "$pinned"' in script
+        inspected.append(node.address)
+        return pinned + "\n"
+
+    transport.run = imported
+    service = RuntimePrerequisiteService(
+        settings, store, ready_setup(store, settings, transport), registry=registry
+    )
+    forwarded = []
+
+    def accept(request):
+        forwarded.append(json.loads(request.content))
+        return httpx.Response(200, json={"ok": True})
+
+    service.transport = httpx.MockTransport(accept)
+    store.save_runtime_object(
+        "artifact",
+        {
+            "id": "verified",
+            "runtime_id": "llama-cpp",
+            "digest": "sha256:" + "b" * 64,
+            "config_digest": "sha256:" + "c" * 64,
+            "image": "ghcr.io/acme/runtime:cuda",
+        },
+    )
+    value = await service.activate(
+        cluster_id=target.id,
+        engine_id="llama-cpp",
+        version="cuda",
+        image="ghcr.io/acme/runtime:cuda",
+        digest="sha256:" + "b" * 64,
+        platform="linux/arm64",
+        artifact_id="verified",
+    )
+    assert inspected == ["192.168.50.10", "192.168.50.11"]
+    assert value["image"] == pinned
+    assert value["source_digest"] == "sha256:" + "b" * 64
+    assert forwarded[0]["digest"] == "sha256:" + "e" * 64
+    assert service.image_overrides(target.id)["llama-cpp"] == pinned
     store.close()

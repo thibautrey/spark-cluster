@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+import re
 import secrets
 import shlex
 import time
@@ -45,12 +46,16 @@ class RuntimeSpec:
     def version(self) -> str:
         if not self.image:
             return "not configured"
+        if "@" in self.image:
+            return self.image.rsplit("@", 1)[1]
         return self.image.rsplit(":", 1)[-1] if ":" in self.image else "latest"
 
     @property
     def repository(self) -> str:
         if not self.image:
             return ""
+        if "@" in self.image:
+            return self.image.split("@", 1)[0]
         return self.image.rsplit(":", 1)[0] if ":" in self.image else self.image
 
 
@@ -132,6 +137,13 @@ class RuntimePrerequisiteService:
         if target.kind == "remote-bridge":
             if not self.settings.model_admin_token:
                 raise ValueError("Remote activation requires the shared administration token")
+            if artifact_id:
+                reference = await self._imported_image_reference(
+                    target, artifact_id, engine_id, digest
+                )
+                value.update(
+                    image=reference, digest=reference.rsplit("@", 1)[1], source_digest=digest
+                )
             path = "/api/v1/runtime-management/activation"
             body = json.dumps(value).encode()
             headers = signed_controller_headers(self.settings.model_admin_token, "POST", path, body)
@@ -143,6 +155,54 @@ class RuntimePrerequisiteService:
                 response.raise_for_status()
         await asyncio.to_thread(self.store.save_runtime_object, "activation", value)
         return value
+
+    async def _imported_image_reference(self, target, artifact_id, engine_id, source_digest):
+        artifact = next(
+            (
+                item
+                for item in self.store.runtime_objects("artifact")
+                if item.get("id") == artifact_id
+            ),
+            None,
+        )
+        if (
+            not artifact
+            or artifact["runtime_id"] != engine_id
+            or artifact["digest"] != source_digest
+        ):
+            raise ValueError("Runtime activation requires its verified controller artifact")
+        image = artifact["image"].split("@", 1)[0]
+        repository = image.rsplit(":", 1)[0] if ":" in image.rsplit("/", 1)[-1] else image
+        script = (
+            "set -eu\n"
+            "if command -v k3s >/dev/null; then\n"
+            " ctr='sudo -n k3s ctr --namespace k8s.io'; cri='sudo -n k3s crictl'\n"
+            "elif command -v ctr >/dev/null && command -v crictl >/dev/null; then\n"
+            " ctr='sudo -n ctr --namespace k8s.io'; cri='sudo -n crictl'\n"
+            "else echo 'Containerd image inspection is unavailable' >&2; exit 64; fi\n"
+            f"image={shlex.quote(image)}\nrepository={shlex.quote(repository)}\n"
+            'configuration=$($cri inspecti "$image" | python3 -c '
+            '\'import json,sys;print(json.load(sys.stdin)["status"]["id"])\')\n'
+            f'test "$configuration" = {shlex.quote(artifact["config_digest"])}\n'
+            "digest=$($ctr images list | awk -v image=\"$image\" '$1==image {print $3}')\n"
+            "printf '%s' \"$digest\" | grep -Eq '^sha256:[a-f0-9]{64}$'\n"
+            'pinned="$repository@$digest"\n'
+            'if ! $ctr images list -q | grep -Fxq -- "$pinned"; then\n'
+            ' $ctr images tag "$image" "$pinned" >/dev/null\nfi\n'
+            "printf '%s\\n' \"$pinned\"\n"
+        )
+        nodes = self.nodes(target)
+        if not nodes:
+            raise ValueError("No enrolled nodes are available for runtime activation")
+        references = {
+            (await self.setup.transport.run(node, script, timeout=45)).strip() for node in nodes
+        }
+        if len(references) != 1:
+            raise ValueError("Imported runtime manifests differ across the selected nodes")
+        reference = references.pop()
+        if not re.fullmatch(re.escape(repository) + r"@sha256:[a-f0-9]{64}", reference):
+            raise ValueError("Imported runtime did not provide a valid immutable reference")
+        return reference
 
     async def activate_bridge(self, request: RuntimeActivationRequest) -> dict:
         if request.engine_id not in MANAGED_ENGINE_IDS:
