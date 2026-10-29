@@ -128,6 +128,8 @@ export function Setup() {
     </>
   );
 }
+const sudoBootstrapCommand = `sudo sh -c 'set -eu; rule=$(mktemp); trap '\\''rm -f "$rule"'\\'' EXIT; printf "%s ALL=(ALL) NOPASSWD: ALL\\n" "$1" > "$rule"; visudo -cf "$rule"; install -o root -g root -m 0440 "$rule" /etc/sudoers.d/spark-cluster-bootstrap' sh "$(id -un)"`;
+
 function Checks({ checks }: { checks: SetupCheck[] }) {
   return (
     <div className="stack">
@@ -144,6 +146,27 @@ function Checks({ checks }: { checks: SetupCheck[] }) {
             {c.automatic ? " · automatic repair during installation" : ""}
           </small>
           {c.remedy && <p>{c.remedy}</p>}
+          {c.code === "sudo" && c.status !== "pass" && (
+            <div className="stack">
+              <p>
+                Run this command on the selected machine, as the SSH account.
+                Enter your password only in its terminal. It grants that account
+                passwordless administrator access for managed installation and
+                maintenance. Spark Cluster never receives your password.
+              </p>
+              <code className="break-all">{sudoBootstrapCommand}</code>
+              <Copy
+                value={sudoBootstrapCommand}
+                label="Copy administrator setup command"
+              />
+              <p className="note">
+                The rule is validated before installation. To revoke it after
+                managed maintenance is no longer needed, run: sudo rm
+                /etc/sudoers.d/spark-cluster-bootstrap. Then run the readiness
+                checks again.
+              </p>
+            </div>
+          )}
         </article>
       ))}
     </div>
