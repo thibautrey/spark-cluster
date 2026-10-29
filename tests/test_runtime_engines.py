@@ -197,3 +197,26 @@ def test_cpu_layers_require_llama_cpp_and_do_not_enable_other_engines():
     assert not invalid.executable
     with pytest.raises(ValidationError):
         request(cpu_offload_gib=2, gpu_layers=12)
+
+
+def test_single_spark_selects_gguf_shard_group_and_stages_shared_shard(tmp_path):
+    files = {
+        "model-Q2-00001-of-00003.gguf": 1,
+        "model-Q2-00002-of-00003.gguf": 20,
+        "model-Q4-00001-of-00003.gguf": 1,
+        "model-Q4-00002-of-00003.gguf": 40,
+        "model-Engram.gguf": 30,
+        "mmproj-model.gguf": 2,
+    }
+    for name, size in files.items():
+        (tmp_path / name).write_bytes(b"x" * size)
+    plan = build_execution_plan(
+        request(tensor_parallel=1, engine_id="llama-cpp", gpu_layers=8),
+        str(tmp_path),
+        Settings(runtime_llama_cpp_image="llama:pinned"),
+        cluster_kind="remote-bridge",
+    )
+    assert plan.executable
+    assert plan.environment["MODEL_FILE"] == str(tmp_path / "model-Q2-00001-of-00003.gguf")
+    assert plan.environment["MODEL_SHARED_SHARD"] == str(tmp_path / "model-Engram.gguf")
+    assert plan.environment["MODEL_SHARED_SHARD_NAME"] == "model-Q2-00003-of-00003.gguf"

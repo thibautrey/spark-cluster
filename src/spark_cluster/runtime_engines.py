@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import Settings
+from .gguf_models import smallest_gguf
 from .deepseek_mia import MANAGED_LAUNCH_BLOCKER, MODEL_ID
 from .deepseek_tonyd2wild import (
     MANAGED_LAUNCH_BLOCKER as TONY_MANAGED_LAUNCH_BLOCKER,
@@ -295,9 +296,18 @@ def build_execution_plan(
         if engine_id != "llama-cpp":
             blockers.append("CPU/GPU layer splitting is available only with llama.cpp.")
         warnings.append("Degraded mode runs RAM-resident layers and KV operations on CPU.")
+    unified_layers = (
+        request.gpu_layers is not None
+        and not request.cpu_offload_gib
+        and settings.active_hardware == "dgx-spark"
+        and engine_id == "llama-cpp"
+        and ranks == 1
+    )
     if (
-        request.cpu_offload_gib or request.gpu_layers is not None
-    ) and cluster_kind != "local-docker":
+        (request.cpu_offload_gib or request.gpu_layers is not None)
+        and cluster_kind != "local-docker"
+        and not unified_layers
+    ):
         blockers.append("Degraded loading requires a local Docker pool with host RAM admission.")
 
     environment = {
@@ -326,6 +336,23 @@ def build_execution_plan(
         "ENFORCE_RANK_ORDER": "1" if request.enforce_rank_order else "0",
         "RUNTIME_PORT": "8000",
     }
+    if engine_id == "llama-cpp" and managed_path.is_dir() and has_gguf:
+        try:
+            selection = smallest_gguf(
+                tuple(
+                    (file.relative_to(managed_path).as_posix(), file.stat().st_size)
+                    for file in managed_path.rglob("*.gguf")
+                    if file.is_file() and not file.is_symlink()
+                )
+            )
+            environment["MODEL_FILE"] = str(managed_path / selection.model_file)
+            if selection.shared_shard_source and selection.shared_shard_name:
+                environment["MODEL_SHARED_SHARD"] = str(
+                    managed_path / selection.shared_shard_source
+                )
+                environment["MODEL_SHARED_SHARD_NAME"] = Path(selection.shared_shard_name).name
+        except ValueError as error:
+            blockers.append(str(error))
     if request.speculative_method not in {"off", "auto"}:
         speculative = {
             "method": request.speculative_method,
@@ -512,10 +539,20 @@ def container_launch_script(engine_id: str) -> str:
             '--host 0.0.0.0 --port "$RUNTIME_PORT"'
         ),
         "llama-cpp": script(
-            'if test -f "$MODEL_ID"; then model_file="$MODEL_ID"; else '
+            'if test -n "${MODEL_FILE:-}"; then model_file="$MODEL_FILE"; '
+            'elif test -f "$MODEL_ID"; then model_file="$MODEL_ID"; else '
             "model_file=$(find \"$MODEL_ID\" -type f -name '*.gguf' "
             "-printf '%s\t%p\n' | sort -n | head -n 1 | cut -f2-); fi",
             "test -n \"$model_file\" || { echo 'No GGUF file found' >&2; exit 64; }",
+            'if test -n "${MODEL_SHARED_SHARD:-}"; then',
+            "  model_stage=$(mktemp -d)",
+            '  for shard in "$(dirname "$model_file")"/*.gguf; do',
+            '    test -f "$shard" || continue',
+            '    ln -s "$shard" "$model_stage/$(basename "$shard")"',
+            "  done",
+            '  ln -s "$MODEL_SHARED_SHARD" "$model_stage/$MODEL_SHARED_SHARD_NAME"',
+            '  model_file="$model_stage/$(basename "$model_file")"',
+            "fi",
             'set -- --model "$model_file" --alias "$SERVED_MODEL_NAME" '
             '--host 0.0.0.0 --port "$RUNTIME_PORT" --ctx-size "$MAX_MODEL_LEN" '
             '--parallel "$MAX_NUM_SEQS" --n-gpu-layers "${GPU_LAYERS:-999}"',

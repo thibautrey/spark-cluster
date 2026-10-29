@@ -904,3 +904,38 @@ def test_degraded_loading_cannot_restore_an_offline_cluster_fit(tmp_path, monkey
         settings,
     )
     assert not fit.fits
+
+
+def test_unified_gguf_layer_loading_uses_one_memory_envelope_and_file_backed_weights(tmp_path):
+    settings = Settings(
+        model_cache_path=tmp_path,
+        fallback_node_count=1,
+        fallback_node_memory_gib=128,
+        active_hardware="dgx-spark",
+    )
+    data = metadata(weight_gib=200, files=(("model-Q2.gguf", 200 * GIB),))
+    data.config["num_hidden_layers"] = 40
+    plan = build_fit_plan(
+        ModelFitRequest(repo_id=data.repo_id, context_length=512, gpu_layers=8),
+        data,
+        None,
+        settings,
+    )
+    assert not plan.memory_fits
+    assert plan.runtime_fits
+    assert plan.placement_strategy == "mmap"
+    assert plan.host_memory_gib == 0
+    assert plan.total_required_gib < plan.usable_cluster_gib
+    assert plan.resident_weights_gib + plan.offloaded_weights_gib == pytest.approx(200)
+    assert not build_fit_plan(
+        ModelFitRequest(repo_id=data.repo_id, context_length=512, gpu_layers=40),
+        data,
+        None,
+        settings,
+    ).runtime_fits
+    assert not build_fit_plan(
+        ModelFitRequest(repo_id=data.repo_id, context_length=512, cpu_offload_gib=100),
+        data,
+        None,
+        settings,
+    ).runtime_fits

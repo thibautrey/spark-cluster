@@ -195,17 +195,20 @@ function ModelDetails({
         onSubmit={(e) => {
           e.preventDefault();
           if (!fit?.download_fits) return;
-          void action.run(async () => {
-            await post("/api/v1/models/download", {
-              ...JSON.parse(signature),
-              allow_oversized: false,
-              ...(reusableCopy &&
-              smallestGgufOnly &&
-              md?.files.some((file) => file.name.endsWith(".gguf"))
-                ? { smallest_gguf_transfer_only: true }
-                : {}),
-            });
-          }, "Download queued.");
+          void action.run(
+            async () => {
+              await post("/api/v1/models/download", {
+                ...JSON.parse(signature),
+                allow_oversized: false,
+                ...(reusableCopy &&
+                smallestGgufOnly &&
+                md?.files.some((file) => file.name.endsWith(".gguf"))
+                  ? { smallest_gguf_transfer_only: true }
+                  : {}),
+              });
+            },
+            reusableCopy ? "Controller copy queued." : "Download queued.",
+          );
         }}
       >
         {reusableCopy && (

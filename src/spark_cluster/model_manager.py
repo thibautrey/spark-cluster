@@ -963,7 +963,36 @@ def build_fit_plan(
     if request.cpu_offload_gib or request.gpu_layers is not None:
         placement = "cpu-offload"
         performance_impact = "high"
-        if settings.active_hardware != "nvidia-gpu":
+        unified_mmap = (
+            settings.active_hardware == "dgx-spark"
+            and request.gpu_layers is not None
+            and not request.cpu_offload_gib
+            and detected_format.startswith("GGUF")
+        )
+        if unified_mmap:
+            placement = "mmap"
+            engine = "llama.cpp GPU layers with file-backed CPU tensors"
+            if request.gpu_layers and not model_layers:
+                runtime_fits = False
+                requirements.append("The GGUF layer count is required to budget GPU loading.")
+            else:
+                fraction = min(1.0, (request.gpu_layers + 2) / (model_layers + 2))
+                if request.gpu_layers == 0:
+                    fraction = 0.0
+                resident_weights = complete_weights_gib * fraction
+                offloaded_weights = complete_weights_gib - resident_weights
+                minimum_nodes, runtime_overhead, total_required, headroom = _minimum_nodes(
+                    node_capacities, resident_weights, kv_cache_gib, kv_heads, minimum_overhead
+                )
+                runtime_fits = minimum_nodes <= len(node_capacities) and request.offload_ranks == 1
+                ssd_per_node = complete_weights_gib
+                tradeoffs.append(
+                    "CPU tensors stay file-backed and may fault from SSD during inference. "
+                    "The estimate reserves GPU tensors, KV and workspace; the CPU working set "
+                    "uses the same physical memory and is reclaimed by the OS. "
+                    "This is an out-of-core compatibility plan, not a full-memory fit."
+                )
+        elif settings.active_hardware != "nvidia-gpu":
             runtime_fits = False
             requirements.append(
                 "RAM offload requires discrete GPUs; unified RAM is shared capacity."
