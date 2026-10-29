@@ -47,6 +47,39 @@ def test_safe_repo_id_rejects_paths():
         safe_repo_parts("../../secret")
 
 
+def test_gguf_weight_estimate_groups_shards_and_excludes_projectors():
+    from spark_cluster.model_manager import _runtime_weight_bytes
+
+    data = metadata(
+        files=(
+            ("model-IQ1-00001-of-00003.gguf", 100),
+            ("model-IQ1-00002-of-00003.gguf", 20 * GIB),
+            ("model-IQ2-00001-of-00003.gguf", 100),
+            ("model-IQ2-00002-of-00003.gguf", 30 * GIB),
+            ("model-Engram-Q4.gguf", 10 * GIB),
+            ("mmproj-model-BF16.gguf", GIB),
+        )
+    )
+    size, notes = _runtime_weight_bytes(data)
+    assert size == 30 * GIB + 100
+    assert "model-IQ1" in notes[0]
+
+
+def test_gguf_unsharded_variants_ignore_auxiliary_files():
+    from spark_cluster.model_manager import _runtime_weight_bytes
+
+    size, _ = _runtime_weight_bytes(
+        metadata(
+            files=(
+                ("model-Q4.gguf", 4 * GIB),
+                ("model-Q8.gguf", 8 * GIB),
+                ("mmproj-model.gguf", GIB),
+            )
+        )
+    )
+    assert size == 4 * GIB
+
+
 def test_fit_plan_uses_current_cluster_and_architecture(tmp_path):
     settings = Settings(model_cache_path=tmp_path, model_usable_memory_fraction=0.82)
     snapshot = ClusterSimulator("test").snapshot()

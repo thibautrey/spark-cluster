@@ -150,6 +150,7 @@ class HuggingFaceCatalog:
             (name, size)
             for name, size in files
             if re.search(r"model-0004[78]-of-00048\.safetensors$", name)
+            or (name.lower().endswith(".gguf") and "engram" in Path(name).name.lower())
         )
         engram_bytes = sum(size for _, size in engram_files)
         external_artifacts_bytes = 0
@@ -327,14 +328,26 @@ def _runtime_weight_bytes(metadata: RepositoryMetadata) -> tuple[int, list[str]]
     suffix, total = next(iter(groups.items()))
     if suffix == ".gguf":
         files = [(name, size) for name, size in metadata.files if name.lower().endswith(".gguf")]
-        unsharded = [item for item in files if not re.search(r"-\d{5}-of-\d{5}\.gguf$", item[0])]
-        if len(unsharded) > 1:
-            selected = min(unsharded, key=lambda item: item[1])
+        variants: dict[str, int] = {}
+        shared_bytes = 0
+        for name, size in files:
+            basename = Path(name).name.lower()
+            if basename.startswith("mmproj-"):
+                continue
+            if "engram" in basename:
+                shared_bytes += size
+                continue
+            shard = re.match(r"(.+)-\d{5}-of-\d{5}\.gguf$", name, re.IGNORECASE)
+            variant = shard[1] if shard else name
+            variants[variant] = variants.get(variant, 0) + size
+        if variants:
+            selected = min(variants, key=lambda name: (variants[name], name))
             notes.append(
-                "This GGUF repository contains several quantization variants. Runtime memory uses "
-                f"the smallest file ({selected[0]}); downloading currently retrieves all variants."
+                "GGUF runtime weights use the smallest variant by aggregate shard size "
+                f"({selected}), including shared lookup tables and excluding vision projectors. "
+                "Downloading currently retrieves all variants."
             )
-            return selected[1], notes
+            return variants[selected] + shared_bytes, notes
     return total, notes
 
 
@@ -592,7 +605,12 @@ def build_fit_plan(
             "The current vLLM launcher does not support this repository's library or task."
         )
 
-    if is_deepseek_v41 and "flash-1017" in repo_lower and engram_bytes:
+    if (
+        is_deepseek_v41
+        and "flash-1017" in repo_lower
+        and engram_bytes
+        and not detected_format.startswith("GGUF")
+    ):
         resident_weights = max(0.0, complete_weights_gib - engram_gib)
         hybrid_minimum, hybrid_overhead, hybrid_total, hybrid_headroom = _minimum_nodes(
             node_capacities, resident_weights, kv_cache_gib, kv_heads, minimum_overhead
