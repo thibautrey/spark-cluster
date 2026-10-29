@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import json
 import secrets
 import shlex
 import time
@@ -16,6 +17,7 @@ from .cluster_setup import ClusterSetupService, SetupFailure
 from .config import Settings
 from .local_docker import DockerEngineClient
 from .models import (
+    RuntimeActivationRequest,
     RuntimeEngineCollection,
     RuntimeEngineStatus,
     RuntimeInstallJob,
@@ -24,6 +26,7 @@ from .models import (
     RuntimeReadiness,
     RuntimeTerminalTicket,
 )
+from .remote_cluster import signed_controller_headers
 from .runtime_engines import MANAGED_ENGINE_IDS, capabilities, recommended_engine
 from .setup_models import SetupNode
 from .store import SnapshotStore
@@ -52,6 +55,8 @@ class RuntimeSpec:
 
 
 class RuntimePrerequisiteService:
+    transport: httpx.AsyncBaseTransport | None = None
+
     def __init__(
         self,
         settings: Settings,
@@ -91,8 +96,7 @@ class RuntimePrerequisiteService:
         )
 
     def image_overrides(self, cluster_id: str | None) -> dict[str, str]:
-        if not cluster_id:
-            return {}
+        cluster_id = cluster_id or "bridge"
         return {
             item["engine_id"]: item["image"]
             for item in self.store.runtime_objects("activation")
@@ -121,6 +125,35 @@ class RuntimePrerequisiteService:
             "digest": digest,
             "platform": platform,
             "artifact_id": artifact_id,
+            "source": "guided",
+            "updated_at": datetime.now(UTC).isoformat(),
+        }
+        target = self.registry.get(cluster_id)
+        if target.kind == "remote-bridge":
+            if not self.settings.model_admin_token:
+                raise ValueError("Remote activation requires the shared administration token")
+            path = "/api/v1/runtime-management/activation"
+            body = json.dumps(value).encode()
+            headers = signed_controller_headers(self.settings.model_admin_token, "POST", path, body)
+            headers["content-type"] = "application/json"
+            async with httpx.AsyncClient(
+                base_url=target.endpoint, transport=self.transport, timeout=30, trust_env=False
+            ) as client:
+                response = await client.post(path, content=body, headers=headers)
+                response.raise_for_status()
+        await asyncio.to_thread(self.store.save_runtime_object, "activation", value)
+        return value
+
+    async def activate_bridge(self, request: RuntimeActivationRequest) -> dict:
+        if request.engine_id not in MANAGED_ENGINE_IDS:
+            raise ValueError("Unknown managed runtime engine")
+        if "@" in request.image and request.image.rsplit("@", 1)[1] != request.digest:
+            raise ValueError("Runtime image and digest disagree")
+        value = {
+            **request.model_dump(),
+            "id": f"bridge:{request.engine_id}",
+            "cluster_id": "bridge",
+            "image": request.image.split("@", 1)[0] + "@" + request.digest,
             "source": "guided",
             "updated_at": datetime.now(UTC).isoformat(),
         }

@@ -428,7 +428,9 @@ class RuntimeDeploymentService:
     ):
         target = target or (self.registry.active() if self.registry else None)
         images = (
-            self.prerequisites.image_overrides(target.id) if self.prerequisites and target else {}
+            self.prerequisites.image_overrides(target.id if target else None)
+            if self.prerequisites
+            else {}
         )
         return build_execution_plan(
             request,

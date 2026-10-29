@@ -1,10 +1,13 @@
 import asyncio
 
+import httpx
 import pytest
 
+from spark_cluster.app import create_app
 from spark_cluster.cluster_registry import ClusterRegistry, GPUDevice
 from spark_cluster.cluster_setup import ClusterSetupService
 from spark_cluster.config import Settings
+from spark_cluster.models import ModelLaunchRequest
 from spark_cluster.runtime_prerequisites import RuntimePrerequisiteService
 from spark_cluster.setup_models import SetupJob, SetupNode, SetupRequest
 from spark_cluster.store import SnapshotStore
@@ -286,4 +289,64 @@ def test_failed_setup_terminal_is_limited_to_enrolled_job_nodes(tmp_path, monkey
     setup.transport.identity_for = lambda node: None
     with pytest.raises(KeyError):
         service.issue_setup_terminal_ticket(job.id, "192.168.50.10")
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_remote_activation_is_authenticated_and_persists_for_bridge_launches(tmp_path):
+    bridge_settings = Settings(
+        mode="live",
+        model_admin_token="shared-test",
+        database_path=tmp_path / "bridge.db",
+        setup_state_path=tmp_path / "bridge-state",
+        model_cache_path=tmp_path / "bridge-models",
+    )
+    bridge = create_app(bridge_settings)
+    controller_settings = Settings(
+        mode="live",
+        model_admin_token="shared-test",
+        database_path=tmp_path / "controller.db",
+        setup_state_path=tmp_path / "controller-state",
+        model_cache_path=tmp_path / "controller-models",
+    )
+    store = SnapshotStore(controller_settings.database_path)
+    registry = ClusterRegistry(controller_settings)
+    target = registry.add_remote(
+        name="test-bridge",
+        endpoint="http://192.168.50.10:30080",
+        head_address="192.168.50.10",
+        hardware="dgx-spark",
+    )
+    service = RuntimePrerequisiteService(
+        controller_settings,
+        store,
+        ClusterSetupService(controller_settings, store),
+        registry=registry,
+    )
+    service.transport = httpx.ASGITransport(app=bridge)
+    payload = dict(
+        engine_id="llama-cpp",
+        version="server-cuda",
+        image="ghcr.io/acme/engine:server-cuda",
+        digest="sha256:" + "b" * 64,
+        platform="linux/arm64",
+        artifact_id=None,
+    )
+    async with httpx.AsyncClient(transport=service.transport, base_url=target.endpoint) as client:
+        denied = await client.post("/api/v1/runtime-management/activation", json=payload)
+        assert denied.status_code == 401
+    await service.activate(cluster_id=target.id, **payload)
+    expected = payload["image"] + "@" + payload["digest"]
+    assert bridge.state.runtime_prerequisites.image_overrides(None)["llama-cpp"] == expected
+    bridge.state.runtime.store.close()
+    restarted = create_app(bridge_settings)
+    plan = restarted.state.deployment_service.execution_plan(
+        ModelLaunchRequest(
+            model_id="acme/model-GGUF", served_model_name="test", engine_id="llama-cpp"
+        ),
+        "/models/acme/model-GGUF",
+    )
+    assert plan.executable
+    assert plan.image == expected
+    restarted.state.runtime.store.close()
     store.close()

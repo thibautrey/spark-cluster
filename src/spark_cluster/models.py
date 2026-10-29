@@ -657,6 +657,15 @@ class RuntimeGuide(BaseModel):
     steps: list[RuntimeGuideStep] = Field(default_factory=list)
 
 
+class RuntimeActivationRequest(BaseModel):
+    engine_id: str = Field(min_length=1, max_length=40)
+    version: str = Field(min_length=1, max_length=200)
+    image: str = Field(min_length=1, max_length=1000, pattern=r"^[a-zA-Z0-9][a-zA-Z0-9./:@_-]+$")
+    digest: str = Field(pattern=r"^sha256:[a-f0-9]{64}$")
+    platform: Literal["linux/arm64", "linux/amd64"]
+    artifact_id: str | None = None
+
+
 class RuntimeWorkflowRequest(BaseModel):
     cluster_id: str = Field(min_length=1, max_length=80)
     engine_id: Literal[

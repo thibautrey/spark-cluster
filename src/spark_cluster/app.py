@@ -98,6 +98,7 @@ from .models import (
     ModelMutationResult,
     ModelRuntime,
     NodeSnapshot,
+    RuntimeActivationRequest,
     RuntimeEndpoint,
     RuntimeEngineCollection,
     RuntimeGuide,
@@ -1646,6 +1647,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return runtime_prerequisites.issue_terminal_ticket(request.address)
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Managed cluster node not found") from error
+
+    @app.post("/api/v1/runtime-management/activation", dependencies=[Depends(require_model_token)])
+    async def activate_bridge_runtime(request: RuntimeActivationRequest) -> dict:
+        try:
+            return await runtime_prerequisites.activate_bridge(request)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @app.get("/metrics", response_class=PlainTextResponse)
     async def metrics() -> str:
