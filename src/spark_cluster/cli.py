@@ -41,10 +41,17 @@ async def run_agent(args: argparse.Namespace) -> None:
     async with httpx.AsyncClient(timeout=10, headers=headers) as client:
         while True:
             node = collect_node(args.node_id, args.role)
-            response = await client.post(
-                f"{args.server.rstrip('/')}/api/v1/nodes", json=node.model_dump(mode="json")
-            )
-            response.raise_for_status()
+            try:
+                response = await client.post(
+                    f"{args.server.rstrip('/')}/api/v1/nodes", json=node.model_dump(mode="json")
+                )
+                response.raise_for_status()
+            except httpx.TransportError:
+                if args.once:
+                    raise
+                print(json.dumps({"node": node.id, "status": "retrying"}))
+                await asyncio.sleep(args.interval)
+                continue
             print(json.dumps({"node": node.id, "status": "reported"}))
             if args.once:
                 return

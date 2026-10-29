@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import math
+import os
 import re
 import time
 from datetime import UTC, datetime
@@ -20,6 +21,32 @@ from .remote_cluster import signed_controller_headers, validated_cluster_url
 from .store import SnapshotStore
 
 CHUNK_SIZE = 4 * 1024 * 1024
+CACHE_FLUSH_BYTES = 32 * 1024 * 1024
+
+
+def _discard_file_cache(stream, size: int) -> None:
+    if hasattr(os, "posix_fadvise"):
+        os.posix_fadvise(stream.fileno(), 0, size, os.POSIX_FADV_DONTNEED)
+
+
+def _flush_transfer(stream, size: int) -> None:
+    # Dirty page cache counts against the bridge's cgroup, including on unified-memory nodes.
+    stream.flush()
+    os.fsync(stream.fileno())
+    _discard_file_cache(stream, size)
+
+
+def _hash_transfer_prefix(path: Path):
+    digest = hashlib.sha256()
+    offset = 0
+    with path.open("rb") as stream:
+        while chunk := stream.read(CHUNK_SIZE):
+            digest.update(chunk)
+            offset += len(chunk)
+            if offset % CACHE_FLUSH_BYTES == 0:
+                _discard_file_cache(stream, offset)
+        _discard_file_cache(stream, offset)
+    return digest
 
 
 def _canonical(value: dict) -> bytes:
@@ -298,12 +325,23 @@ class ModelRelay:
                 },
             )
             response.raise_for_status()
+            failures = 0
             while True:
                 status_path = f"/api/v1/downloads/{job.id}"
-                response = await client.get(
-                    status_path,
-                    headers=signed_controller_headers(self._token(), "GET", status_path),
-                )
+                try:
+                    response = await client.get(
+                        status_path,
+                        headers=signed_controller_headers(self._token(), "GET", status_path),
+                    )
+                    if response.status_code in {502, 503, 504}:
+                        response.raise_for_status()
+                except (httpx.TransportError, httpx.HTTPStatusError):
+                    failures += 1
+                    if failures >= 12:
+                        raise
+                    await asyncio.sleep(5)
+                    continue
+                failures = 0
                 response.raise_for_status()
                 remote = DownloadJob.model_validate(response.json())
                 job.status = "paused" if remote.status == "paused" else "distributing"
@@ -359,9 +397,7 @@ class ModelRelay:
                 offset = target.stat().st_size if target.exists() else 0
                 digest = hashlib.sha256()
                 if offset:
-                    with target.open("rb") as existing:
-                        while chunk := existing.read(CHUNK_SIZE):
-                            digest.update(chunk)
+                    digest = await asyncio.to_thread(_hash_transfer_prefix, target)
                 if offset == expected_size and digest.hexdigest() != expected_hash:
                     target.unlink()
                     offset = 0
@@ -385,10 +421,14 @@ class ModelRelay:
                             offset = 0
                             digest = hashlib.sha256()
                         with target.open(mode) as output:
+                            flushed = offset
                             async for chunk in stream.aiter_bytes(CHUNK_SIZE):
                                 output.write(chunk)
                                 digest.update(chunk)
                                 offset += len(chunk)
+                                if offset - flushed >= CACHE_FLUSH_BYTES:
+                                    await asyncio.to_thread(_flush_transfer, output, offset)
+                                    flushed = offset
                                 job.downloaded_bytes = completed + offset
                                 job.progress = (
                                     round(job.downloaded_bytes / job.total_bytes * 100, 2)
@@ -398,6 +438,7 @@ class ModelRelay:
                                 job.message = "Copying model files from the controller over the LAN"
                                 job.updated_at = datetime.now(UTC)
                                 await asyncio.to_thread(self.store.save_download, job)
+                            await asyncio.to_thread(_flush_transfer, output, offset)
                 if target.stat().st_size != expected_size or digest.hexdigest() != expected_hash:
                     target.unlink(missing_ok=True)
                     raise RuntimeError(f"Integrity verification failed for {relative.as_posix()}")

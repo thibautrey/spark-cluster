@@ -78,7 +78,7 @@ runtime:
 resources:
   controlPlane:
     requests: { cpu: 100m, memory: 128Mi }
-    limits: { cpu: 500m, memory: 512Mi }
+    limits: { cpu: "2", memory: 2Gi }
   agent:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: 200m, memory: 256Mi }

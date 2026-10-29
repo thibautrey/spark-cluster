@@ -223,6 +223,81 @@ async def test_controller_transfer_endpoints_require_signatures_and_support_rang
 
 
 @pytest.mark.asyncio
+async def test_resumed_copy_verifies_prefix_and_discards_streaming_page_cache(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from spark_cluster import model_relay
+
+    controller = create_app(settings(tmp_path, "controller"))
+    bridge = create_app(settings(tmp_path, "bridge"))
+    job = staged_job(controller, b"0123456789abcdef")
+    await controller.state.model_relay.prepare_manifest(job)
+    remote = job.model_copy(
+        update={
+            "target_path": str(bridge.state.settings.model_cache_path / "acme" / "model"),
+            "staging_path": str(bridge.state.settings.model_cache_path / ".partial" / job.id),
+            "controller_job_id": job.id,
+        }
+    )
+    staging = Path(remote.staging_path)
+    staging.mkdir(parents=True)
+    (staging / "weights.bin").write_bytes(b"01234567")
+    discarded = []
+    monkeypatch.setattr(model_relay, "CHUNK_SIZE", 4)
+    monkeypatch.setattr(model_relay, "CACHE_FLUSH_BYTES", 4)
+    monkeypatch.setattr(model_relay.os, "POSIX_FADV_DONTNEED", 4, raising=False)
+    monkeypatch.setattr(
+        model_relay.os, "posix_fadvise",
+        lambda fd, start, size, advice: discarded.append(size), raising=False,
+    )
+    bridge.state.model_relay.transport = httpx.ASGITransport(app=controller)
+    await bridge.state.model_relay.pull(remote)
+    assert (staging / "weights.bin").read_bytes() == b"0123456789abcdef"
+    assert remote.progress == 100
+    assert 4 in discarded and 8 in discarded and 16 in discarded
+    controller.state.runtime.store.close()
+    bridge.state.runtime.store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("terminal_status", [200, 401])
+async def test_relay_status_recovers_transport_outages_but_not_auth_errors(
+    tmp_path, monkeypatch, terminal_status
+):
+    from spark_cluster import model_relay
+
+    app = create_app(settings(tmp_path, "controller"))
+    job = staged_job(app)
+    job.target_cluster_url = "http://192.168.50.10:30080"
+    polls = 0
+
+    def handle(request):
+        nonlocal polls
+        if request.method == "POST":
+            return httpx.Response(200, json={})
+        polls += 1
+        if polls == 1:
+            raise httpx.ReadError("Bridge restarting")
+        if polls == 2:
+            return httpx.Response(503)
+        return httpx.Response(
+            terminal_status, json=job.model_copy(update={"status": "completed"}).model_dump(mode="json")
+        )
+
+    app.state.model_relay.transport = httpx.MockTransport(handle)
+    sleep = AsyncMock()
+    monkeypatch.setattr(model_relay.asyncio, "sleep", sleep)
+    if terminal_status == 200:
+        assert await app.state.model_relay.distribute(job)
+    else:
+        with pytest.raises(httpx.HTTPStatusError):
+            await app.state.model_relay.distribute(job)
+    assert polls == 3
+    assert sleep.await_count == 2
+    app.state.runtime.store.close()
+
+
+@pytest.mark.asyncio
 async def test_controller_download_is_delivered_once_to_shared_cluster_storage(tmp_path):
     controller = create_app(
         settings(
