@@ -8,6 +8,7 @@ import type {
   ModelLaunchRequest,
   RuntimeReadiness,
   RuntimeTerminalTicket,
+  SetupJob,
 } from "@/lib/schema";
 import type { Library, PackageRuntime } from "@/lib/types";
 import { bytes, number } from "@/lib/utils";
@@ -347,16 +348,23 @@ export function RuntimeWorkflow({
     </Sheet>
   );
 }
-function RuntimeTerminal({
+export function RuntimeTerminal({
   model,
   clusterId,
+  setupJob,
 }: {
-  model: ModelLaunchRequest;
-  clusterId: string;
+  model?: ModelLaunchRequest;
+  clusterId?: string;
+  setupJob?: SetupJob;
 }) {
   const [open, setOpen] = useState(false);
   const report = useApi<RuntimeReadiness>(null);
-  const [nodes, setNodes] = useState<RuntimeReadiness["nodes"]>([]);
+  const [nodes, setNodes] = useState<
+    Pick<
+      RuntimeReadiness["nodes"][number],
+      "address" | "role" | "status" | "message"
+    >[]
+  >([]);
   const [address, setAddress] = useState("");
   const [output, setOutput] = useState("");
   const [connected, setConnected] = useState(false);
@@ -377,7 +385,9 @@ function RuntimeTerminal({
   async function connect() {
     socket.current?.close();
     const ticket = await post<RuntimeTerminalTicket>(
-      `${management}/terminal-ticket`,
+      setupJob
+        ? `/api/v1/setup/jobs/${setupJob.id}/terminal-ticket`
+        : `${management}/terminal-ticket`,
       { address },
     );
     const ws = new WebSocket(
@@ -408,8 +418,21 @@ function RuntimeTerminal({
       open={open}
       onToggle={(e) => {
         setOpen(e.currentTarget.open);
+        if (e.currentTarget.open && setupJob && !nodes.length) {
+          setNodes(
+            setupJob.request.nodes.map((node) => ({
+              address: node.address,
+              role: node.role,
+              status: "failed",
+              message: "Enrolled setup node; SSH host key remains pinned",
+            })),
+          );
+          setAddress(setupJob.request.nodes[0]?.address || "");
+          return;
+        }
         if (e.currentTarget.open && !nodes.length)
           void action.run(async () => {
+            if (!model || !clusterId) return;
             const r = await post<RuntimeReadiness>(`${management}/readiness`, {
               model_id: model.model_id,
               engine_id: model.engine_id,

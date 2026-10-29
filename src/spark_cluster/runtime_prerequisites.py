@@ -687,6 +687,17 @@ class RuntimePrerequisiteService:
         self.tickets[ticket] = (time.monotonic() + 60, node)
         return RuntimeTerminalTicket(ticket=ticket, address=address)
 
+    def issue_setup_terminal_ticket(self, job_id: str, address: str) -> RuntimeTerminalTicket:
+        job = self.store.get_setup_job(job_id)
+        if not job or job.status not in {"failed", "blocked"}:
+            raise KeyError(job_id)
+        node = next((node for node in job.request.nodes if node.address == address), None)
+        if not node or not self.setup.transport.identity_for(node):
+            raise KeyError(address)
+        ticket = secrets.token_urlsafe(32)
+        self.tickets[ticket] = (time.monotonic() + 60, node)
+        return RuntimeTerminalTicket(ticket=ticket, address=address)
+
     def consume_terminal_ticket(self, ticket: str) -> SetupNode:
         value = self.tickets.pop(ticket, None)
         if not value or value[0] < time.monotonic():

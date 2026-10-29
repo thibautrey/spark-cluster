@@ -8,6 +8,7 @@ import type {
   SetupReport,
 } from "@/lib/types";
 import type { SetupJob, SetupCheck, HardwareTopology } from "@/lib/schema";
+import { RuntimeTerminal } from "@/pages/runtimes";
 import {
   Panel,
   Button,
@@ -701,6 +702,7 @@ function SetupWizard({ close }: { close: () => void }) {
           {["failed", "blocked"].includes(job.status) && (
             <>
               <Message error={job.error} />
+              <RuntimeTerminal setupJob={job} />
               <div className="actions">
                 <Button
                   disabled={action.busy}

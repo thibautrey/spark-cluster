@@ -259,3 +259,26 @@ def test_terminal_tickets_are_short_lived_and_single_use(tmp_path):
     with pytest.raises(KeyError):
         service.issue_terminal_ticket("192.168.50.99")
     store.close()
+
+
+def test_failed_setup_terminal_is_limited_to_enrolled_job_nodes(tmp_path, monkeypatch):
+    settings = Settings(database_path=tmp_path / "state.db", setup_state_path=tmp_path / "setup")
+    store = SnapshotStore(settings.database_path)
+    setup = ready_setup(store, settings, RuntimeTransport(settings.runtime_vllm_image))
+    service = RuntimePrerequisiteService(settings, store, setup)
+    job = store.list_setup_jobs()[0]
+    with pytest.raises(KeyError):
+        service.issue_setup_terminal_ticket(job.id, "192.168.50.10")
+    job.status = "failed"
+    store.save_setup_job(job)
+    setup.transport.identity_for = lambda node: tmp_path / "enrolled-key"
+    ticket = service.issue_setup_terminal_ticket(job.id, "192.168.50.10")
+    assert service.consume_terminal_ticket(ticket.ticket).fingerprint == FINGERPRINT
+    with pytest.raises(KeyError):
+        service.consume_terminal_ticket(ticket.ticket)
+    with pytest.raises(KeyError):
+        service.issue_setup_terminal_ticket(job.id, "192.168.50.99")
+    setup.transport.identity_for = lambda node: None
+    with pytest.raises(KeyError):
+        service.issue_setup_terminal_ticket(job.id, "192.168.50.10")
+    store.close()

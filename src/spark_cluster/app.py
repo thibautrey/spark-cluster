@@ -756,6 +756,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Setup job not found") from error
 
+    @app.post(
+        "/api/v1/setup/jobs/{job_id}/terminal-ticket",
+        response_model=RuntimeTerminalTicket,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def setup_terminal_ticket(
+        job_id: str, request: RuntimeTerminalRequest
+    ) -> RuntimeTerminalTicket:
+        try:
+            return runtime_prerequisites.issue_setup_terminal_ticket(job_id, request.address)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404, detail="Enrolled failed setup node not found"
+            ) from error
+
     @app.get("/", include_in_schema=False)
     async def index() -> FileResponse:
         return FileResponse(static_dir / "index.html")
