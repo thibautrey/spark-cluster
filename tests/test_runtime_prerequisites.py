@@ -267,6 +267,11 @@ def test_failed_setup_terminal_is_limited_to_enrolled_job_nodes(tmp_path, monkey
     setup = ready_setup(store, settings, RuntimeTransport(settings.runtime_vllm_image))
     service = RuntimePrerequisiteService(settings, store, setup)
     job = store.list_setup_jobs()[0]
+    setup.transport.identity_for = lambda node: tmp_path / "enrolled-key"
+    ready_ticket = service.issue_setup_terminal_ticket(job.id, "192.168.50.10")
+    assert service.consume_terminal_ticket(ready_ticket.ticket).fingerprint == FINGERPRINT
+    job.status = "running"
+    store.save_setup_job(job)
     with pytest.raises(KeyError):
         service.issue_setup_terminal_ticket(job.id, "192.168.50.10")
     job.status = "failed"

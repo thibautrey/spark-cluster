@@ -731,6 +731,7 @@ function SetupWizard({ close }: { close: () => void }) {
       )}
       {stage === 4 && job && (
         <>
+          <RuntimeTerminal setupJob={job} />
           <h3>
             {job.mode === "native-macos"
               ? "Your Mac is registered"

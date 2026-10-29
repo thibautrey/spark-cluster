@@ -100,7 +100,7 @@ async def apply_step(service, job, step):
                 + """
 sudo -n apt-get update -qq >/dev/null 2>&1
 sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-  curl ca-certificates tar nfs-common nvidia-container-toolkit >/dev/null 2>&1
+  curl ca-certificates tar util-linux nfs-common nvidia-container-toolkit >/dev/null 2>&1
 command -v nvidia-container-runtime >/dev/null
 sudo -n mkdir -p /var/lib/spark-cluster
 """
@@ -377,7 +377,8 @@ sudo -n install -m 0755 "$helmdir/linux-$arch/helm" /usr/local/bin/helm
                 "2>/dev/null || true' EXIT\n"
                 f"sudo -n mount -t nfs -o vers=4.2 {cluster_ip(head)}:"
                 "/var/lib/spark-cluster/models /var/lib/spark-cluster/storage-check\n"
-                "sudo -n -u '#10001' sh -c 'checkfile=$(mktemp "
+                "sudo -n setpriv --reuid=10001 --regid=10001 --clear-groups "
+                "sh -c 'checkfile=$(mktemp "
                 '/var/lib/spark-cluster/storage-check/.check.XXXXXX); rm "$checkfile"\'\n',
                 timeout=45,
             )

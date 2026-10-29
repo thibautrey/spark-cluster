@@ -423,7 +423,7 @@ export function RuntimeTerminal({
             setupJob.request.nodes.map((node) => ({
               address: node.address,
               role: node.role,
-              status: "failed",
+              status: setupJob.status === "ready" ? "ready" : "failed",
               message: "Enrolled setup node; SSH host key remains pinned",
             })),
           );

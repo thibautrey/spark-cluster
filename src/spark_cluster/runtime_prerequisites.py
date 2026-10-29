@@ -689,7 +689,7 @@ class RuntimePrerequisiteService:
 
     def issue_setup_terminal_ticket(self, job_id: str, address: str) -> RuntimeTerminalTicket:
         job = self.store.get_setup_job(job_id)
-        if not job or job.status not in {"failed", "blocked"}:
+        if not job or job.status not in {"ready", "failed", "blocked"}:
             raise KeyError(job_id)
         node = next((node for node in job.request.nodes if node.address == address), None)
         if not node or not self.setup.transport.identity_for(node):
