@@ -83,6 +83,34 @@ def staged_job(app, payload=b"model-bytes"):
 
 
 @pytest.mark.asyncio
+async def test_relay_metadata_uses_private_state_and_reads_legacy_manifests(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    app = create_app(settings(tmp_path, "controller"))
+    job = staged_job(app)
+    model_root = app.state.settings.model_cache_path
+    original = Path.chmod
+
+    def nas_chmod(path, *args, **kwargs):
+        if model_root in path.parents:
+            raise PermissionError("NAS does not support chmod")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "chmod", nas_chmod)
+    relay = app.state.model_relay
+    manifest = await relay.prepare_manifest(job)
+    path = relay._manifest_path(job.id)
+    assert app.state.settings.setup_state_path in path.parents
+    assert path.stat().st_mode & 0o777 == 0o600
+    assert relay.manifest(job.id) == manifest
+    legacy = model_root / ".relay" / path.name
+    legacy.parent.mkdir()
+    path.replace(legacy)
+    assert relay.manifest(job.id) == manifest
+    app.state.runtime.store.close()
+
+
+@pytest.mark.asyncio
 async def test_selective_gguf_transfer_never_hashes_or_serves_other_variants(tmp_path, monkeypatch):
     app = create_app(settings(tmp_path, "controller"))
     job = staged_job(app)

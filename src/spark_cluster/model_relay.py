@@ -73,7 +73,8 @@ class ModelRelay:
     def __init__(self, settings: Settings, store: SnapshotStore):
         self.settings = settings
         self.store = store
-        self.state_path = settings.model_cache_path / ".relay"
+        # Transfer metadata needs POSIX permissions; model storage may be an SMB share.
+        self.state_path = settings.setup_state_path / "model-relay"
         self.state_path.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     def _token(self) -> str:
@@ -151,7 +152,10 @@ class ModelRelay:
     def manifest(self, job_id: str) -> dict:
         path = self._manifest_path(job_id)
         if not path.exists():
-            raise FileNotFoundError(job_id)
+            # Preserve manifests for transfers started before metadata moved off model storage.
+            path = self.settings.model_cache_path / ".relay" / path.name
+            if not path.exists():
+                raise FileNotFoundError(job_id)
         return json.loads(path.read_text())
 
     def model_file(self, job_id: str, relative_path: str) -> Path:
