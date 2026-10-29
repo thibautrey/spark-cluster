@@ -218,7 +218,7 @@ describe("React dashboard parity", () => {
           }
         : path === "/api/v1/controller/models"
           ? [{ id: "acme/chat" }]
-          : path === "/api/v1/catalog/models/acme/chat"
+          : path.startsWith("/api/v1/catalog/models/acme/chat")
             ? { ...catalog, files: [{ name: "model-Q2.gguf", size: 100 }] }
             : undefined;
     mount("models");
