@@ -462,43 +462,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     activate=cluster_registry.active() is None,
                 )
 
-            if any(c.kind == "local-docker" for c in cluster_registry.list()):
+        if any(c.kind in {"local-docker", "remote-bridge"} for c in cluster_registry.list()):
 
-                async def monitor_local_cluster() -> None:
-                    while True:
-                        active = cluster_registry.active()
-                        if active and active.kind == "local-docker":
-                            try:
-                                loaded_models = await docker_engine.loaded_models_by_gpu(active)
-                                snapshot = await asyncio.to_thread(
-                                    local_gpu_snapshot, active, settings, loaded_models
-                                )
-                                snapshot.runtime.model = (
-                                    (
-                                        ", ".join(
-                                            r.profile.model
-                                            for r in on_demand.residents.values()
-                                            if r.status == "ready"
-                                        )
-                                        or "No model loaded"
+            async def monitor_active_cluster() -> None:
+                logger = logging.getLogger(__name__)
+                while True:
+                    active = cluster_registry.active()
+                    if active and active.kind == "local-docker":
+                        try:
+                            loaded_models = await docker_engine.loaded_models_by_gpu(active)
+                            snapshot = await asyncio.to_thread(
+                                local_gpu_snapshot, active, settings, loaded_models
+                            )
+                            snapshot.runtime.model = (
+                                (
+                                    ", ".join(
+                                        r.profile.model
+                                        for r in on_demand.residents.values()
+                                        if r.status == "ready"
                                     )
-                                    if on_demand.profiles
-                                    else settings.runtime_model
+                                    or "No model loaded"
                                 )
-                                snapshot.runtime.quantization = settings.runtime_quantization
-                                snapshot.runtime.context_length = settings.runtime_context_length
-                                snapshot.runtime.tensor_parallel = settings.runtime_tensor_parallel
-                                snapshot.runtime.pipeline_parallel = (
-                                    settings.runtime_pipeline_parallel
-                                )
-                                await runtime.publish(snapshot)
-                            except (OSError, RuntimeError, ValueError):
-                                logging.getLogger(__name__).warning(
-                                    "Local telemetry sample failed; retrying"
-                                )
-                        await asyncio.sleep(max(2, settings.sample_interval_seconds))
+                                if on_demand.profiles
+                                else settings.runtime_model
+                            )
+                            snapshot.runtime.quantization = settings.runtime_quantization
+                            snapshot.runtime.context_length = settings.runtime_context_length
+                            snapshot.runtime.tensor_parallel = settings.runtime_tensor_parallel
+                            snapshot.runtime.pipeline_parallel = settings.runtime_pipeline_parallel
+                            await runtime.publish(snapshot)
+                        except (OSError, RuntimeError, ValueError):
+                            logger.warning("Local telemetry sample failed; retrying")
+                    elif active and active.kind == "remote-bridge":
+                        try:
+                            await runtime.publish(await cluster_connector.snapshot())
+                        except RemoteClusterUnavailable:
+                            logger.warning("Remote cluster telemetry sample failed; retrying")
+                    await asyncio.sleep(max(2, settings.sample_interval_seconds))
 
-                local_monitor = asyncio.create_task(monitor_local_cluster())
+            local_monitor = asyncio.create_task(monitor_active_cluster())
         await runtime.start()
         await model_manager.start()
         await log_service.start()
