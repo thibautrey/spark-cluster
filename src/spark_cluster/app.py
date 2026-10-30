@@ -57,6 +57,13 @@ from .cluster_registry import (
 )
 from .cluster_setup import ClusterSetupService, SetupFailure
 from .config import Settings
+from .external_runtime import (
+    ExternalRuntimeRequest,
+    ExternalRuntimeService,
+    ExternalRuntimeStatus,
+    ExternalRuntimeTestRequest,
+    ExternalRuntimeTestResult,
+)
 from .inference_http import RequestTooLarge, inference_error, read_inference_body
 from .inference_tracking import InferenceTracker
 from .local_docker import DockerEngineClient, detect_nvidia_gpus, local_gpu_snapshot
@@ -76,6 +83,7 @@ from .model_pool import (
     PoolNode,
     PoolResponse,
     PoolScaleRequest,
+    forward_http,
 )
 from .model_relay import ModelRelay
 from .models import (
@@ -184,9 +192,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.remote_cluster_url:
         settings.remote_cluster_url = validated_cluster_url(settings.remote_cluster_url)
     cluster_registry = ClusterRegistry(settings)
+    external_runtime = ExternalRuntimeService(settings, cluster_registry)
     runtime = Runtime(settings)
     model_relay = ModelRelay(settings, runtime.store)
-    model_manager = ModelManager(settings, runtime.store, runtime, model_relay)
+    model_manager = ModelManager(settings, runtime.store, runtime, model_relay, external_runtime)
     browser = ModelBrowser(settings)
     docker_engine = DockerEngineClient(settings)
     log_service = RuntimeLogService(settings, runtime.store, docker_engine)
@@ -540,6 +549,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.cluster_connector = cluster_connector
     app.state.cluster_registry = cluster_registry
+    app.state.external_runtime = external_runtime
     app.state.docker_engine = docker_engine
     app.state.on_demand = on_demand
     app.state.model_pool = model_pool
@@ -687,6 +697,61 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return cluster_registry.delete(cluster_id)
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Cluster not found") from error
+
+    @app.get(
+        "/api/v1/clusters/{cluster_id}/runtime",
+        response_model=ExternalRuntimeStatus,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def external_runtime_status(cluster_id: str) -> ExternalRuntimeStatus:
+        try:
+            return await external_runtime.status(cluster_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Compute pool not found") from error
+
+    @app.put(
+        "/api/v1/clusters/{cluster_id}/runtime",
+        response_model=ExternalRuntimeStatus,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def attach_external_runtime(
+        cluster_id: str, request: ExternalRuntimeRequest
+    ) -> ExternalRuntimeStatus:
+        try:
+            return await external_runtime.configure(cluster_id, request)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Compute pool not found") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.delete(
+        "/api/v1/clusters/{cluster_id}/runtime",
+        response_model=ExternalRuntimeStatus,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def detach_external_runtime(cluster_id: str) -> ExternalRuntimeStatus:
+        try:
+            return await external_runtime.clear(cluster_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Compute pool not found") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.post(
+        "/api/v1/runtime/test",
+        response_model=ExternalRuntimeTestResult,
+        dependencies=[Depends(require_model_token)],
+    )
+    async def test_external_runtime(
+        request: ExternalRuntimeTestRequest,
+    ) -> ExternalRuntimeTestResult:
+        try:
+            cluster = external_runtime.cluster(request.cluster_id)
+            return await external_runtime.chat(cluster, request)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="Compute pool not found") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @app.post("/api/v1/setup/connect", dependencies=[Depends(require_model_token)])
     async def connect_cluster(request: ClusterConnectRequest):
@@ -1362,6 +1427,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def global_openai_models():
         inventory = await model_pool.inventory(force=True)
         data = []
+        cluster = cluster_registry.active()
+        if cluster is not None:
+            data.extend(await external_runtime.models(cluster))
+        seen = {str(item.get("id")) for item in data if item.get("id")}
         for model in inventory["models"]:
             if not model["loadable"]:
                 continue
@@ -1371,10 +1440,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             if runtime_data:
                 # Forward every field reported by the runtime without maintaining a shadow schema.
-                data.extend(runtime_data)
-            else:
+                for item in runtime_data:
+                    if str(item.get("id")) not in seen:
+                        data.append(item)
+                        seen.add(str(item.get("id")))
+            elif model["id"] not in seen:
                 # The routing id is the only fact available before this runtime has run once.
                 data.append({"id": model["id"], "object": "model"})
+                seen.add(model["id"])
         return {"object": "list", "data": data}
 
     @app.api_route(
@@ -1414,6 +1487,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 status_code=400,
                 detail="Specify model in the request body, query, or X-Spark-Model header",
             )
+        external_match = await external_runtime.matching_model(reference)
+        if external_match:
+            external_cluster, runtime_model = external_match
+            forwarded = body
+            if json_body is not None:
+                json_body["model"] = runtime_model["id"]
+                forwarded = json.dumps(json_body, separators=(",", ":")).encode()
+            delivered = False
+
+            async def external_replay_receive():
+                nonlocal delivered
+                if delivered:
+                    return await request.receive()
+                delivered = True
+                return {"type": "http.request", "body": forwarded, "more_body": False}
+
+            async def external_handler(scope, _, send):
+                forwarded_scope = dict(scope)
+                forwarded_scope["headers"] = [
+                    (name, value)
+                    for name, value in scope["headers"]
+                    if name.lower() != b"content-length"
+                ]
+                await forward_http(
+                    external_runtime.base_url(external_cluster) + "/" + path,
+                    forwarded_scope,
+                    external_replay_receive,
+                    send,
+                    transport=external_runtime.transport,
+                    authorization=external_runtime.authorization(external_cluster),
+                )
+
+            return PoolResponse(external_handler)
         try:
             model = await model_pool.resolve_model(reference)
         except ValueError as error:
@@ -1535,6 +1641,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "localai",
             "tensorfold",
             "deepinfer",
+            "strata",
         ] = "auto",
     ) -> RuntimeGuide:
         try:

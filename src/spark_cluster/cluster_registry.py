@@ -38,6 +38,8 @@ class ClusterTarget(BaseModel):
     gpu_model: str | None = None
     gpus: list[GPUDevice] = Field(default_factory=list)
     model_storage_path: str | None = None
+    runtime_engine: Literal["strata"] | None = None
+    runtime_api_key_configured: bool = False
     active: bool = False
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     capabilities: list[str] = Field(default_factory=list)
@@ -215,6 +217,34 @@ class ClusterRegistry:
             self._clusters[cluster.id] = cluster
             if activate or not self._active_id:
                 self._active_id = cluster.id
+            self._save()
+            self._apply_active()
+            return cluster.model_copy(update={"active": cluster.id == self._active_id})
+
+    def set_external_runtime(
+        self,
+        cluster_id: str,
+        *,
+        engine_id: Literal["strata"] | None,
+        port: int,
+        api_key_configured: bool,
+    ) -> ClusterTarget:
+        if not 1024 <= port <= 65535:
+            raise ValueError("Use an unprivileged runtime port between 1024 and 65535")
+        with self._lock:
+            cluster = self.get(cluster_id)
+            if cluster.kind != "remote-bridge":
+                raise ValueError(
+                    "Only a remote compute pool can attach an externally managed runtime"
+                )
+            cluster = cluster.model_copy(
+                update={
+                    "runtime_engine": engine_id,
+                    "runtime_port": port if engine_id else cluster.runtime_port,
+                    "runtime_api_key_configured": api_key_configured,
+                }
+            )
+            self._clusters[cluster.id] = cluster
             self._save()
             self._apply_active()
             return cluster.model_copy(update={"active": cluster.id == self._active_id})

@@ -9,6 +9,8 @@ import type {
   RuntimeReadiness,
   RuntimeTerminalTicket,
   SetupJob,
+  ExternalRuntimeStatus,
+  ExternalRuntimeTestResult,
 } from "@/lib/schema";
 import type { Library, PackageRuntime } from "@/lib/types";
 import { bytes, number } from "@/lib/utils";
@@ -221,6 +223,9 @@ export function Runtimes() {
           )}
         </Panel>
       )}
+      {tab === "engines" && cluster && (
+        <ExternalRuntimePanel clusterId={cluster.id} name={cluster.name} />
+      )}
       {(tab === "packages" || !clusters?.clusters.length) && library.data && (
         <PackageLibrary
           library={library.data}
@@ -235,6 +240,159 @@ export function Runtimes() {
     </>
   );
 }
+function ExternalRuntimePanel({
+  clusterId,
+  name,
+}: {
+  clusterId: string;
+  name: string;
+}) {
+  const path = `/api/v1/clusters/${encodeURIComponent(clusterId)}/runtime`;
+  const status = useApi<ExternalRuntimeStatus>(path, 5000);
+  const [port, setPort] = useState("8080");
+  const [apiKey, setApiKey] = useState("");
+  const [result, setResult] = useState<ExternalRuntimeTestResult | null>(
+    null,
+  );
+  const action = useAction();
+  const configured = !!status.data?.engine_id;
+  const attach = () =>
+    action.run(
+      () =>
+        api<ExternalRuntimeStatus>(path, {
+          method: "PUT",
+          interactive: true,
+          body: {
+            engine_id: "strata",
+            port: Number(port),
+            api_key: apiKey || null,
+          },
+        }),
+      "Strata endpoint attached.",
+    );
+  const detach = () =>
+    action.run(
+      () =>
+        api<ExternalRuntimeStatus>(path, {
+          method: "DELETE",
+          interactive: true,
+        }),
+      "Strata endpoint detached.",
+    );
+  const test = () =>
+    action.run(async () => {
+      const response = await api<ExternalRuntimeTestResult>(
+        "/api/v1/runtime/test",
+        {
+          method: "POST",
+          interactive: true,
+          body: { cluster_id: clusterId, max_tokens: 128 },
+        },
+      );
+      setResult(response);
+      return response;
+    });
+  return (
+    <Panel
+      title="Strata · native runtime"
+      actions={
+        configured ? (
+          <Badge good={status.data?.status === "ready"}>
+            {status.data?.status === "ready" ? "✓ Inference ready" : "Unreachable"}
+          </Badge>
+        ) : undefined
+      }
+    >
+      <p className="note">
+        Connect the systemd-managed Strata server running on {name}. Spark keeps
+        the key on the controller, probes <code>/v1/models</code>, proxies
+        OpenAI requests, and verifies one real completion.
+      </p>
+      <Message error={action.error || status.error} />
+      {action.message && <p className="note">{action.message}</p>}
+      <div className="form-grid">
+        <Field label="LAN port">
+          <Input
+            type="number"
+            min={1024}
+            max={65535}
+            value={port}
+            onChange={(event) => setPort(event.target.value)}
+          />
+        </Field>
+        <Field
+          label={
+            status.data?.api_key_configured
+              ? "Replace API key (optional)"
+              : "API key"
+          }
+        >
+          <Input
+            type="password"
+            autoComplete="off"
+            value={apiKey}
+            placeholder={
+              status.data?.api_key_configured ? "Stored securely" : "Bearer key"
+            }
+            onChange={(event) => setApiKey(event.target.value)}
+          />
+        </Field>
+      </div>
+      {configured && (
+        <Facts
+          items={[
+            ["Endpoint", status.data?.base_url || "Unavailable"],
+            ["Model", status.data?.model_ids.join(", ") || "Not reported"],
+            [
+              "Probe",
+              status.data?.latency_ms != null
+                ? `${status.data.latency_ms} ms`
+                : "No answer",
+            ],
+            [
+              "Credential",
+              status.data?.api_key_configured ? "Bearer stored" : "No key",
+            ],
+          ]}
+        />
+      )}
+      {configured && status.data?.error && (
+        <p className="note">{status.data.error}</p>
+      )}
+      {result && (
+        <p className="note">
+          {result.ok ? "✓" : "✗"} {result.model || "runtime"} ·{" "}
+          {result.elapsed_ms} ms ·{" "}
+          {result.content || result.reasoning_content || result.detail}
+        </p>
+      )}
+      <footer className="actions">
+        <Button disabled={action.busy} onClick={() => void attach()}>
+          {configured ? "Update endpoint" : "Attach Strata"}
+        </Button>
+        {configured && (
+          <>
+            <Button
+              variant="outline"
+              disabled={action.busy}
+              onClick={() => void test()}
+            >
+              Test inference
+            </Button>
+            <Button
+              variant="outline"
+              disabled={action.busy}
+              onClick={() => void detach()}
+            >
+              Detach
+            </Button>
+          </>
+        )}
+      </footer>
+    </Panel>
+  );
+}
+
 export function RuntimeWorkflow({
   guide,
   launch,

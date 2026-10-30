@@ -1596,7 +1596,7 @@ class ModelPool:
                 )
 
 
-async def forward_http(url, scope, receive, send, token=None, transport=None):
+async def forward_http(url, scope, receive, send, token=None, transport=None, authorization=None):
     request = Request(scope, receive)
     body = await read_inference_body(request)
     query = scope.get("query_string", b"").decode()
@@ -1604,6 +1604,8 @@ async def forward_http(url, scope, receive, send, token=None, transport=None):
         url += "?" + query
     body = request_stream_usage(body, request.headers.get("content-type", ""), request.url.path)
     headers = httpx.Headers(forwarded_headers(scope["headers"], request=True))
+    if authorization:
+        headers["authorization"] = f"Bearer {authorization}"
     if token:
         parsed = httpx.URL(url)
         target = parsed.raw_path.decode()

@@ -277,6 +277,8 @@ class RuntimeEndpoint(BaseModel):
     loaded_model_ids: list[str] = Field(default_factory=list)
     routing_mode: Literal["direct-runtime"] = "direct-runtime"
     controller_required: bool = False
+    engine_id: str | None = None
+    auth_mode: Literal["none", "bearer"] = "none"
 
 
 LogLevel = Literal["debug", "info", "warning", "error"]
@@ -332,6 +334,7 @@ class ModelLaunchRequest(BaseModel):
         "localai",
         "tensorfold",
         "deepinfer",
+        "strata",
     ] = "auto"
     speculative_method: Literal["off", "auto", "mtp", "dspark", "eagle3", "dflash"] = "auto"
     speculative_tokens: int = Field(default=0, ge=0, le=5)
@@ -531,6 +534,7 @@ RuntimeEngineId = Literal[
     "localai",
     "tensorfold",
     "deepinfer",
+    "strata",
 ]
 RuntimeNodeStatus = Literal["ready", "missing", "outdated", "unreachable", "installing", "failed"]
 RuntimeReadinessState = Literal["ready", "needs_preparation", "partial", "unreachable", "blocked"]
@@ -573,6 +577,7 @@ class RuntimeReadinessRequest(BaseModel):
         "localai",
         "tensorfold",
         "deepinfer",
+        "strata",
     ] = "auto"
     cluster_id: str | None = Field(default=None, min_length=1, max_length=80)
 
@@ -683,6 +688,7 @@ class RuntimeWorkflowRequest(BaseModel):
         "localai",
         "tensorfold",
         "deepinfer",
+        "strata",
     ] = "auto"
     model_id: str | None = Field(default=None, min_length=1, max_length=200)
     launch: ModelLaunchRequest | None = None

@@ -276,6 +276,7 @@ ADMIN_TOOLS = [
                         "localai",
                         "tensorfold",
                         "deepinfer",
+                        "strata",
                     ],
                     "default": "auto",
                 },

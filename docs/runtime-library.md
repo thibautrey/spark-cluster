@@ -31,6 +31,40 @@ Runtime readiness has five states:
 - **Unreachable**: the target cannot be inspected.
 - **Blocked**: no pinned image, managed nodes, or executable adapter is available.
 
+## Attached native runtime: Strata
+
+Strata is a native, systemd-managed OpenAI-compatible server on the Spark host. Spark
+does not containerize it, relaunch it, or write its model files. It attaches the already
+running server to the selected remote compute pool, keeps the bearer key separate from
+the cluster registry, probes `/v1/models`, presents the reported models on `/v1/models`,
+and proxies inference to it.
+
+```bash
+CLUSTER=remote-xxxxxxxxxxxx
+curl -X PUT "http://CONTROLLER:18771/api/v1/clusters/$CLUSTER/runtime" \
+  -H "Authorization: Bearer $SPARK_CLUSTER_MODEL_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"engine_id":"strata","port":8080,"api_key":"..."}'
+
+curl "http://CONTROLLER:18771/api/v1/runtime"
+curl "http://CONTROLLER:18771/v1/models"
+curl -X POST "http://CONTROLLER:18771/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"deepseek-v4.1-flash","messages":[{"role":"user","content":"Reply with SPARK_OK"}],"max_tokens":128}'
+curl -X POST "http://CONTROLLER:18771/api/v1/runtime/test" \
+  -H "Authorization: Bearer $SPARK_CLUSTER_MODEL_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" -d '{"max_tokens":128}'
+```
+
+The key is stored in `setup-state/runtime-credentials.json` with mode `0600`; it is
+never included in `/api/v1/clusters`. Removing the attachment or selecting another pool
+does not stop Strata. The server, its context, KV format and process lifecycle remain
+owned by its systemd unit.
+
+Spark reports this engine as externally managed. Its absence from the managed launch
+adapters is deliberate: a successful container image build or a visible catalogue entry
+is not evidence that Spark can reproduce the host's Strata tuning.
+
 ## Catalogue and sources
 
 | Runtime | Main use | Official distribution repository |

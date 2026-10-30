@@ -1175,12 +1175,14 @@ class ModelManager:
         store: SnapshotStore,
         runtime: Any,
         relay: ModelRelay | None = None,
+        external_runtime: Any = None,
     ):
         self.settings = settings
         self.store = store
         self.runtime = runtime
         self.catalog = HuggingFaceCatalog(settings.hf_token, settings.hf_download_workers)
         self.relay = relay
+        self.external_runtime = external_runtime
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.worker: asyncio.Task | None = None
         self._active_tasks: dict[str, asyncio.Task] = {}
@@ -1634,6 +1636,10 @@ class ModelManager:
                 shutil.rmtree(path)
 
     async def runtime_endpoint(self) -> RuntimeEndpoint:
+        if self.external_runtime is not None:
+            external = await self.external_runtime.active_endpoint()
+            if external is not None:
+                return external
         if self._runtime_cache and time.monotonic() - self._runtime_cached_at < 1:
             return self._runtime_cache
         async with self._runtime_lock:

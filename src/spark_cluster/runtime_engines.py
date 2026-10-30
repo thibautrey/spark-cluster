@@ -178,6 +178,23 @@ def capabilities(
             supports_lmcache=False,
             readiness_path="/readyz",
         ),
+        "strata": EngineCapability(
+            id="strata",
+            name="Strata (native, externally managed)",
+            image=None,
+            executable=False,
+            supports_multi_node=False,
+            speculative_methods=("off",),
+            supports_expert_parallel=False,
+            supports_lmcache=False,
+            readiness_path="/v1/models",
+            inference_path="/v1/chat/completions",
+            inference_protocol="chat",
+            blockers=(
+                "Strata is a native systemd-managed server on the Spark host. Attach its "
+                "OpenAI endpoint from the compute pool instead of launching a container.",
+            ),
+        ),
         "tensorfold": EngineCapability(
             id="tensorfold",
             name="TensorFold specialized lane",

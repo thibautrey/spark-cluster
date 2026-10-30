@@ -603,6 +603,28 @@ export type RuntimeEndpoint = {
   loaded_model_ids: Array<string>;
   routing_mode: "direct-runtime";
   controller_required: boolean;
+  engine_id?: string | null;
+  auth_mode?: "none" | "bearer";
+};
+export type ExternalRuntimeStatus = {
+  cluster_id: string;
+  engine_id: "strata" | null;
+  base_url: string | null;
+  status: "ready" | "unreachable" | "not_configured";
+  model_ids: Array<string>;
+  latency_ms: number | null;
+  api_key_configured: boolean;
+  error: string | null;
+  checked_at: string | null;
+};
+export type ExternalRuntimeTestResult = {
+  ok: boolean;
+  status_code: number | null;
+  model: string | null;
+  content: string | null;
+  reasoning_content: string | null;
+  elapsed_ms: number;
+  detail: string | null;
 };
 export type RuntimeEngineCollection = {
   cluster_id: string;
@@ -624,7 +646,8 @@ export type RuntimeEngineStatus = {
     | "xinference"
     | "localai"
     | "tensorfold"
-    | "deepinfer";
+    | "deepinfer"
+    | "strata";
   name: string;
   capability: "managed_launch" | "package_only" | "no_launch_adapter";
   image: string | null;
