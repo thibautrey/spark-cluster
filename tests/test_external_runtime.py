@@ -192,6 +192,7 @@ def test_controller_attaches_strata_and_infers_through_it(tmp_path):
     )
     headers = {"Authorization": "Bearer admin"}
     with TestClient(app) as client:
+        assert client.get(f"/api/v1/clusters/{cluster.id}/runtime").status_code == 200
         attached = client.put(
             f"/api/v1/clusters/{cluster.id}/runtime",
             headers=headers,

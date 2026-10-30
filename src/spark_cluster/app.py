@@ -701,7 +701,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get(
         "/api/v1/clusters/{cluster_id}/runtime",
         response_model=ExternalRuntimeStatus,
-        dependencies=[Depends(require_model_token)],
     )
     async def external_runtime_status(cluster_id: str) -> ExternalRuntimeStatus:
         try:
