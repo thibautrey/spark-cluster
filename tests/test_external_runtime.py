@@ -108,6 +108,7 @@ async def test_strata_attachment_keeps_the_key_outside_the_cluster_registry(tmp_
 
     assert status.status == "ready"
     assert status.model_ids == ["deepseek-v4.1-flash"]
+    assert status.context_length == 1_048_576
     assert status.api_key_configured is True
     assert seen[0]["authorization"] == "Bearer secret-key"
     registry_text = (config.setup_state_path / "clusters.json").read_text()

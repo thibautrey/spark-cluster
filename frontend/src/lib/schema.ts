@@ -612,6 +612,7 @@ export type ExternalRuntimeStatus = {
   base_url: string | null;
   status: "ready" | "unreachable" | "not_configured";
   model_ids: Array<string>;
+  context_length?: number | null;
   latency_ms: number | null;
   api_key_configured: boolean;
   error: string | null;

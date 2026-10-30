@@ -42,6 +42,7 @@ class ExternalRuntimeStatus(BaseModel):
     base_url: str | None = None
     status: Literal["ready", "unreachable", "not_configured"] = "not_configured"
     model_ids: list[str] = Field(default_factory=list)
+    context_length: int | None = None
     latency_ms: float | None = None
     api_key_configured: bool = False
     error: str | None = None
@@ -201,6 +202,7 @@ class ExternalRuntimeService:
             base_url=self.base_url(cluster),
             status=probe.status,
             model_ids=[str(model.get("id")) for model in probe.models if model.get("id")],
+            context_length=_context_length(probe.models),
             latency_ms=round(probe.latency_ms, 1),
             api_key_configured=cluster.runtime_api_key_configured,
             error=probe.error,
@@ -337,6 +339,16 @@ class ExternalRuntimeService:
     def _headers(self, cluster: ClusterTarget) -> dict[str, str]:
         key = self.credentials.get(cluster.id)
         return {"Authorization": f"Bearer {key}"} if key else {}
+
+
+def _context_length(models: tuple[dict, ...]) -> int | None:
+    for model in models:
+        meta = model.get("meta")
+        if isinstance(meta, dict):
+            value = meta.get("n_ctx")
+            if isinstance(value, int) and value > 0:
+                return value
+    return None
 
 
 def _missing() -> ClusterTarget:

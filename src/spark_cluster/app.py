@@ -495,7 +495,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             logger.warning("Local telemetry sample failed; retrying")
                     elif active and active.kind == "remote-bridge":
                         try:
-                            await runtime.publish(await cluster_connector.snapshot())
+                            snapshot = await cluster_connector.snapshot()
+                            if external_runtime.configured(active):
+                                status = await external_runtime.status_for(active)
+                                if status.status == "ready":
+                                    snapshot.runtime.model = ", ".join(status.model_ids)
+                                    if status.context_length:
+                                        snapshot.runtime.context_length = status.context_length
+                                    for node in snapshot.nodes:
+                                        node.loaded_model_ids = list(status.model_ids)
+                            await runtime.publish(snapshot)
                         except RemoteClusterUnavailable:
                             logger.warning("Remote cluster telemetry sample failed; retrying")
                     await asyncio.sleep(max(2, settings.sample_interval_seconds))
