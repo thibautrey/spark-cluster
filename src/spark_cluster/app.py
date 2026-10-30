@@ -500,6 +500,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 status = await external_runtime.status_for(active)
                                 if status.status == "ready":
                                     snapshot.runtime.model = ", ".join(status.model_ids)
+                                    snapshot.runtime.quantization = "not reported"
                                     if status.context_length:
                                         snapshot.runtime.context_length = status.context_length
                                     for node in snapshot.nodes:
