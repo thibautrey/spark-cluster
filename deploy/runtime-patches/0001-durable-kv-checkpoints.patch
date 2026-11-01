@@ -1,0 +1,292 @@
+--- a/zig/build/cuda.zig
++++ b/zig/build/cuda.zig
+@@ -239,7 +239,9 @@
+     ds_engine.addImport("tp", engine_tp);
+     ds_engine.addImport("kv", @import("kv.zig").module(b, target, optimize, cuda, engine_tp));
+     @import("grammar.zig").addTo(b, ds_engine, target, optimize); // structured output (grammar_gpu.zig)
+-    b.installArtifact(b.addExecutable(.{ .name = "tensorfold-dsv41", .root_module = @import("server.zig").withEngine(b, target, .ReleaseSafe, ds_engine, build_options) }));
++    const dsv41_serve = b.addExecutable(.{ .name = "tensorfold-dsv41", .root_module = @import("server.zig").withEngine(b, target, .ReleaseSafe, ds_engine, build_options) });
++    b.installArtifact(dsv41_serve);
++    b.step("serve-dsv41", "Build only the DeepSeek V4.1 serving binary").dependOn(&b.addInstallArtifact(dsv41_serve, .{}).step);
+     _ = nativeServer(b, target, optimize, cuda, mods.lanes, mods.nemotron, mods.tokenizer, build_options, true);
+ }
+ 
+--- a/zig/src/families/deepseek_v41/kv/sched.zig
++++ b/zig/src/families/deepseek_v41/kv/sched.zig
+@@ -208,6 +208,8 @@
+     concurrent: u64 = 1,
+     /// rounds.py session_min: shorter prompts are not snapshotted
+     session_min: u64 = 64,
++    /// Opt-in common-app prefix checkpoints; zero keeps the upstream planner unchanged.
++    prefix_tokens: u64 = 0,
+     /// a session store is open (prompt snapshots at the replay point)
+     sessions: bool = true,
+     /// G19's adaptive rows (prod: on whenever the floor is): null = the fixed rows
+@@ -219,6 +221,8 @@
+     pub fn fromEnv() !Settings {
+         var s: Settings = .{};
+         if (envInt("TF_DSV41_PREFILL_ROWS")) |v| s.rows = v;
++        if (envInt("TF_DSV41_SESSION_PREFIX_TOKENS")) |v| s.prefix_tokens = v;
++        if (s.prefix_tokens > 0 and (s.prefix_tokens < grid or s.prefix_tokens % grid != 0)) return error.BadSettings;
+         if (envInt("TF_DSV41_BATCH_SHORT")) |v| s.short = v;
+         if (envFloat("TF_DSV41_PREFILL_SHARE")) |v| s.share = v;
+         if (envInt("TF_DSV41_LONG_PROMPT")) |v| s.long_prompt = v;
+@@ -531,11 +535,12 @@
+             if (budget == 0 or (left > p.s.short and !allow)) continue;
+             const target = if (x.save_at) |s| (if (x.done < s) s else x.n - 1) else x.n - 1;
+             // 1024-row pieces: every boundary can hold a common system/tools prefix entry
+-            const next_prefix: u64 = (x.done / 1024 + 1) * 1024;
+-            const capped = @min(target, next_prefix);
++            const prefix_step: u64 = if (x.done < 8192) @max(grid, p.s.prefix_tokens) else 4096;
++            const next_prefix: u64 = (x.done / prefix_step + 1) * prefix_step;
++            const capped = if (p.s.sessions and p.s.prefix_tokens > 0) @min(target, next_prefix) else target;
+             const end = pieceEnd(x.done, capped, budget, grid);
+             const save_final = x.save_at != null and end == x.save_at.?;
+-            const save_prefix = end >= p.s.session_min and end < x.n - 1 and end % 1024 == 0;
++            const save_prefix = p.s.sessions and p.s.prefix_tokens > 0 and end >= p.s.session_min and end < x.n - 1 and end % p.s.prefix_tokens == 0;
+             const save = save_final or save_prefix;
+             try out.append(p.gpa, .{ .key = x.key, .start = x.done, .end = end, .save = save, .run = !x.damaged });
+             // a piece is at least one grid step, so it can cost more than the budget left: batch.py's budget goes
+@@ -661,3 +666,19 @@
+     _ = @import("sched_test.zig");
+     _ = @import("sched_crash_test.zig");
+ }
++
++
++test "opt-in app prefixes stop cutting long prefills into one-thousand-row pieces" {
++    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
++    defer arena.deinit();
++    var p = Planner.init(arena.allocator(), .{ .rows = 4096, .sessions = true, .prefix_tokens = 1024 });
++    try p.seqs.append(p.gpa, .{ .key = 1, .n = 20000, .submitted = 0, .done = 0, .save_at = snapshotPoint(20000) });
++    var out: std.ArrayList(Piece) = .empty;
++    var finals: std.ArrayList(usize) = .empty;
++    try p.plan(null, &out, &finals);
++    try std.testing.expectEqual(@as(u64, 1024), out.items[0].end);
++    try std.testing.expect(out.items[0].save);
++    p.seqs.items[0].done = 8192;
++    try p.plan(null, &out, &finals);
++    try std.testing.expectEqual(@as(u64, 12288), out.items[0].end);
++}
+--- a/zig/src/families/deepseek_v41/sessions_gpu.zig
++++ b/zig/src/families/deepseek_v41/sessions_gpu.zig
+@@ -56,6 +56,8 @@
+ pub const Options = struct {
+     /// TF_DSV41_SESSIONS (default 0; explicit 1 enables reuse)
+     enabled: bool = false,
++    durable: bool = false,
++    namespace: ?[]const u8 = null,
+     disk: ?[]const u8 = null,
+     disk_budget: u64 = 64 << 30,
+     disk_min_tokens: u64 = 1024,
+@@ -97,6 +99,12 @@
+     o.skip_covered = flag("TF_DSV41_SESSION_SKIP_COVERED");
+     o.delta = flag("TF_DSV41_SESSION_DELTA");
+     o.several = flag("TF_DSV41_SESSION_SLOTS");
++    o.durable = flag("TF_DSV41_SESSION_DURABLE");
++    if (std.c.getenv("TF_DSV41_SESSION_NAMESPACE")) |v| {
++        const value = std.mem.trim(u8, std.mem.span(v), " ");
++        if (value.len > 0) o.namespace = value;
++    }
++    if (o.durable and (o.disk == null or o.namespace == null)) return error.MissingCacheIdentity;
+     return o;
+ }
+ 
+@@ -213,12 +221,21 @@
+             for (kx.layout.families()) |fam| h.update(std.mem.asBytes(&[_]u32{ fam.ratio, fam.row_bytes, @intFromBool(fam.split) }));
+             h.update(std.mem.asBytes(&[_]u32{ kx.world, kx.rank, kx.pool.page }));
+             var full: [32]u8 = undefined;
++            if (o.durable) {
++                if (kx.world != 1) return error.DurableCacheRequiresSingleRank;
++                h.update("dsv41-durable-cache-v1");
++                h.update(o.namespace.?);
++            }
+             h.final(&full);
+             // the staging set (TF_DSV41_SESSION_STAGING_MIB) in 8 MiB chunks: a park's or restore's whole host transient
+             s.disk = try sessions.Disk.open(gpa, io, .{ .root = root, .compat = full[0..16].*, .rank = kx.rank, .world = kx.world, .budget = o.disk_budget, .min_tokens = o.disk_min_tokens, .staging = @max(2, o.staging_mib / 8), .chunk = 8 << 20 });
+         }
+         errdefer if (s.disk) |dd| dd.close();
+         s.store = try Store.init(gpa, io, &kx.pool, kx.dev.store(), s.disk, .{ .ram_bytes = o.ram_bytes, .chats = o.resident, .resident_bytes = o.resident_bytes, .skip_covered = o.skip_covered, .delta = o.delta });
++        if (o.durable) {
++            const restored = try s.store.reconcile();
++            std.log.scoped(.dsv41).info("durable sessions: indexed {d} NVMe checkpoints", .{restored});
++        }
+         if (f.comm.world() > 1) s.agreement = try graphs.Agreement.init(f.runner.d, f.comm, f.runner.stream);
+         f.sess = .{ .ptr = s, .commit = commitFn, .save = saveFn, .restore = restoreFn, .reset = resetFn, .prompt = promptFn, .admit = admitFn };
+         return s;
+@@ -447,6 +464,24 @@
+         return id;
+     }
+ 
++    /// Main-rank checkpoint in the actual served piece path. Distinct tags keep app prefixes
++    /// independent of a conversation's final prompt. Small shared prefixes and final prompts
++    /// are durable; larger interval snapshots remain hot without quadratic disk writes.
++    pub fn checkpointPrompt(s: *Sessions, final: bool) !?u32 {
++        if (!flag("TF_DSV41_SESSION_DURABLE")) return s.savePrompt();
++        const tag_value = if (final) s.slotTag() else s.prefixTag();
++        const id = try s.savePromptAs(tag_value);
++        const pos = s.hist[s.cur()].items.len;
++        if (id) |entry_id| {
++            if (final or pos <= 8192 or pos % 32768 == 0) {
++                s.store.checkpoint(entry_id) catch |e| {
++                    std.log.scoped(.dsv41).warn("durable checkpoint at {d} failed ({t}); RAM entry retained", .{ pos, e });
++                };
++            }
++        }
++        return id;
++    }
++
+     /// The served shape's prompt snapshot (batch.py `save_at`, rounds.py `_save(slot, "prompt")`): an entry for the committed
+     /// ids at the slot's position (the prompt's replay point), its bounded state with the stash; the slot keeps its
+     /// pages and goes on prefilling (it only writes positions past the entry's, which a resume rewrites before reading).
+--- a/zig/src/families/deepseek_v41/target.zig
++++ b/zig/src/families/deepseek_v41/target.zig
+@@ -202,7 +202,7 @@
+         if (start == end and save) {
+             // a leaving prompt's finished rows kept as they stand (the lane host: its client left mid-prompt)
+             if (t.f.slot.pos != start or start < ced.session_min or end + 1 > ids.len) return error.NotAChain;
+-            if (t.sessions) |ss| _ = try ss.savePrompt();
++            if (t.sessions) |ss| _ = try ss.checkpointPrompt(true);
+             return;
+         }
+         if (t.f.slot.pos != start or start >= end or end + 1 > ids.len) return error.NotAChain;
+@@ -213,7 +213,7 @@
+         try t.f.prefill(ids[start..end]);
+         // rounds.py `_save`: a history under session_min is not snapshotted (a damaged entry's restart cuts there)
+         if (save and end >= ced.session_min) if (t.sessions) |ss| {
+-            _ = try ss.savePrompt();
++            _ = try ss.checkpointPrompt(end == @import("kv").sched.snapshotPoint(ids.len));
+         };
+         // full mode: the drafter reads each piece's last rows (decode.py `prefill`'s ingest of a piece's tail)
+         if (t.f.prefill_state.mode == .full) try t.handTaps(slot);
+@@ -255,7 +255,7 @@
+                 // rounds.py `_save` after the round's prefill, a piece at a time
+                 for (list) |q| if (q.save and q.end >= ced.session_min) if (t.sessions) |ss| {
+                     try t.onSlot(q.slot);
+-                    _ = try ss.savePrompt();
++                    _ = try ss.checkpointPrompt(q.end == @import("kv").sched.snapshotPoint(q.ids.len));
+                 };
+                 return;
+             }
+--- a/zig/src/sessions/disk.zig
++++ b/zig/src/sessions/disk.zig
+@@ -196,10 +196,10 @@
+         if (d.opts.direct) {
+             var f2 = flags;
+             f2.DIRECT = true;
+-            const rc = linux.openat(d.dir.handle, name, f2, 0o644);
++            const rc = linux.openat(d.dir.handle, name, f2, 0o600);
+             if (linux.errno(rc) == .SUCCESS) return .{ .fd = @intCast(rc), .direct = true };
+         }
+-        const rc = linux.openat(d.dir.handle, name, flags, 0o644);
++        const rc = linux.openat(d.dir.handle, name, flags, 0o600);
+         if (linux.errno(rc) != .SUCCESS) return if (linux.errno(rc) == .NOENT) error.FileNotFound else error.OpenFailed;
+         return .{ .fd = @intCast(rc), .direct = false };
+     }
+@@ -268,6 +268,7 @@
+         if (linux.errno(linux.fdatasync(f.fd)) != .SUCCESS) return error.SyncFailed;
+         if (!f.direct) _ = linux.fadvise(f.fd, 0, 0, linux.POSIX_FADV.DONTNEED);
+         if (linux.errno(linux.renameat(d.dir.handle, tmp, d.dir.handle, fileName(src.key, "tfs", &fb))) != .SUCCESS) return error.RenameFailed;
++        if (linux.errno(linux.fsync(d.dir.handle)) != .SUCCESS) return error.SyncFailed;
+         ok = true;
+         return lay.head.total;
+     }
+--- a/zig/src/sessions/jobs.zig
++++ b/zig/src/sessions/jobs.zig
+@@ -14,6 +14,8 @@
+ 
+ pub const Job = struct {
+     kind: Kind,
++    /// A durable checkpoint writes the same snapshot without evicting its hot RAM pages.
++    retain_ram: bool = false,
+     /// the store's entry
+     entry: u32,
+     state: std.atomic.Value(State) = .init(.queued),
+--- a/zig/src/sessions/store.zig
++++ b/zig/src/sessions/store.zig
+@@ -306,6 +306,34 @@
+         return out;
+     }
+ 
++    /// Persist a snapshot while retaining its RAM copy. Only immutable saved pages are read.
++    /// Pick a persisted strict ancestor for delta writes; branches never reuse unrelated rows.
++    pub fn checkpoint(s: *Store, id: u32) !void {
++        const d = s.disk orelse return;
++        const e = s.index.get(id);
++        if (!e.ram or e.extra.job != null or !d.accepts(e.pos)) return;
++        if (e.extra.file and d.get(e.key) != null) return;
++        if (s.policy.delta) {
++            const ids = try s.gpa.alloc(i32, e.pos);
++            defer s.gpa.free(ids);
++            try s.index.idsOf(id, ids);
++            var end: usize = ids.len;
++            while (end > 0) {
++                const hit = (try s.find(e.tag, ids[0..end])) orelse break;
++                const older = s.index.get(hit.id);
++                if (older.extra.file and d.get(older.key) != null) {
++                    const pages: u32 = @intCast(older.pos / s.pool.page);
++                    if (pages > 0) e.extra.origin = .{ .key = older.key, .pages = pages };
++                    break;
++                }
++                end = @intCast(hit.pos);
++            }
++        }
++        const job = (try s.beginPark(id)) orelse return;
++        job.retain_ram = true;
++        _ = try s.settle(job);
++    }
++
+     /// Starts a park of a RAM entry (null: nothing to write, the entry is already settled out of RAM).
+     pub fn beginPark(s: *Store, id: u32) !?*Job {
+         const d = s.disk orelse return error.NoDisk;
+@@ -372,7 +400,7 @@
+                     _ = try s.index.members(j.entry, &m, usedOf);
+                     for (m.items) |o| s.index.get(o).extra.covered_by = true;
+                 }
+-                try s.leaveRam(j.entry);
++                if (!j.retain_ram) try s.leaveRam(j.entry);
+                 try s.trimDisk();
+                 return null;
+             },
+--- a/zig/src/sessions/store_test.zig
++++ b/zig/src/sessions/store_test.zig
+@@ -215,3 +215,40 @@
+     try restart(gpa, root, 2, 1);
+     try testing.expectEqualSlices(u64, t0.items, t1.items);
+ }
++
++
++test "durable checkpoints retain hot RAM and restore exact rows after a fresh store" {
++    const gpa = testing.allocator;
++    var tmp = testing.tmpDir(.{});
++    defer tmp.cleanup();
++    const root = try tmpRoot(gpa, &tmp, "durable");
++    defer gpa.free(root);
++    const ids = try chatIds(gpa, 9, 12 * page);
++    defer gpa.free(ids);
++    {
++        var r: Rank = undefined;
++        try r.init(gpa, root, 1, 0, .{ .skip_covered = false, .delta = true });
++        defer r.deinit();
++        const slot = try r.pool.newSlot(64 * page);
++        _ = try turn(gpa, &r, slot, 9, ids[0 .. 5 * page]);
++        const first = (try r.store.find(1, ids[0 .. 5 * page + 1])).?;
++        try r.store.checkpoint(first.id);
++        try testing.expect(r.store.entry(first.id).ram);
++        try testing.expect(r.store.entry(first.id).extra.file);
++        try r.store.checkpoint(first.id); // a durable hot entry is not written twice
++        try testing.expectEqual(@as(u64, 1), r.store.stats.parks);
++        _ = try turn(gpa, &r, slot, 9, ids[0 .. 9 * page]);
++        const next = (try r.store.find(1, ids[0 .. 9 * page + 1])).?;
++        try r.store.checkpoint(next.id);
++        try testing.expect(r.store.entry(next.id).ram);
++        try testing.expectEqual(@as(u64, 1), r.store.stats.delta_parks);
++    }
++    {
++        var r: Rank = undefined;
++        try r.init(gpa, root, 1, 0, .{});
++        defer r.deinit();
++        try testing.expectEqual(@as(u32, 2), try r.store.reconcile());
++        const slot = try r.pool.newSlot(64 * page);
++        try testing.expectEqualStrings("disk", try turn(gpa, &r, slot, 9, ids[0 .. 10 * page]));
++    }
++}

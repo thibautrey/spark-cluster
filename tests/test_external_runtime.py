@@ -201,6 +201,9 @@ async def test_fatal_health_overrides_http_200_and_preserves_routing_identity(tm
     service.transport = httpx.MockTransport(disconnected)
     service._probes.clear()
     assert (await service.matching_model("deepseek-v4.1-flash"))[0].id == cluster.id
+    restarted = ExternalRuntimeService(config, registry)
+    restarted.transport = httpx.MockTransport(disconnected)
+    assert (await restarted.matching_model("deepseek-v4.1-flash"))[0].id == cluster.id
 
 
 def test_attached_fatal_runtime_returns_503_without_forwarding_inference(tmp_path):
@@ -248,7 +251,9 @@ def test_live_runtime_routes_stay_on_the_controller(tmp_path):
     assert middleware.should_forward({"path": "/api/v1/runtime"}) is False
     assert middleware.should_forward({"path": "/api/v1/runtime/test"}) is False
     assert middleware.should_forward({"path": "/api/v1/inference/activity"}) is False
-    assert middleware.should_forward({"path": "/api/v1/telemetry"}) is True
+    assert middleware.should_forward({"path": "/api/v1/telemetry"}) is False
+    assert middleware.should_forward({"path": "/api/v1/snapshot"}) is False
+    assert middleware.should_forward({"path": "/metrics"}) is False
 
 
 def test_controller_attaches_strata_and_infers_through_it(tmp_path):

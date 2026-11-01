@@ -65,7 +65,7 @@ from .external_runtime import (
     ExternalRuntimeTestResult,
 )
 from .inference_http import RequestTooLarge, inference_error, read_inference_body
-from .inference_tracking import InferenceTracker, mark_dispatch
+from .inference_tracking import InferenceTracker, mark_dispatch, request_stream_usage
 from .local_docker import DockerEngineClient, detect_nvidia_gpus, local_gpu_snapshot
 from .mcp_server import SparkClusterMCP
 from .model_manager import (
@@ -520,6 +520,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                         snapshot.runtime.context_length = status.context_length
                                     for node in snapshot.nodes:
                                         node.loaded_model_ids = list(status.model_ids)
+                                else:
+                                    snapshot.status = "degraded"
+                                    for node in snapshot.nodes:
+                                        node.loaded_model_ids = []
                             await runtime.publish(snapshot)
                         except RemoteClusterUnavailable:
                             logger.warning("Remote cluster telemetry sample failed; retrying")
@@ -1527,6 +1531,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if json_body is not None:
                 json_body["model"] = runtime_model["id"]
                 forwarded = json.dumps(json_body, separators=(",", ":")).encode()
+            forwarded = request_stream_usage(forwarded, content_type, f"/v1/{path}")
             delivered = False
 
             async def external_replay_receive():

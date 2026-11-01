@@ -1,0 +1,16 @@
+[Unit]
+Description=Recover confirmed fatal DSV4.1 inference failures
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+User=thibautrey
+ExecStart=/usr/bin/python3 /home/thibautrey/spark-deploy/dsv41-watchdog.py --state /home/thibautrey/models/dsv41-1xgb10/state/watchdog.json
+Restart=on-failure
+RestartSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

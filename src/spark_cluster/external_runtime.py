@@ -131,7 +131,36 @@ class ExternalRuntimeService:
         )
         self._probes: dict[str, tuple[float, ProbeResult]] = {}
         self._known_models: dict[str, tuple[dict, ...]] = {}
+        self._catalog_path = settings.setup_state_path / "attached-runtime-models.json"
+        try:
+            catalog = json.loads(self._catalog_path.read_text())
+            self._known_models = {
+                key: tuple(value)
+                for key, value in catalog.items()
+                if isinstance(key, str)
+                and isinstance(value, list)
+                and all(isinstance(m, dict) and isinstance(m.get("id"), str) for m in value)
+            }
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
         self._probe_lock = asyncio.Lock()
+
+    def _remember_models(self, cluster_id: str, models: tuple[dict, ...]) -> None:
+        if self._known_models.get(cluster_id) == models:
+            return
+        self._known_models[cluster_id] = models
+        try:
+            self._catalog_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            temporary = self._catalog_path.with_suffix(".tmp")
+            fd = os.open(temporary, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as stream:
+                json.dump(self._known_models, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            temporary.replace(self._catalog_path)
+        except OSError:
+            # An unavailable catalog disk must not take healthy inference offline.
+            pass
 
     def cluster(self, cluster_id: str | None = None) -> ClusterTarget:
         return self.registry.get(cluster_id) if cluster_id else self.registry.active() or _missing()
@@ -154,6 +183,7 @@ class ExternalRuntimeService:
         if cluster.kind != "remote-bridge":
             raise ValueError("Only a remote compute pool can attach an externally managed runtime")
         if request.engine_id == "none":
+            self._remember_models(cluster.id, ())
             self.credentials.remove(cluster.id)
             cluster = self.registry.set_external_runtime(
                 cluster.id, engine_id=None, port=cluster.runtime_port, api_key_configured=False
@@ -230,6 +260,8 @@ class ExternalRuntimeService:
                     response = await client.get(self.base_url(cluster) + "/models")
                     response.raise_for_status()
                     payload = response.json()
+                    if not isinstance(payload, dict):
+                        raise ValueError("The runtime returned an invalid model catalog")
                     models = tuple(
                         item
                         for item in payload.get("data", [])
@@ -237,13 +269,17 @@ class ExternalRuntimeService:
                     )
                     if not models:
                         raise ValueError("The runtime returned no models")
-                    self._known_models[cluster.id] = models
+                    self._remember_models(cluster.id, models)
                     health = await client.get(
                         self.base_url(cluster).removesuffix("/v1") + "/health"
                     )
                     health.raise_for_status()
                     state = health.json()
-                    if state.get("ok") is not True or state.get("fatal"):
+                    if (
+                        not isinstance(state, dict)
+                        or state.get("ok") is not True
+                        or state.get("fatal")
+                    ):
                         raise ValueError("The runtime is unhealthy; inference is unavailable")
                 result = ProbeResult(
                     status="ready",
@@ -344,7 +380,7 @@ class ExternalRuntimeService:
             models_url=base + "/models",
             chat_completions_url=base + "/chat/completions",
             status="ready" if status.status == "ready" else "unreachable",
-            loaded_model_ids=status.model_ids,
+            loaded_model_ids=status.model_ids if status.status == "ready" else [],
             engine_id=cluster.runtime_engine,
             auth_mode="bearer" if cluster.runtime_api_key_configured else "none",
         )
