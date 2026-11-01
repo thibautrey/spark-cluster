@@ -125,6 +125,7 @@ from .optimization_lab import OptimizationLab
 from .performance import PerformancePlan, PerformancePlanRequest, build_performance_plan
 from .performance_history import RUNTIME_FIELDS
 from .performance_history import scopes as performance_scopes
+from .prefix_warmup import PrefixWarmup
 from .prometheus import render_metrics
 from .remote_cluster import (
     RemoteClusterConnector,
@@ -193,6 +194,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         settings.remote_cluster_url = validated_cluster_url(settings.remote_cluster_url)
     cluster_registry = ClusterRegistry(settings)
     external_runtime = ExternalRuntimeService(settings, cluster_registry)
+    prefix_warmup = PrefixWarmup(settings.setup_state_path / "prefix-warmup", external_runtime)
     runtime = Runtime(settings)
     model_relay = ModelRelay(settings, runtime.store)
     model_manager = ModelManager(settings, runtime.store, runtime, model_relay, external_runtime)
@@ -535,9 +537,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await runtime_workflows.start()
         await on_demand.start()
         await pool_node.start()
+        await prefix_warmup.start()
         try:
             yield
         finally:
+            await prefix_warmup.stop()
             await model_pool.close()
             await pool_node.close()
             await on_demand.stop()
@@ -558,6 +562,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await runtime.stop()
 
     app = FastAPI(title=settings.title, version="0.1.0", lifespan=lifespan)
+    app.state.prefix_warmup = prefix_warmup
     app.state.runtime = runtime
     app.state.model_manager = model_manager
     app.state.model_browser = browser
@@ -1000,6 +1005,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if preferences.keep_loaded
             ),
         }
+
+    @app.get("/api/v1/inference/cache-profiles")
+    async def inference_cache_profiles() -> dict:
+        return await asyncio.to_thread(prefix_warmup.status)
 
     @app.get("/api/v1/inference/performance")
     async def inference_performance(
@@ -1559,6 +1568,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     transport=external_runtime.transport,
                     authorization=external_runtime.authorization(external_cluster),
                 )
+                if (
+                    json_body is not None
+                    and path == "chat/completions"
+                    and record
+                    and record.status == 200
+                    and record.outcome != "failed"
+                    and not record.client_disconnected
+                ):
+                    try:
+                        await asyncio.to_thread(prefix_warmup.remember, json_body)
+                    except (OSError, ValueError, TypeError):
+                        logging.getLogger(__name__).warning("App prefix persistence failed")
 
             async def tracked_external(scope, receive, send):
                 await inference_tracker.track(
