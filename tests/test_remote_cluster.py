@@ -147,9 +147,21 @@ def test_remote_bridge_failure_is_reported_as_bad_gateway(tmp_path, monkeypatch)
     monkeypatch.setattr(RemoteClusterProxyMiddleware, "transport", httpx.MockTransport(handler))
     app = create_app(controller_settings(tmp_path, remote_cluster_url="http://192.168.50.10:30080"))
     with TestClient(app) as client:
-        response = client.get("/api/v1/snapshot")
+        response = client.get("/api/v1/logs")
     assert response.status_code == 502
     assert response.json()["detail"].startswith("Cluster bridge is unreachable")
+
+
+def test_controller_owned_snapshot_waits_for_its_first_cluster_sample(tmp_path, monkeypatch):
+    def handler(request: httpx.Request):
+        raise AssertionError("The controller snapshot must not use the raw bridge proxy")
+
+    monkeypatch.setattr(RemoteClusterProxyMiddleware, "transport", httpx.MockTransport(handler))
+    app = create_app(controller_settings(tmp_path, remote_cluster_url="http://192.168.50.10:30080"))
+    with TestClient(app) as client:
+        response = client.get("/api/v1/snapshot")
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Waiting for the first cluster sample"
 
 
 def test_saved_connection_is_loaded_at_controller_restart(tmp_path):
