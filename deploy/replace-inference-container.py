@@ -53,7 +53,10 @@ def main():
     parser.add_argument("--env-overrides", type=Path)
     parser.add_argument("--no-drafts", action="store_true")
     parser.add_argument("--startup-timeout", type=int, default=600)
+    parser.add_argument("--stop-timeout", type=int, default=30)
     args = parser.parse_args()
+    if not 1 <= args.stop_timeout <= 300:
+        parser.error("--stop-timeout must be between 1 and 300 seconds")
     # A live idle observation is required immediately before mutation.
     health = json.load(urllib.request.urlopen(args.idle_url or args.health_url, timeout=10))
     if health.get("ok") is not True or health.get("inflight") != 0 or health.get("queued", 0):
@@ -79,7 +82,7 @@ def main():
     if args.no_drafts and "--no-drafts" not in config.get("Cmd", []):
         config["Cmd"].append("--no-drafts")
     created = False
-    api("POST", f"/containers/{name}/stop?t=30")
+    api("POST", f"/containers/{name}/stop?t={args.stop_timeout}")
     api("POST", f"/containers/{name}/rename?name={urllib.parse.quote(backup_name)}")
     try:
         api("POST", f"/containers/create?name={name}", config)

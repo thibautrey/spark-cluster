@@ -62,6 +62,18 @@ def test_profile_storage_is_bounded_and_does_not_fetch_images(tmp_path):
     assert service.status()["profiles"] == before
 
 
+async def test_large_codex_tool_catalog_is_persisted_and_shutdown_drains_writes(tmp_path):
+    service = PrefixWarmup(tmp_path / "profiles", None)
+    request = payload()
+    request["tools"][0]["function"]["description"] = "Tool documentation " * 25000
+    service.observe(request)
+    await service.stop()
+    profiles = service.status()["profiles"]
+    assert len(profiles) == 1
+    assert profiles[0]["bytes"] > 262144
+    assert not service.pending
+
+
 async def test_warmup_waits_for_idle_runs_once_and_rearms_after_runtime_restart(tmp_path):
     config, registry, cluster = remote_registry(tmp_path)
     external = ExternalRuntimeService(config, registry)

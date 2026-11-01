@@ -1565,26 +1565,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     for name, value in scope["headers"]
                     if name.lower() != b"content-length"
                 ]
-                await forward_http(
-                    external_runtime.base_url(external_cluster) + "/" + path,
-                    forwarded_scope,
-                    external_replay_receive,
-                    send,
-                    transport=external_runtime.transport,
-                    authorization=external_runtime.authorization(external_cluster),
-                )
-                if (
-                    json_body is not None
-                    and path == "chat/completions"
-                    and record
-                    and record.status == 200
-                    and record.outcome != "failed"
-                    and not record.client_disconnected
-                ):
-                    try:
-                        await asyncio.to_thread(prefix_warmup.remember, json_body)
-                    except (OSError, ValueError, TypeError):
-                        logging.getLogger(__name__).warning("App prefix persistence failed")
+                try:
+                    await forward_http(
+                        external_runtime.base_url(external_cluster) + "/" + path,
+                        forwarded_scope,
+                        external_replay_receive,
+                        send,
+                        transport=external_runtime.transport,
+                        authorization=external_runtime.authorization(external_cluster),
+                    )
+                finally:
+                    # A client can close immediately after its completed response, or
+                    # time out after an expensive prefill. Keep its reusable prefix too.
+                    # Persist off the response path and drain these writes at shutdown.
+                    if (
+                        json_body is not None
+                        and path == "chat/completions"
+                        and record
+                        and record.status == 200
+                        and record.outcome != "failed"
+                    ):
+                        prefix_warmup.observe(json_body)
 
             async def tracked_external(scope, receive, send):
                 await inference_tracker.track(

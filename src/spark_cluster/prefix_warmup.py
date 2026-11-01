@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import tempfile
 import threading
@@ -20,7 +21,7 @@ import httpx
 
 MAX_PROFILES = 12
 MAX_TEXT = 32_768
-MAX_BYTES = 262_144
+MAX_BYTES = 2 * 1024 * 1024
 
 
 class PrefixWarmup:
@@ -32,7 +33,22 @@ class PrefixWarmup:
         self.attempted: set[str] = set()
         self.last_uptime: dict[str, float] = {}
         self.results: dict[str, dict] = {}
+        self.pending: set[asyncio.Task] = set()
         self.transport = None
+
+    def observe(self, payload: dict) -> None:
+        if len(self.pending) >= 8:
+            return
+
+        async def record():
+            try:
+                await asyncio.to_thread(self.remember, payload)
+            except (OSError, ValueError, TypeError):
+                logging.getLogger(__name__).warning("App prefix persistence failed")
+
+        task = asyncio.create_task(record())
+        self.pending.add(task)
+        task.add_done_callback(self.pending.discard)
 
     def _read(self) -> list[dict]:
         result = []
@@ -160,6 +176,8 @@ class PrefixWarmup:
                 await self.task
             except asyncio.CancelledError:
                 pass
+        if self.pending:
+            await asyncio.gather(*self.pending, return_exceptions=True)
 
     async def sample(self) -> None:
         cluster = self.external.registry.active()
