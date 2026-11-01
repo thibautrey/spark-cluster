@@ -1,0 +1,134 @@
+--- a/zig/src/sessions/store.zig
++++ b/zig/src/sessions/store.zig
+@@ -352,7 +352,7 @@
+             while (r) |rec| : (r = if (rec.base == disk_mod.none) null else &d.recs.items[rec.base]) {
+                 if (rec.first_page < o.pages) break;
+             }
+-            if (r) |rec| if (rec.depth < d.opts.max_chain) {
++            if (r) |rec| if (rec.tag == e.tag and rec.depth < d.opts.max_chain) {
+                 base = rec.key;
+                 first = o.pages;
+             };
+@@ -600,17 +600,54 @@
+             found.deinit(s.gpa);
+         }
+         try d.scan(&found);
++        // A delta may share physical rows with an entry under another semantic
++        // tag (older writers inherited the restored slot's origin). Trie digests
++        // include the tag: rebuilding directly at that base's node changes keys.
++        // Rebuild each validated token prefix under its own tag instead.
++        var tokens: std.AutoHashMap(Digest, []i32) = .init(s.gpa);
++        defer {
++            var it = tokens.valueIterator();
++            while (it.next()) |ids| s.gpa.free(ids.*);
++            tokens.deinit();
++        }
++        var restored: u32 = 0;
+         for (found.items) |f| {
+-            var anchor: u32 = none;
++            const ids = try s.gpa.alloc(i32, @intCast(f.head.pos));
++            var keep = false;
++            defer if (!keep) s.gpa.free(ids);
++            const first = @as(usize, f.head.first_page) * s.pool.page;
+             if (f.head.hasBase()) {
+-                const b = s.index.lookup(f.head.base) orelse return error.NoBase;
+-                anchor = s.index.nodeAt(b, f.head.first_page) orelse return error.BadChain;
+-            }
+-            const r = try s.index.insertFrom(f.head.tag, anchor, f.ids, .{ .file = true, .kind = f.head.kind });
++                const base = tokens.get(f.head.base) orelse {
++                    d.stats.bad += 1;
++                    continue;
++                };
++                if (first > base.len) {
++                    d.stats.bad += 1;
++                    continue;
++                }
++                @memcpy(ids[0..first], base[0..first]);
++            } else if (first != 0) {
++                d.stats.bad += 1;
++                continue;
++            }
++            if (first > ids.len or f.ids.len != ids.len - first) {
++                d.stats.bad += 1;
++                continue;
++            }
++            @memcpy(ids[first..], f.ids);
++            const r = try s.index.insertFrom(f.head.tag, none, ids, .{ .file = true, .kind = f.head.kind });
++            if (!std.mem.eql(u8, &s.index.get(r.id).key, &f.head.key)) {
++                if (r.new) s.index.remove(r.id);
++                d.stats.bad += 1;
++                continue;
++            }
++            try tokens.put(f.head.key, ids);
++            keep = true;
+             s.clock += 1;
+             s.index.get(r.id).extra.used = s.clock;
+-        }
+-        return @intCast(found.items.len);
++            restored += 1;
++        }
++        return restored;
+     }
+ 
+     /// Idle resident chats and the pool bytes held by entries alone.
+--- a/zig/src/sessions/store_test.zig
++++ b/zig/src/sessions/store_test.zig
+@@ -216,7 +216,6 @@
+     try testing.expectEqualSlices(u64, t0.items, t1.items);
+ }
+ 
+-
+ test "durable checkpoints retain hot RAM and restore exact rows after a fresh store" {
+     const gpa = testing.allocator;
+     var tmp = testing.tmpDir(.{});
+@@ -252,3 +251,50 @@
+         try testing.expectEqualStrings("disk", try turn(gpa, &r, slot, 9, ids[0 .. 10 * page]));
+     }
+ }
++
++test "restart rebuilds legacy deltas across semantic tags under their original identity" {
++    const a = testing.allocator;
++    var tmp = testing.tmpDir(.{});
++    defer tmp.cleanup();
++    const root = try tmp.dir.realPathFileAlloc(testing.io, ".", a);
++    defer a.free(root);
++    const ids = try chatIds(a, 91, page * 5 + 3);
++    defer a.free(ids);
++    {
++        var r: Rank = undefined;
++        try r.init(a, root, 1, 0, .{ .delta = true });
++        defer r.deinit();
++        const slot = try r.pool.newSlot(16 * page);
++        try slot.ensure(page * 2);
++        r.write(slot, 91, 0);
++        const base_id = (try r.store.save(slot, try HostBounded.make(a, 91, page * 2), ids[0 .. page * 2], 1, 0)).?;
++        try r.store.checkpoint(base_id);
++        const base_key = r.store.entry(base_id).key;
++        try slot.ensure(ids.len);
++        r.write(slot, 91, 2);
++        slot.origin = .{ .key = base_key, .pages = 2 };
++        const next_id = (try r.store.save(slot, try HostBounded.make(a, 91, ids.len), ids, 2, 0)).?;
++        // Simulate the previous writer, which allowed inherited origins across tags.
++        r.disk.get(base_key).?.tag = 2;
++        const job = (try r.store.beginPark(next_id)).?;
++        try testing.expect(job.src.base != null);
++        _ = try r.store.settle(job);
++        _ = try slot.releaseAll();
++    }
++    var r: Rank = undefined;
++    try r.init(a, root, 1, 0, .{});
++    defer r.deinit();
++    try testing.expectEqual(@as(u32, 2), try r.store.reconcile());
++    const query = try a.alloc(i32, ids.len + 1);
++    defer a.free(query);
++    @memcpy(query[0..ids.len], ids);
++    query[ids.len] = 999;
++    const hit = (try r.store.find(2, query)).?;
++    try testing.expectEqual(@as(u64, ids.len), hit.pos);
++    const slot = try r.pool.newSlot(16 * page);
++    const job = try r.store.beginRestore(hit.id, slot);
++    var got = (try r.store.settle(job)).?;
++    defer got.deinit(a);
++    try r.check(slot, 91, ids.len);
++    _ = try slot.releaseAll();
++}

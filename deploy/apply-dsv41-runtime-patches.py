@@ -29,7 +29,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
     args = parser.parse_args()
-    for name in ("0001-durable-kv-checkpoints.patch", "0002-durable-reasoning-memory.patch"):
+    for name in (
+        "0001-durable-kv-checkpoints.patch",
+        "0002-durable-reasoning-memory.patch",
+        "0003-reconcile-cross-tag-deltas.patch",
+    ):
         apply(args.source.resolve(), Path(__file__).parent / "runtime-patches" / name)
 
 

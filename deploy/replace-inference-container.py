@@ -49,6 +49,11 @@ def main():
     parser.add_argument("--health-url", required=True)
     parser.add_argument("--idle-url")
     parser.add_argument("--controller", action="store_true")
+    parser.add_argument(
+        "--replace-stopped",
+        action="store_true",
+        help="Recover an explicitly stopped failed candidate",
+    )
     parser.add_argument("--backup-dir", type=Path, required=True)
     parser.add_argument("--env-overrides", type=Path)
     parser.add_argument("--no-drafts", action="store_true")
@@ -57,12 +62,16 @@ def main():
     args = parser.parse_args()
     if not 1 <= args.stop_timeout <= 300:
         parser.error("--stop-timeout must be between 1 and 300 seconds")
-    # A live idle observation is required immediately before mutation.
-    health = json.load(urllib.request.urlopen(args.idle_url or args.health_url, timeout=10))
-    if health.get("ok") is not True or health.get("inflight") != 0 or health.get("queued", 0):
-        raise SystemExit("Runtime is not healthy and idle; existing container was preserved")
     name = urllib.parse.quote(args.name, safe="")
     old = api("GET", f"/containers/{name}/json")
+    if args.replace_stopped:
+        if old["State"].get("Running") or old["State"].get("Restarting"):
+            raise SystemExit("Recovery requires a stopped container; running runtime was preserved")
+    else:
+        # A live idle observation is required immediately before normal replacement.
+        health = json.load(urllib.request.urlopen(args.idle_url or args.health_url, timeout=10))
+        if health.get("ok") is not True or health.get("inflight") != 0 or health.get("queued", 0):
+            raise SystemExit("Runtime is not healthy and idle; existing container was preserved")
     api("GET", "/images/" + urllib.parse.quote(args.image, safe="") + "/json")
     stamp = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
     backup_name = args.name + "-before-" + stamp
@@ -130,7 +139,8 @@ def main():
             api("DELETE", f"/containers/{name}")
         old_name = urllib.parse.quote(backup_name, safe="")
         api("POST", f"/containers/{old_name}/rename?name={name}")
-        api("POST", f"/containers/{name}/start")
+        if not args.replace_stopped:
+            api("POST", f"/containers/{name}/start")
         raise
 
 
