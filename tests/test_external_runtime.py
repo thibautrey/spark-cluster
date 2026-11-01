@@ -190,7 +190,9 @@ async def test_fatal_health_overrides_http_200_and_preserves_routing_identity(tm
     service.transport = httpx.MockTransport(failed)
     service._probes.clear()
     assert (await service.status(cluster.id)).status == "unreachable"
-    assert await service.models(registry.get(cluster.id)) == []
+    catalog = await service.models(registry.get(cluster.id))
+    assert catalog[0]["id"] == "deepseek-v4.1-flash"
+    assert catalog[0]["status"]["value"] == "unavailable"
     assert (await service.matching_model("deepseek-v4.1-flash"))[0].id == cluster.id
     with pytest.raises(ValueError, match="unhealthy"):
         await service.chat(registry.get(cluster.id), ExternalRuntimeTestRequest())
@@ -204,6 +206,7 @@ async def test_fatal_health_overrides_http_200_and_preserves_routing_identity(tm
     restarted = ExternalRuntimeService(config, registry)
     restarted.transport = httpx.MockTransport(disconnected)
     assert (await restarted.matching_model("deepseek-v4.1-flash"))[0].id == cluster.id
+    assert (await restarted.models(registry.get(cluster.id)))[0]["id"] == "deepseek-v4.1-flash"
 
 
 def test_attached_fatal_runtime_returns_503_without_forwarding_inference(tmp_path):
@@ -314,3 +317,37 @@ def test_controller_attaches_strata_and_infers_through_it(tmp_path):
         assert tested.status_code == 200
         assert tested.json()["ok"] is True
         assert tested.json()["content"] == "SPARK_OK"
+
+
+def test_model_discovery_survives_a_stalled_secondary_pool(tmp_path, monkeypatch):
+    import asyncio
+    import time
+
+    app = create_app(settings(tmp_path))
+    app.state.external_runtime.transport = httpx.MockTransport(runtime_handler([]))
+    cluster = app.state.cluster_registry.add_remote(
+        name="Spark",
+        endpoint="http://192.168.1.59:30080",
+        head_address="192.168.1.59",
+        hardware="dgx-spark",
+    )
+    with TestClient(app) as client:
+        client.put(
+            f"/api/v1/clusters/{cluster.id}/runtime",
+            headers={"Authorization": "Bearer admin"},
+            json={"engine_id": "strata", "api_key": "secret-key"},
+        ).raise_for_status()
+        app.state.model_pool.cache = {"models": [{"id": "retained-secondary", "loadable": True}]}
+
+        async def stalled(*args, **kwargs):
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(app.state.model_pool, "inventory", stalled)
+        start = time.monotonic()
+        response = client.get("/v1/models")
+        assert time.monotonic() - start < 3
+        response.raise_for_status()
+        assert {m["id"] for m in response.json()["data"]} == {
+            "deepseek-v4.1-flash",
+            "retained-secondary",
+        }

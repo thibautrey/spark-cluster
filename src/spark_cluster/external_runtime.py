@@ -302,7 +302,14 @@ class ExternalRuntimeService:
         if not self.configured(cluster):
             return []
         probe = await self.probe(cluster)
-        return list(probe.models) if probe.status == "ready" else []
+        # Catalog identity survives temporary unavailability. Proxies must continue
+        # routing to the known model so inference can return an explicit 503.
+        return [
+            dict(model)
+            if probe.status == "ready"
+            else {**model, "status": {"value": "unavailable"}}
+            for model in probe.models
+        ]
 
     async def matching_model(self, reference: str) -> tuple[ClusterTarget, dict] | None:
         cluster = self.registry.active()

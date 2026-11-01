@@ -1462,11 +1462,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/v1/models")
     async def global_openai_models():
-        inventory = await model_pool.inventory(force=True)
-        data = []
+        # A stalled secondary pool must not hide an attached native model from
+        # downstream proxies. Inventory owns a shielded shared refresh task, so a
+        # bounded wait leaves it running and retains its last successful catalog.
+        async def pool_catalog():
+            try:
+                return await asyncio.wait_for(model_pool.inventory(), timeout=1.5)
+            except TimeoutError:
+                return model_pool.cache or {"models": []}
+
         cluster = cluster_registry.active()
-        if cluster is not None:
-            data.extend(await external_runtime.models(cluster))
+        inventory, attached = await asyncio.gather(
+            pool_catalog(),
+            external_runtime.models(cluster)
+            if cluster is not None
+            else asyncio.sleep(0, result=[]),
+        )
+        data = list(attached)
         seen = {str(item.get("id")) for item in data if item.get("id")}
         for model in inventory["models"]:
             if not model["loadable"]:
