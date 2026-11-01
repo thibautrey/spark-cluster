@@ -218,17 +218,35 @@ class InferenceTelemetryService:
                 ),
             ),
         }
+        tensorfold = "tensorfold_prompt_tokens_total" in metrics
+        cached = _value(metrics, ("tensorfold_cached_tokens_total",))
+        if tensorfold:
+            prompt = counters["prompt"]
+            counters["uncached"] = (
+                prompt - cached
+                if prompt is not None and cached is not None and prompt >= cached
+                else None
+            )
+            counters["uptime"] = _value(metrics, ("tensorfold_uptime_seconds",))
+            if self._previous:
+                before = self._previous[1].get("uptime")
+                if before is not None and counters["uptime"] is not None:
+                    if counters["uptime"] < before:
+                        self._previous = None
         prefill_rate = decode_rate = None
         rates = {}
         if self._previous:
             elapsed = now - self._previous[0]
             if elapsed > 0:
                 for key, value in counters.items():
+                    if key == "uptime":
+                        continue
                     previous = self._previous[1].get(key)
                     # Restarts and model switches start a fresh baseline; never manufacture a spike.
                     if value is not None and previous is not None and value >= previous:
                         rates[key] = (value - previous) / elapsed
-        prefill_rate, decode_rate = rates.get("prompt"), rates.get("decode")
+        prefill_rate = rates.get("uncached" if tensorfold else "prompt")
+        decode_rate = rates.get("decode")
         self._previous = (now, counters)
         ttft = ("vllm:time_to_first_token_seconds", "vllm_time_to_first_token_seconds")
         itl = ("vllm:inter_token_latency_seconds", "vllm_inter_token_latency_seconds")
@@ -319,7 +337,15 @@ class InferenceTelemetryService:
                 )
             ),
             notes=[
-                "Values are read from the runtime; absent metrics remain unknown rather than zero."
+                "Values are read from the runtime; absent metrics remain unknown rather than zero.",
+                *(
+                    [
+                        "TensorFold rates use completed-request counters; cached input is excluded "
+                        "from computed prefill throughput."
+                    ]
+                    if tensorfold
+                    else []
+                ),
             ],
         )
 

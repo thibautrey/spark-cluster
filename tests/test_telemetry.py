@@ -59,6 +59,27 @@ tensorfold_engine_fatal 0
     store.close()
 
 
+def test_tensorfold_cache_hits_do_not_count_as_compute_and_uptime_detects_restarts(tmp_path):
+    store = SnapshotStore(tmp_path / "state.db")
+    service = InferenceTelemetryService(Settings(database_path=tmp_path / "state.db"), store)
+    first = (
+        "tensorfold_prompt_tokens_total 7000\n"
+        "tensorfold_cached_tokens_total 6000\n"
+        "tensorfold_completion_tokens_total 10\n"
+        "tensorfold_uptime_seconds 100\n"
+    )
+    service.from_metrics(first)
+    service._previous = (time.monotonic() - 2, service._previous[1])
+    result = service.from_metrics(first.replace("7000", "7120").replace("6000", "6100"))
+    assert 9 < result.prefill_tokens_per_second < 11  # 20 computed; 100 restored.
+    restarted = service.from_metrics(
+        first.replace("7000", "8000").replace("uptime_seconds 100", "uptime_seconds 1")
+    )
+    assert restarted.prefill_tokens_per_second is None
+    assert restarted.decode_tokens_per_second is None
+    store.close()
+
+
 def test_prometheus_parser_and_measured_runtime_telemetry(tmp_path):
     parsed = parse_prometheus(METRICS)
     assert parsed["vllm_prompt_tokens_total"][0][1] == 70
