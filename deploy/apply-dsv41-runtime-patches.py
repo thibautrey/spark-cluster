@@ -29,10 +29,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
     args = parser.parse_args()
-    apply(
-        args.source.resolve(),
-        Path(__file__).parent / "runtime-patches/0001-durable-kv-checkpoints.patch",
-    )
+    for name in ("0001-durable-kv-checkpoints.patch", "0002-durable-reasoning-memory.patch"):
+        apply(args.source.resolve(), Path(__file__).parent / "runtime-patches" / name)
 
 
 if __name__ == "__main__":

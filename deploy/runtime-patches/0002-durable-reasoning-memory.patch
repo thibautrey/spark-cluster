@@ -1,0 +1,235 @@
+--- a/zig/src/server/deepseek.zig
++++ b/zig/src/server/deepseek.zig
+@@ -51,6 +51,7 @@
+     pub fn fromEnv(env: ?*const std.process.Environ.Map, problem: *[]const u8) error{Invalid}!Options {
+         var o: Options = .{};
+         const m = env orelse return o;
++        o.env = m;
+         if (m.get("TF_DSV41_IMAGES")) |v| {
+             const t = std.mem.trim(u8, v, " ");
+             o.images = std.meta.stringToEnum(Images, if (t.len == 0) "placeholder" else t) orelse {
+@@ -98,6 +99,100 @@
+     entries: usize,
+     lock: std.atomic.Value(bool) = .init(false),
+     map: std.StringArrayHashMapUnmanaged([]const u8) = .empty,
++    io: ?std.Io = null,
++    durable_dir: ?std.Io.Dir = null,
++    persist_lock: std.atomic.Value(bool) = .init(false),
++    const max_bytes = 16 << 20;
++    const magic = "TFRMEM01";
++
++    // Explicit path is inside the model/runtime cache namespace. Never load a global store.
++    fn open(m: *Memory, io: std.Io, path: []const u8) !void {
++        const dir = try std.Io.Dir.cwd().createDirPathOpen(io, path, .{ .open_options = .{ .iterate = true } });
++        m.io = io;
++        m.durable_dir = dir;
++        try dir.setPermissions(io, .fromMode(0o700));
++        const bytes = dir.readFileAlloc(io, "reasoning.bin", m.gpa, .limited(max_bytes + 64)) catch |e| switch (e) {
++            error.FileNotFound => return,
++            else => return e,
++        };
++        defer m.gpa.free(bytes);
++        try m.decode(bytes);
++        log.line("reasoning memory: restored {d} entries", .{m.map.count()});
++    }
++
++    fn encode(m: *Memory) ![]u8 {
++        var bytes: std.ArrayList(u8) = .empty;
++        errdefer bytes.deinit(m.gpa);
++        try bytes.appendSlice(m.gpa, magic);
++        try bytes.appendNTimes(m.gpa, 0, 32);
++        for (m.map.keys(), m.map.values()) |k, v| {
++            var lengths: [8]u8 = undefined;
++            std.mem.writeInt(u32, lengths[0..4], @intCast(k.len), .little);
++            std.mem.writeInt(u32, lengths[4..8], @intCast(v.len), .little);
++            try bytes.appendSlice(m.gpa, &lengths);
++            try bytes.appendSlice(m.gpa, k);
++            try bytes.appendSlice(m.gpa, v);
++        }
++        std.crypto.hash.sha2.Sha256.hash(bytes.items[40..], bytes.items[8..40], .{});
++        return bytes.toOwnedSlice(m.gpa);
++    }
++
++    fn decode(m: *Memory, bytes: []const u8) !void {
++        if (bytes.len < 40 or bytes.len > max_bytes + 40 or !std.mem.eql(u8, bytes[0..8], magic)) return error.InvalidMemory;
++        var digest: [32]u8 = undefined;
++        std.crypto.hash.sha2.Sha256.hash(bytes[40..], &digest, .{});
++        if (!std.mem.eql(u8, &digest, bytes[8..40])) return error.InvalidMemory;
++        // Validate the complete file before admitting any record.
++        var pos: usize = 40;
++        var count: usize = 0;
++        while (pos < bytes.len) {
++            if (bytes.len - pos < 8) return error.InvalidMemory;
++            const kn = std.mem.readInt(u32, bytes[pos..][0..4], .little);
++            const vn = std.mem.readInt(u32, bytes[pos + 4 ..][0..4], .little);
++            pos += 8;
++            if (kn == 0 or kn > 4096 or vn == 0 or vn > (1 << 20) or kn > bytes.len - pos or vn > bytes.len - pos - kn) return error.InvalidMemory;
++            pos += kn + vn;
++            count += 1;
++            if (count > m.entries) return error.InvalidMemory;
++        }
++        pos = 40;
++        while (pos < bytes.len) {
++            const kn = std.mem.readInt(u32, bytes[pos..][0..4], .little);
++            const vn = std.mem.readInt(u32, bytes[pos + 4 ..][0..4], .little);
++            pos += 8;
++            const k = try m.gpa.dupe(u8, bytes[pos..][0..kn]);
++            errdefer m.gpa.free(k);
++            const v = try m.gpa.dupe(u8, bytes[pos + kn ..][0..vn]);
++            errdefer m.gpa.free(v);
++            if (m.map.contains(k)) return error.InvalidMemory;
++            try m.map.put(m.gpa, k, v);
++            pos += kn + vn;
++        }
++    }
++
++    fn persist(m: *Memory) !void {
++        const dir = m.durable_dir orelse return;
++        const io = m.io.?;
++        // The put serializer prevents older snapshots overtaking newer ones. Readers
++        // only hold the map lock while copying, never while storage is flushed.
++        m.acquire();
++        const bytes = m.encode() catch |e| {
++            m.release();
++            return e;
++        };
++        m.release();
++        defer m.gpa.free(bytes);
++        const file = try dir.createFile(io, "reasoning.tmp", .{ .permissions = .fromMode(0o600) });
++        defer file.close(io);
++        try file.setPermissions(io, .fromMode(0o600));
++        try file.writeStreamingAll(io, bytes);
++        try file.sync(io);
++        try dir.rename("reasoning.tmp", dir, "reasoning.bin", io);
++        if (@import("builtin").os.tag == .linux) {
++            const linux = std.os.linux;
++            if (linux.errno(linux.fsync(dir.handle)) != .SUCCESS) return error.SyncFailed;
++        }
++    }
+ 
+     fn acquire(m: *Memory) void {
+         while (m.lock.swap(true, .acquire)) std.atomic.spinLoopHint();
+@@ -116,14 +211,17 @@
+     }
+ 
+     fn put(m: *Memory, reasoning: []const u8, content: []const u8, calls: []const Value) void {
+-        if (reasoning.len == 0 or m.entries == 0) return;
++        if (reasoning.len == 0 or reasoning.len > (1 << 20) or m.entries == 0) return;
++        while (m.persist_lock.swap(true, .acquire)) std.atomic.spinLoopHint();
++        defer m.persist_lock.store(false, .release);
++        defer m.persist() catch |e| log.line("reasoning memory: persistence failed ({s})", .{@errorName(e)});
+         m.acquire();
+         defer m.release();
+         var buf: [66]u8 = undefined;
+         var keys_buf: [64][]const u8 = undefined;
+         var keys: []const []const u8 = keys_buf[0..0];
+         var n: usize = 0;
+-        for (calls) |c| if (c.strField("id")) |id| if (n < keys_buf.len) {
++        for (calls) |c| if (c.strField("id")) |id| if (id.len > 0 and id.len <= 4096 and n < keys_buf.len) {
+             keys_buf[n] = id;
+             n += 1;
+         };
+@@ -151,10 +249,13 @@
+             };
+         }
+         if (!used) m.gpa.free(value);
+-        while (m.map.count() > m.entries) {
++        var size: usize = 0;
++        for (m.map.keys(), m.map.values()) |k, v| size += k.len + v.len + 8;
++        while (m.map.count() > m.entries or size > max_bytes) {
+             const k = m.map.keys()[0];
+             const v = m.map.values()[0];
+             m.map.orderedRemoveAt(0);
++            size -= k.len + v.len + 8;
+             m.gpa.free(k);
+             m.gpa.free(v);
+         }
+@@ -162,7 +263,7 @@
+ 
+     /// A copy of ``messages`` with remembered reasoning put back where an assistant message lacks it.
+     fn restore(m: *Memory, a: Allocator, messages: Value) Allocator.Error!Value {
+-        if (messages != .array or m.map.count() == 0) return messages;
++        if (messages != .array) return messages;
+         var out: ?[]Value = null;
+         m.acquire();
+         defer m.release();
+@@ -191,6 +292,7 @@
+     }
+ 
+     fn deinit(m: *Memory) void {
++        if (m.durable_dir) |dir| dir.close(m.io.?);
+         for (m.map.keys(), m.map.values()) |k, v| {
+             m.gpa.free(k);
+             m.gpa.free(v);
+@@ -218,6 +320,17 @@
+             return error.Load;
+         };
+         d.* = .{ .gpa = gpa, .tok = tok, .options = options, .memory = .{ .gpa = gpa, .entries = options.memory_entries }, .io = io };
++        if (options.env) |env| if (env.get("TF_DSV41_REASONING_MEMORY_DIR")) |path| {
++            // Require an explicit cache identity whenever persistence is requested.
++            if (path.len == 0 or env.get("TF_DSV41_SESSION_NAMESPACE") == null) return error.MissingCacheIdentity;
++            d.memory.open(io, path) catch |e| {
++                // Fail closed: do not silently serve history with missing reasoning.
++                problem.* = try std.fmt.allocPrint(gpa, "cannot restore reasoning memory ({s})", .{@errorName(e)});
++                d.memory.deinit();
++                tok.deinit();
++                return error.Load;
++            };
++        };
+         if (options.images == .native) d.vision = try openVision(gpa, io, dir, options.env, problem);
+         return d;
+     }
+@@ -681,3 +794,53 @@
+     try std.testing.expect(std.mem.indexOfScalar(u32, got.ids, 1003) == null); // the typed placeholder stayed text
+     try std.testing.expectEqual(@as(u32, 12), img.llm_h); // 8 x 6 scaled up to 544^2: 630 x 476 -> 45 x 34 patches
+ }
++
++test "durable reasoning memory restores tool and content histories without changing rendered input" {
++    const a = std.testing.allocator;
++    var arena = std.heap.ArenaAllocator.init(a);
++    defer arena.deinit();
++    const aa = arena.allocator();
++    var m: Memory = .{ .gpa = a, .entries = 4 };
++    defer m.deinit();
++    const calls = (try json.parseText(aa, "[{\"id\":\"call_123\"}]")).ok;
++    m.put("tool reasoning fixture", "", calls.array);
++    m.put("final reasoning fixture", "answer", &.{});
++    const bytes = try m.encode();
++    defer a.free(bytes);
++    var restored: Memory = .{ .gpa = a, .entries = 4 };
++    defer restored.deinit();
++    try restored.decode(bytes);
++    const messages = (try json.parseText(aa, "[{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"call_123\"}]},{\"role\":\"assistant\",\"content\":\"answer\"}]")).ok;
++    const got = try restored.restore(aa, messages);
++    try std.testing.expectEqualStrings("tool reasoning fixture", got.array[0].strField("reasoning_content").?);
++    try std.testing.expectEqualStrings("final reasoning fixture", got.array[1].strField("reasoning_content").?);
++    bytes[bytes.len - 1] ^= 1;
++    var corrupt: Memory = .{ .gpa = a, .entries = 4 };
++    defer corrupt.deinit();
++    try std.testing.expectError(error.InvalidMemory, corrupt.decode(bytes));
++    try std.testing.expectEqual(@as(usize, 0), corrupt.map.count());
++}
++
++test "reasoning memory survives closing and reopening private atomic storage" {
++    const a = std.testing.allocator;
++    const io = std.testing.io;
++    var tmp = std.testing.tmpDir(.{});
++    defer tmp.cleanup();
++    const path = try tmp.dir.realPathFileAlloc(io, ".", a);
++    defer a.free(path);
++    {
++        var m: Memory = .{ .gpa = a, .entries = 2 };
++        defer m.deinit();
++        try m.open(io, path);
++        m.put("one", "first", &.{});
++        m.put("two", "second", &.{});
++        m.put("three", "third", &.{});
++    }
++    var m: Memory = .{ .gpa = a, .entries = 2 };
++    defer m.deinit();
++    try m.open(io, path);
++    try std.testing.expectEqual(@as(usize, 2), m.map.count());
++    var key: [66]u8 = undefined;
++    try std.testing.expect(m.map.get(Memory.contentKey(&key, "first")) == null);
++    try std.testing.expectEqualStrings("three", m.map.get(Memory.contentKey(&key, "third")).?);
++}
