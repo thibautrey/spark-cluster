@@ -106,7 +106,7 @@ async def test_warmup_waits_for_idle_runs_once_and_rearms_after_runtime_restart(
     assert len(calls) == 1
     assert calls[0]["max_tokens"] == 1
     assert calls[0]["stream"] is False
-    assert calls[0]["chat_template_kwargs"]["enable_thinking"] is False
+    assert "chat_template_kwargs" not in calls[0]  # Preserve the caller's native default.
     await service.sample()
     assert len(calls) == 1
     health.update(uptime_s=1)
@@ -119,3 +119,19 @@ async def test_warmup_waits_for_idle_runs_once_and_rearms_after_runtime_restart(
     health.update(ok=False, fatal="CudaFailed", uptime_s=0)
     await service.sample()
     assert len(calls) == 2
+
+
+def test_reasoning_modes_keep_distinct_exact_prefix_profiles(tmp_path):
+    service = PrefixWarmup(tmp_path / "profiles", None)
+    high = payload()
+    high["reasoning_effort"] = "high"
+    high["chat_template_kwargs"] = {"enable_thinking": True}
+    low = payload()
+    low["reasoning_effort"] = "low"
+    low["chat_template_kwargs"] = {"enable_thinking": True}
+    service.remember(high)
+    service.remember(low)
+    profiles = service._read()
+    assert len(profiles) == 2
+    assert {p["body"]["reasoning_effort"] for p in profiles} == {"low", "high"}
+    assert all(p["body"]["chat_template_kwargs"]["enable_thinking"] for p in profiles)

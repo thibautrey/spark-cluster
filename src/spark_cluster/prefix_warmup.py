@@ -99,6 +99,10 @@ class PrefixWarmup:
                 "response_format",
                 "functions",
                 "function_call",
+                "thinking",
+                "reasoning",
+                "reasoning_effort",
+                "chat_template_kwargs",
             )
             if key in payload
         }
@@ -108,7 +112,6 @@ class PrefixWarmup:
             temperature=0,
             max_tokens=1,
             stream=False,
-            chat_template_kwargs={"enable_thinking": False},
         )
         encoded = json.dumps(body, ensure_ascii=False).encode()
         if len(encoded) > MAX_BYTES:
@@ -116,6 +119,16 @@ class PrefixWarmup:
         identity = {
             "model": model,
             "tools": body.get("tools", body.get("functions")),
+            "mode": {
+                key: body[key]
+                for key in (
+                    "thinking",
+                    "reasoning",
+                    "reasoning_effort",
+                    "chat_template_kwargs",
+                )
+                if key in body
+            },
             "leading": [{"role": m["role"], "content": m["content"][:1024]} for m in prefix],
         }
         profile_id = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
