@@ -231,6 +231,7 @@ class RemoteClusterProxyMiddleware:
             or path == "/api/v1/pool"
             or path.startswith("/api/v1/pool/")
             or path.startswith("/api/v1/catalog/")
+            or path.startswith("/api/v1/inference/")
             or path.startswith("/api/v1/model-management/")
             or path.startswith("/api/v1/runtime-management/")
             or path == "/api/v1/runtime"

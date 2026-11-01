@@ -473,11 +473,13 @@ class RequestRecord:
             if message["type"] == "http.response.start":
                 self.status = message["status"]
                 self.headers_at = time.perf_counter()
-                self.content_type = (
-                    dict(message.get("headers", []))
-                    .get(b"content-type", b"")
-                    .decode(errors="replace")
-                    .lower()
+                self.content_type = next(
+                    (
+                        value.decode(errors="replace").lower()
+                        for name, value in message.get("headers", [])
+                        if name.lower() == b"content-type"
+                    ),
+                    "",
                 )
             elif message["type"] == "http.response.body":
                 chunk = message.get("body", b"")

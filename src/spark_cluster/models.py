@@ -426,6 +426,9 @@ class InferenceTelemetry(BaseModel):
     input_tokens_total: int | None = None
     output_tokens_total: int | None = None
     requests_total: int | None = None
+    request_errors_total: int | None = None
+    cached_tokens_total: int | None = None
+    runtime_healthy: bool | None = None
     request_p95_ms: float | None = None
     ttft_p50_ms: float | None = None
     ttft_p95_ms: float | None = None

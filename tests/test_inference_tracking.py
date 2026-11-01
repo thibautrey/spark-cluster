@@ -66,7 +66,7 @@ async def emit(tracking, chunks, content_type="application/json", status=200, ne
             {
                 "type": "http.response.start",
                 "status": status,
-                "headers": [(b"content-type", content_type.encode())],
+                "headers": [(b"Content-Type", content_type.encode())],
             }
         )
         for chunk in chunks:

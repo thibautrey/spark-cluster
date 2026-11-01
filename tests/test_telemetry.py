@@ -26,6 +26,39 @@ lmcache:cache_misses_total 2
 """
 
 
+def test_tensorfold_counters_health_and_restart_baselines(tmp_path):
+    store = SnapshotStore(tmp_path / "state.db")
+    service = InferenceTelemetryService(Settings(database_path=tmp_path / "state.db"), store)
+    metrics = """
+tensorfold_prompt_tokens_total 7000
+tensorfold_completion_tokens_total 140
+tensorfold_cached_tokens_total 6000
+tensorfold_requests_total 10
+tensorfold_request_errors_total 1
+tensorfold_requests_inflight 2
+tensorfold_engine_fatal 0
+"""
+    first = service.from_metrics(metrics)
+    assert first.available and first.runtime_healthy
+    assert first.input_tokens_total == 7000
+    assert first.cached_tokens_total == 6000
+    assert first.request_errors_total == 1
+    assert first.active_requests == 2
+    assert first.decode_tokens_per_second is None
+    assert first.ttft_p50_ms is None
+    service._previous = (time.monotonic() - 2, {"prompt": 6900, "decode": 100})
+    second = service.from_metrics(metrics)
+    assert 19 < second.decode_tokens_per_second < 21
+    fatal = service.from_metrics(
+        metrics.replace("tensorfold_engine_fatal 0", "tensorfold_engine_fatal 1")
+    )
+    assert fatal.runtime_healthy is False
+    restarted = service.from_metrics(metrics.replace(" 7000", " 7").replace(" 140", " 1"))
+    assert restarted.decode_tokens_per_second is None
+    assert restarted.prefill_tokens_per_second is None
+    store.close()
+
+
 def test_prometheus_parser_and_measured_runtime_telemetry(tmp_path):
     parsed = parse_prometheus(METRICS)
     assert parsed["vllm_prompt_tokens_total"][0][1] == 70

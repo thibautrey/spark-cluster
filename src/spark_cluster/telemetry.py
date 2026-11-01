@@ -163,6 +163,8 @@ class InferenceTelemetryService:
                         "input_tokens_total",
                         "output_tokens_total",
                         "requests_total",
+                        "request_errors_total",
+                        "cached_tokens_total",
                         "prefill_tokens_per_second",
                         "decode_tokens_per_second",
                         "cache_hits",
@@ -176,6 +178,10 @@ class InferenceTelemetryService:
                             if getattr(s, field) is not None
                         ]
                         setattr(telemetry, field, sum(values) if values else None)
+                    health = [
+                        s.runtime_healthy for s in samples.values() if s.runtime_healthy is not None
+                    ]
+                    telemetry.runtime_healthy = all(health) if health else None
                 telemetry.runtimes = {
                     key: value.model_dump(mode="json", exclude={"runtimes"})
                     for key, value in samples.items()
@@ -199,6 +205,7 @@ class InferenceTelemetryService:
                     "vllm:prompt_tokens_total",
                     "sglang:prompt_tokens_total",
                     "llamacpp:prompt_tokens_total",
+                    "tensorfold_prompt_tokens_total",
                 ),
             ),
             "decode": _value(
@@ -207,6 +214,7 @@ class InferenceTelemetryService:
                     "vllm:generation_tokens_total",
                     "sglang:generation_tokens_total",
                     "llamacpp:tokens_predicted_total",
+                    "tensorfold_completion_tokens_total",
                 ),
             ),
         }
@@ -228,11 +236,21 @@ class InferenceTelemetryService:
             sampled_at=datetime.now(UTC),
             source=self.url,
             available=any(
-                name.startswith(("vllm_", "sglang_", "llamacpp_", "lmcache_")) for name in metrics
+                name.startswith(("vllm_", "sglang_", "llamacpp_", "lmcache_", "tensorfold_"))
+                for name in metrics
             ),
             input_tokens_total=_integer(counters["prompt"]),
             output_tokens_total=_integer(counters["decode"]),
-            requests_total=_integer(_value(metrics, ("vllm:request_success_total",))),
+            requests_total=_integer(
+                _value(metrics, ("vllm:request_success_total", "tensorfold_requests_total"))
+            ),
+            request_errors_total=_integer(_value(metrics, ("tensorfold_request_errors_total",))),
+            cached_tokens_total=_integer(_value(metrics, ("tensorfold_cached_tokens_total",))),
+            runtime_healthy=(
+                _value(metrics, ("tensorfold_engine_fatal",)) == 0
+                if "tensorfold_engine_fatal" in metrics
+                else None
+            ),
             request_p95_ms=_milliseconds(
                 _quantile(metrics, ("vllm:e2e_request_latency_seconds",), 0.95)
             ),
@@ -286,6 +304,7 @@ class InferenceTelemetryService:
                         "vllm:num_requests_running",
                         "sglang:num_running_reqs",
                         "llamacpp:requests_processing",
+                        "tensorfold_requests_inflight",
                     ),
                 )
             ),

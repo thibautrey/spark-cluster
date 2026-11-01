@@ -88,6 +88,8 @@ def runtime_handler(seen):
         )
         if request.url.path == "/v1/models":
             return json_response(MODELS)
+        if request.url.path == "/health":
+            return json_response({"ok": True})
         if request.url.path == "/v1/chat/completions":
             return json_response(CHAT)
         return httpx.Response(404)
@@ -142,6 +144,8 @@ async def test_chat_accepts_reasoning_only_and_rejects_missing_runtime(tmp_path)
     def reasoning_handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v1/models":
             return json_response(MODELS)
+        if request.url.path == "/health":
+            return json_response({"ok": True})
         return json_response(
             {
                 "model": "deepseek-v4.1-flash",
@@ -172,12 +176,78 @@ def test_strata_is_visible_but_not_a_managed_container_launch():
     assert any("Attach its OpenAI endpoint" in blocker for blocker in plan.blockers)
 
 
+async def test_fatal_health_overrides_http_200_and_preserves_routing_identity(tmp_path):
+    config, registry, cluster = remote_registry(tmp_path)
+    service = ExternalRuntimeService(config, registry)
+    service.transport = httpx.MockTransport(runtime_handler([]))
+    await service.configure(cluster.id, ExternalRuntimeRequest(api_key="secret-key"))
+
+    def failed(request):
+        if request.url.path == "/v1/models":
+            return json_response(MODELS)
+        return json_response({"ok": False, "fatal": "CudaFailed"})
+
+    service.transport = httpx.MockTransport(failed)
+    service._probes.clear()
+    assert (await service.status(cluster.id)).status == "unreachable"
+    assert await service.models(registry.get(cluster.id)) == []
+    assert (await service.matching_model("deepseek-v4.1-flash"))[0].id == cluster.id
+    with pytest.raises(ValueError, match="unhealthy"):
+        await service.chat(registry.get(cluster.id), ExternalRuntimeTestRequest())
+
+    def disconnected(request):
+        raise httpx.ConnectError("offline", request=request)
+
+    service.transport = httpx.MockTransport(disconnected)
+    service._probes.clear()
+    assert (await service.matching_model("deepseek-v4.1-flash"))[0].id == cluster.id
+
+
+def test_attached_fatal_runtime_returns_503_without_forwarding_inference(tmp_path):
+    app = create_app(settings(tmp_path))
+    seen = []
+    app.state.external_runtime.transport = httpx.MockTransport(runtime_handler(seen))
+    cluster = app.state.cluster_registry.add_remote(
+        name="Spark",
+        endpoint="http://192.168.1.59:30080",
+        head_address="192.168.1.59",
+        hardware="dgx-spark",
+    )
+    with TestClient(app) as client:
+        attached = client.put(
+            f"/api/v1/clusters/{cluster.id}/runtime",
+            headers={"Authorization": "Bearer admin"},
+            json={"engine_id": "strata", "api_key": "secret-key"},
+        )
+        assert attached.status_code == 200
+        app.state.external_runtime._probes.clear()
+
+        def failed(request):
+            seen.append({"path": request.url.path})
+            return json_response(
+                MODELS if request.url.path == "/v1/models" else {"ok": False, "fatal": "CudaFailed"}
+            )
+
+        app.state.external_runtime.transport = httpx.MockTransport(failed)
+        reply = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "deepseek-v4.1-flash",
+                "messages": [{"role": "user", "content": "Hi"}],
+            },
+        )
+        assert reply.status_code == 503
+        assert reply.headers["retry-after"] == "5"
+        assert not any(item["path"] == "/v1/chat/completions" for item in seen)
+
+
 def test_live_runtime_routes_stay_on_the_controller(tmp_path):
     config = settings(tmp_path)
     middleware = RemoteClusterProxyMiddleware(lambda s, r, x: None, config, None)
     config.remote_cluster_url = "http://192.168.1.59:30080"
     assert middleware.should_forward({"path": "/api/v1/runtime"}) is False
     assert middleware.should_forward({"path": "/api/v1/runtime/test"}) is False
+    assert middleware.should_forward({"path": "/api/v1/inference/activity"}) is False
     assert middleware.should_forward({"path": "/api/v1/telemetry"}) is True
 
 
@@ -223,6 +293,13 @@ def test_controller_attaches_strata_and_infers_through_it(tmp_path):
         assert reply.status_code == 200
         assert reply.json()["choices"][0]["message"]["content"] == "SPARK_OK"
         assert seen[-1]["authorization"] == "Bearer secret-key"
+
+        activity = client.get("/api/v1/inference/activity").json()
+        assert activity["totals"]["requests"] == 1
+        assert activity["recent"][-1]["model_id"] == "deepseek-v4.1-flash"
+        assert activity["recent"][-1]["cluster_id"] == cluster.id
+        assert activity["recent"][-1]["input_tokens"] == 8
+        assert activity["recent"][-1]["output_tokens"] == 1
 
         tested = client.post(
             "/api/v1/runtime/test",

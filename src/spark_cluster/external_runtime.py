@@ -130,6 +130,7 @@ class ExternalRuntimeService:
             settings.setup_state_path / "runtime-credentials.json"
         )
         self._probes: dict[str, tuple[float, ProbeResult]] = {}
+        self._known_models: dict[str, tuple[dict, ...]] = {}
         self._probe_lock = asyncio.Lock()
 
     def cluster(self, cluster_id: str | None = None) -> ClusterTarget:
@@ -218,6 +219,7 @@ class ExternalRuntimeService:
             if cached and time.monotonic() - cached[0] < PROBE_TTL_SECONDS:
                 return cached[1]
             started = time.perf_counter()
+            models = self._known_models.get(cluster.id, ())
             try:
                 async with httpx.AsyncClient(
                     timeout=3,
@@ -228,13 +230,21 @@ class ExternalRuntimeService:
                     response = await client.get(self.base_url(cluster) + "/models")
                     response.raise_for_status()
                     payload = response.json()
-                models = tuple(
-                    item
-                    for item in payload.get("data", [])
-                    if isinstance(item, dict) and item.get("id")
-                )
-                if not models:
-                    raise ValueError("The runtime returned no models")
+                    models = tuple(
+                        item
+                        for item in payload.get("data", [])
+                        if isinstance(item, dict) and item.get("id")
+                    )
+                    if not models:
+                        raise ValueError("The runtime returned no models")
+                    self._known_models[cluster.id] = models
+                    health = await client.get(
+                        self.base_url(cluster).removesuffix("/v1") + "/health"
+                    )
+                    health.raise_for_status()
+                    state = health.json()
+                    if state.get("ok") is not True or state.get("fatal"):
+                        raise ValueError("The runtime is unhealthy; inference is unavailable")
                 result = ProbeResult(
                     status="ready",
                     models=models,
@@ -243,7 +253,9 @@ class ExternalRuntimeService:
             except (httpx.HTTPError, ValueError, TypeError, KeyError) as error:
                 result = ProbeResult(
                     status="unreachable",
-                    models=(),
+                    # Keep identity for routing: an unhealthy attached model must not fall
+                    # through to the managed pool and trigger a replacement download.
+                    models=models,
                     latency_ms=(time.perf_counter() - started) * 1000,
                     error=_safe_error(error),
                 )
@@ -253,14 +265,15 @@ class ExternalRuntimeService:
     async def models(self, cluster: ClusterTarget) -> list[dict]:
         if not self.configured(cluster):
             return []
-        return list((await self.probe(cluster)).models)
+        probe = await self.probe(cluster)
+        return list(probe.models) if probe.status == "ready" else []
 
     async def matching_model(self, reference: str) -> tuple[ClusterTarget, dict] | None:
         cluster = self.registry.active()
         if cluster is None or not self.configured(cluster):
             return None
         wanted = reference.strip().casefold()
-        for model in await self.models(cluster):
+        for model in (await self.probe(cluster)).models:
             if str(model.get("id", "")).casefold() == wanted:
                 return cluster, model
         return None

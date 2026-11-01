@@ -65,7 +65,7 @@ from .external_runtime import (
     ExternalRuntimeTestResult,
 )
 from .inference_http import RequestTooLarge, inference_error, read_inference_body
-from .inference_tracking import InferenceTracker
+from .inference_tracking import InferenceTracker, mark_dispatch
 from .local_docker import DockerEngineClient, detect_nvidia_gpus, local_gpu_snapshot
 from .mcp_server import SparkClusterMCP
 from .model_manager import (
@@ -292,8 +292,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def metrics_target():
         # The physical engine owns counters, not the legacy listener or fixed default port.
         ready = [r for r in on_demand.residents.values() if r.status == "ready"]
-        if ready:
-            return {r.profile.id: r.profile.upstream + "/metrics" for r in ready}
+        targets = {r.profile.id: r.profile.upstream + "/metrics" for r in ready}
+        attached = cluster_registry.active()
+        if attached and external_runtime.configured(attached):
+            targets[f"external:{attached.id}"] = (
+                external_runtime.base_url(attached).removesuffix("/v1") + "/metrics"
+            )
+        if targets:
+            return targets
         if pool_node.native.get("model_id"):
             return settings.direct_runtime_base_url.removesuffix("/v1") + "/metrics"
         return (
@@ -326,6 +332,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )[1:]
                 for entity in entities:
                     grouped.setdefault(entity, []).append(metrics)
+            if key.startswith("external:"):
+                cluster_id = key.removeprefix("external:")
+                grouped.setdefault(("pool", cluster_id), []).append(metrics)
+                probe = external_runtime._probes.get(cluster_id)
+                if probe and len(probe[1].models) == 1:
+                    model_id = str(probe[1].models[0]["id"])
+                    grouped.setdefault(("model", model_id), []).append(metrics)
             measured.append(metrics)
         for entity, metrics_list in grouped.items():
             combined = {}
@@ -1515,6 +1528,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return {"type": "http.request", "body": forwarded, "more_body": False}
 
             async def external_handler(scope, _, send):
+                if record := scope.get("spark.inference"):
+                    record.cluster_id = external_cluster.id
+                probe = await external_runtime.probe(external_cluster)
+                if probe.status != "ready":
+                    response = JSONResponse(
+                        {
+                            "error": {
+                                "message": "The attached inference runtime is unhealthy",
+                                "type": "runtime_unavailable",
+                            }
+                        },
+                        status_code=503,
+                        headers={"Retry-After": "5"},
+                    )
+                    await response(scope, _, send)
+                    return
+                mark_dispatch(scope, external_cluster.id)
                 forwarded_scope = dict(scope)
                 forwarded_scope["headers"] = [
                     (name, value)
@@ -1530,7 +1560,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     authorization=external_runtime.authorization(external_cluster),
                 )
 
-            return PoolResponse(external_handler)
+            async def tracked_external(scope, receive, send):
+                await inference_tracker.track(
+                    external_handler, str(runtime_model["id"]), f"v1/{path}", scope, receive, send
+                )
+
+            return PoolResponse(tracked_external)
         try:
             model = await model_pool.resolve_model(reference)
         except ValueError as error:
