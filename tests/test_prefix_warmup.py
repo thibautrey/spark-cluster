@@ -31,6 +31,7 @@ def test_profiles_survive_restart_are_private_and_do_not_retain_short_questions(
     assert "private instructions" not in json.dumps(restored.status())
     path = next((tmp_path / "profiles").glob("*.json"))
     assert "PRIVATE_CUSTOMER_QUESTION" not in path.read_text()
+    assert all(m["role"] != "user" for m in json.loads(path.read_text())["body"]["messages"])
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
 

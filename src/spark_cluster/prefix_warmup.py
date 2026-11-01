@@ -66,15 +66,14 @@ class PrefixWarmup:
                 break
             text = message["content"][:remaining]
             if message["role"] == "user" and len(text) < 2048:
-                text = "Reply with OK."
+                break  # End the warm prompt at the reusable system/tool boundary.
             prefix.append({"role": message["role"], "content": text})
             remaining -= len(text)
             if remaining <= 0 or message["role"] == "user":
                 break
-        if not prefix or sum(len(m["content"]) for m in prefix) < 1024:
+        tool_size = len(json.dumps(payload.get("tools", payload.get("functions", []))))
+        if not prefix or sum(len(m["content"]) for m in prefix) + tool_size < 1024:
             return
-        if prefix[-1]["role"] != "user":
-            prefix.append({"role": "user", "content": "Reply with OK."})
         body = {
             key: payload[key]
             for key in (
