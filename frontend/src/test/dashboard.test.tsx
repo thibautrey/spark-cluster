@@ -376,9 +376,7 @@ describe("React dashboard parity", () => {
     const user = userEvent.setup();
     mount("models");
     await screen.findByRole("heading", { name: "Stored on disk" });
-    expect(
-      screen.queryByRole("heading", { name: "Recipes" }),
-    ).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Recipes" })).toBeNull();
     expect(
       screen.queryByRole("heading", { name: "Discover models" }),
     ).toBeNull();
@@ -403,9 +401,7 @@ describe("React dashboard parity", () => {
     expect(location.hash).toBe("#models?tab=recipes");
     await user.keyboard("{End}");
     await screen.findByRole("heading", { name: /Download history/ });
-    expect(
-      screen.queryByRole("heading", { name: "Recipes" }),
-    ).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Recipes" })).toBeNull();
     await user.keyboard("{Home}");
     await screen.findByRole("heading", { name: "Stored on disk" });
   });
@@ -424,9 +420,7 @@ describe("React dashboard parity", () => {
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
     await screen.findByRole("heading", { name: "Discover models" });
-    expect(
-      screen.queryByRole("heading", { name: "Recipes" }),
-    ).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Recipes" })).toBeNull();
   });
 
   it.each(Object.keys(routes) as Route[])(
@@ -663,9 +657,7 @@ describe("React dashboard parity", () => {
           ]
         : undefined;
     mount("models");
-    await user.click(
-      screen.getByRole("tab", { name: "Downloads" }),
-    );
+    await user.click(screen.getByRole("tab", { name: "Downloads" }));
     await user.click(await screen.findByRole("button", { name: /^Cancel$/ }));
     expect(requests.some((r) => r.path.endsWith("/cancel"))).toBe(false);
     await screen.findByRole("heading", {
