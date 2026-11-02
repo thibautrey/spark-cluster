@@ -505,3 +505,30 @@ def test_gb10_uses_measured_system_memory_only(monkeypatch):
     nvml.nvmlDeviceGetName = lambda _: "RTX 4090"
     nvml.nvmlDeviceGetMemoryInfo = lambda _: (_ for _ in ()).throw(RuntimeError())
     assert local_docker.detect_nvidia_gpus() == []
+
+
+@pytest.mark.asyncio
+async def test_remote_install_reconnects_saved_node_job_without_local_transfer(env):
+    _, store, catalog = env
+    await catalog.entries()
+    remote_target = target().model_copy(update={"kind": "remote-bridge", "capabilities": ["recipes.v1"]})
+    bridge = SimpleNamespace(
+        refresh=AsyncMock(return_value=remote_target), prepare=AsyncMock(),
+        install=AsyncMock(return_value={"id": "node-job", "recipe_hash": starter().content_hash,
+            "status": "completed", "stage": "installed", "progress": 100,
+            "artifacts_present": True, "inference_verified": False}))
+    download, verify = AsyncMock(), AsyncMock()
+    installer = RecipeInstaller(catalog, SimpleNamespace(get=lambda _: remote_target),
+        store, None, None, download, verify, str)
+    installer.remote = bridge
+    job = await installer.create(starter().content_hash, "spark", launch=False)
+    await installer.tasks[job["id"]]
+    assert job["remote_job_id"] == "node-job" and job["stage"] == "installed"
+    download.assert_not_awaited()
+    verify.assert_not_awaited()
+    await installer.save(job, status="running")
+    await installer.start()
+    await installer.tasks[job["id"]]
+    assert job["inference_verified"] is False
+    assert bridge.install.await_count == 2
+    assert bridge.install.call_args.args[1]["id"] == job["id"]
