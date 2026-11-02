@@ -16,6 +16,7 @@ class RecipeInstaller:
         self.library, self.pool, self.download, self.verify = library, pool, download, verify
         self.safe_error = safe_error
         self.preflight = None
+        self.remote = None
         self.tasks = {}
         self.lock = asyncio.Lock()
 
@@ -29,9 +30,10 @@ class RecipeInstaller:
     async def start(self):
         for job in await self.jobs():
             if job["status"] in {"queued", "running"}:
-                await self.save(
-                    job, status="failed", error="Controller restarted; retry the saved release"
-                )
+                if job.get("remote") and self.remote:
+                    self.tasks[job["id"]] = asyncio.create_task(self.run(job))
+                else:
+                    await self.save(job, status="failed", error="Controller restarted; retry the saved release")
 
     async def stop(self):
         tasks = list(self.tasks.values())
@@ -39,24 +41,45 @@ class RecipeInstaller:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def create(self, digest, cluster_id):
+    async def create(self, digest, cluster_id, *, launch=True, request_id=None):
+        if request_id:
+            previous = next((j for j in await self.jobs() if j.get("request_id") == request_id), None)
+            if previous:
+                if previous["recipe_hash"] != digest or previous["cluster_id"] != cluster_id or previous.get("launch", True) != launch:
+                    raise ValueError("Idempotency key belongs to another recipe request")
+                return previous
         entry = await self.catalog.get(digest)
         recipe = SparkRecipe.model_validate(entry["recipe"])
-        blockers = await self.catalog.compatible(recipe, self.registry.get(cluster_id))
+        target = self.registry.get(cluster_id)
+        if target.kind == "remote-bridge" and self.remote:
+            target = await self.remote.refresh(target, force=True)
+        blockers = await self.catalog.compatible(recipe, target)
         if blockers:
             raise ValueError("; ".join(blockers))
-        if self.preflight:
+        if target.kind == "remote-bridge" and self.remote:
+            await self.remote.prepare(target, recipe, launch=launch)
+        elif self.preflight:
             await self.preflight(recipe, cluster_id)
         async with self.lock:
-            for job in await self.jobs():
+            existing_jobs = await self.jobs()
+            if request_id:
+                previous = next((j for j in existing_jobs if j.get("request_id") == request_id), None)
+                if previous:
+                    if previous["recipe_hash"] != digest or previous["cluster_id"] != cluster_id or previous.get("launch", True) != launch:
+                        raise ValueError("Idempotency key belongs to another recipe request")
+                    return previous
+            for job in existing_jobs:
                 if job["cluster_id"] == cluster_id and job["status"] in {"queued", "running"}:
-                    if job["recipe_hash"] == digest:
+                    if job["recipe_hash"] == digest and job.get("launch", True) == launch:
                         return job
                     raise ValueError("Another recipe installation is running on this Spark")
             job = {
                 "id": uuid4().hex,
                 "recipe_hash": digest,
                 "cluster_id": cluster_id,
+                "launch": launch,
+                "request_id": request_id,
+                "remote": target.kind == "remote-bridge",
                 "recipe": entry["recipe"],
                 "origin": entry["origin"],
                 "status": "queued",
@@ -86,6 +109,9 @@ class RecipeInstaller:
         try:
             recipe = SparkRecipe.model_validate(job["recipe"])
             target = self.registry.get(job["cluster_id"])
+            if target.kind == "remote-bridge" and self.remote:
+                await self.run_remote(job, target)
+                return
             blockers = await self.catalog.compatible(recipe, target)
             if blockers:
                 raise ValueError("; ".join(blockers))
@@ -94,8 +120,8 @@ class RecipeInstaller:
             pool = next((c for c in inventory["clusters"] if c["id"] == target.id), None)
             if not pool or not pool["available"]:
                 raise ValueError("Target Spark is unavailable")
-            if pool.get("resident_models") or pool.get("active_model"):
-                raise ValueError("Unload running models on this Spark before installing a recipe")
+            if job.get("launch", True) and (pool.get("resident_models") or pool.get("active_model")):
+                await self.launch_preflight(recipe, target)
             # Resolve and check architecture before starting multi-GB downloads.
             metadata = await self.library.remote.resolve_image(
                 "vllm", recipe.runtime.image, recipe.requirements.platform
@@ -141,11 +167,17 @@ class RecipeInstaller:
                     RuntimeImportRequest(artifact_id=cached["id"], cluster_id=target.id)
                 )
                 await self._wait_library(queued["id"])
+            if not job.get("launch", True):
+                await self.save(job, status="completed", stage="installed", progress=100,
+                                artifacts_present=True, inference_verified=False)
+                return
             # A long download must not turn into an implicit replacement of a newer workload.
             inventory = await self.pool.inventory(force=True)
             current = next((c for c in inventory["clusters"] if c["id"] == target.id), None)
-            if not current or current.get("resident_models") or current.get("active_model"):
-                raise ValueError("Spark workload changed during installation; unload it and retry")
+            if not current:
+                raise ValueError("Target Spark is unavailable")
+            if current.get("resident_models") or current.get("active_model"):
+                await self.launch_preflight(recipe, target)
             if any(
                 j.get("model_id") == recipe.model.repository
                 and j["status"] in {"queued", "waiting", "loading"}
@@ -173,11 +205,13 @@ class RecipeInstaller:
             await self.verify(recipe, target)
             # Snapshot includes exact file, source, weights, image digest, and launch settings.
             # Old releases and deployments stay available for explicit rollback/reinstall.
-            await self.save(job, status="completed", stage="ready", progress=100)
+            await self.save(job, status="completed", stage="ready", progress=100,
+                            artifacts_present=True, inference_verified=True)
         except asyncio.CancelledError:
-            await self.save(
-                job, status="failed", error="Installation interrupted; retry this release"
-            )
+            if job.get("remote"):
+                await self.save(job, status="running")  # Node owns progress; reconnect idempotently.
+            else:
+                await self.save(job, status="failed", error="Installation interrupted; retry this release")
             raise
         except Exception as error:
             await self.save(
@@ -188,3 +222,35 @@ class RecipeInstaller:
             )
         finally:
             self.tasks.pop(job["id"], None)
+
+
+    async def launch_preflight(self, recipe, target):
+        node = getattr(self.pool, "node", None)
+        if node is None:
+            raise ValueError("Install without launching while another model is loaded")
+        result = await node.plan(PoolLoadRequest(model_id=recipe.model.repository,
+            settings=recipe.launch_request(), cluster_id=target.id))
+        placement = result.get("placement") or {}
+        if not result.get("compatible") or result.get("waiting") or placement.get("evict"):
+            reason = result.get("reason") or "Insufficient free memory without unloading another model"
+            raise ValueError("Recipe can remain installed on disk. Launch blocked: " + reason)
+
+    async def run_remote(self, job, target):
+        await self.save(job, status="running", stage="contact-node")
+        remote = await self.remote.install(target, job)
+        await self.save(job, remote_job_id=remote["id"])
+        deadline = time.monotonic() + 86400
+        while True:
+            if remote.get("recipe_hash") != job["recipe_hash"]:
+                raise ValueError("Remote installation returned another recipe release")
+            fields = {k: remote[k] for k in ["status", "stage", "progress", "error", "download_job_id", "launch_job_id", "artifacts_present", "inference_verified"] if k in remote}
+            if remote.get("storage"):
+                from .remote_recipes import remap_storage
+                fields["storage"] = remap_storage(remote["storage"], target.id)
+            await self.save(job, **fields)
+            if remote["status"] in {"completed", "failed", "cancelled"}:
+                return
+            if time.monotonic() > deadline:
+                raise ValueError("Remote preparation exceeded 24 hours; inspect the saved node job")
+            await asyncio.sleep(2)
+            remote = await self.remote.job(target, job["remote_job_id"])

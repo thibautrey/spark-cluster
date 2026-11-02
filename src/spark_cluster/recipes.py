@@ -377,10 +377,10 @@ class RecipeCatalog:
             blockers.append(f"Requires {req.nodes} Sparks")
         if target.gpu_memory_gib and target.gpu_memory_gib < req.memory_gib_per_node:
             blockers.append(f"Requires {req.memory_gib_per_node:g} GiB per Spark")
-        if target.kind != "local-docker":
-            # v1 recipes use custom images/flags: require matching bridge support.
-            # Distributed bootstrap must preserve worker argv/environment, not just head flags.
-            blockers.append("Recipe v1 currently executes on a directly connected Docker Spark")
+        if target.status == "offline":
+            blockers.append("Recipe bridge is unavailable; reconnect it before installing")
+        if target.kind != "local-docker" and "recipes.v1" not in target.capabilities:
+            blockers.append("Update this bridge to support remote recipe installation")
         if req.topology != "single":
             blockers.append("Distributed recipe bootstrap is not supported by recipe v1")
         return blockers

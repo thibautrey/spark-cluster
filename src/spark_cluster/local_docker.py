@@ -22,6 +22,19 @@ from .runtime_engines import MANAGED_ENGINE_IDS, container_launch_script
 GIB = 2**30
 
 
+def unified_memory_stats():
+    """GB10 uses system RAM; missing measurements must never fabricate capacity."""
+    try:
+        fields = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines())
+        total = int(fields["MemTotal"].split()[0]) / 1024**2
+        available = int(fields["MemAvailable"].split()[0]) / 1024**2
+        if total <= 0 or not 0 <= available <= total:
+            return None
+        return {"total_gib": total, "used_gib": total - available}
+    except (OSError, KeyError, ValueError):
+        return None
+
+
 def gpu_process_memory(devices: list[GPUDevice]) -> list[dict]:
     """Read actual device use and host PIDs; unavailable measurements fail closed."""
     try:
@@ -34,6 +47,12 @@ def gpu_process_memory(devices: list[GPUDevice]) -> list[dict]:
         for gpu in devices:
             try:
                 handle = pynvml.nvmlDeviceGetHandleByIndex(gpu.index)
+                if gpu.unified_memory:
+                    memory = unified_memory_stats()
+                    if memory:
+                        result.append({"id": gpu.uuid, "index": gpu.index, **memory,
+                                       "processes": {}, "accounting_complete": False})
+                    continue
                 memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
                 processes = {}
                 complete = True
@@ -76,15 +95,18 @@ def detect_nvidia_gpus() -> list[GPUDevice]:
         for index in range(pynvml.nvmlDeviceGetCount()):
             handle = pynvml.nvmlDeviceGetHandleByIndex(index)
             major, minor = pynvml.nvmlDeviceGetCudaComputeCapability(handle)
-            devices.append(
-                GPUDevice(
-                    index=index,
-                    name=pynvml.nvmlDeviceGetName(handle),
-                    uuid=pynvml.nvmlDeviceGetUUID(handle),
-                    memory_gib=round(pynvml.nvmlDeviceGetMemoryInfo(handle).total / GIB, 2),
-                    compute_capability=f"{major}.{minor}",
-                )
-            )
+            name = pynvml.nvmlDeviceGetName(handle)
+            unified = bool(re.search(r"\bGB10\b", name)) and pynvml.nvmlDeviceGetCount() == 1
+            if unified:
+                measured = unified_memory_stats()
+                if not measured:
+                    continue
+                total = measured["total_gib"]
+            else:
+                total = pynvml.nvmlDeviceGetMemoryInfo(handle).total / GIB
+            devices.append(GPUDevice(index=index, name=name,
+                uuid=pynvml.nvmlDeviceGetUUID(handle), memory_gib=round(total, 2),
+                compute_capability=f"{major}.{minor}", unified_memory=unified))
     except pynvml.NVMLError:
         return []
     finally:
@@ -116,9 +138,15 @@ def local_gpu_snapshot(
             if pynvml:
                 try:
                     handle = pynvml.nvmlDeviceGetHandleByIndex(gpu.index)
-                    memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                    used = memory.used / GIB
-                    measured = True
+                    if gpu.unified_memory:
+                        shared = unified_memory_stats()
+                        if shared:
+                            used = shared["used_gib"]
+                            measured = True
+                    else:
+                        memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                        used = memory.used / GIB
+                        measured = True
                     utilization = float(pynvml.nvmlDeviceGetUtilizationRates(handle).gpu)
                     temperature = float(
                         pynvml.nvmlDeviceGetTemperature(handle, pynvml.NVML_TEMPERATURE_GPU)

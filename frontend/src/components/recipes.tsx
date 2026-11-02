@@ -68,6 +68,8 @@ type Job = {
   error: string | null;
   storage?: SpaceRequest;
   artifacts_present?: boolean;
+  launch?: boolean;
+  inference_verified?: boolean;
 };
 type State = {
   recipes: Entry[];
@@ -266,18 +268,19 @@ export function Recipes() {
     (entry) => entry.id === referenceId,
   );
   const snapshot = state.data?.catalog?.snapshots[0];
-  const install = (entry: Entry) =>
+  const install = (entry: Entry, launch = false) =>
     action.run(async () => {
       await post("/api/v1/recipes/install", {
         recipe_hash: entry.id,
         cluster_id: target!.id,
+        launch,
       });
       await refresh();
     });
   const installLabel = (recipe: Recipe) =>
     recipe.validation === "generated-template"
-      ? "Install template & launch"
-      : "Install & launch";
+      ? "Install template"
+      : "Install recipe";
   return (
     <Panel
       title="Recipes"
@@ -736,7 +739,9 @@ export function Recipes() {
             {job.recipe.title} · v{job.recipe.version}
           </strong>
           <p>
-            {job.status} · {job.stage}
+            {job.status === "completed" && job.inference_verified === false
+              ? "Installed on disk · not started"
+              : `${job.status} · ${job.stage}`}
           </p>
           <Meter value={job.progress} label="Recipe installation" />
           <Message error={job.error} />
@@ -753,6 +758,7 @@ export function Recipes() {
                       await post("/api/v1/recipes/install", {
                         recipe_hash: job.recipe_hash,
                         cluster_id: job.cluster_id,
+                        launch: job.launch ?? true,
                       });
                       await refresh();
                     }
@@ -763,6 +769,11 @@ export function Recipes() {
               </Button>
             )}
 
+          {job.status === "completed" && job.artifacts_present && (
+            <Button disabled={action.busy || busy} onClick={() => install({ id: job.recipe_hash } as Entry, true)}>
+              Launch this release
+            </Button>
+          )}
           {job.status === "failed" && (
             <Button
               variant="outline"
@@ -772,6 +783,7 @@ export function Recipes() {
                   await post("/api/v1/recipes/install", {
                     recipe_hash: job.recipe_hash,
                     cluster_id: job.cluster_id,
+                        launch: job.launch ?? true,
                   });
                   await refresh();
                 })
@@ -786,8 +798,7 @@ export function Recipes() {
         {state.data?.discovery.checked_at
           ? `GitHub checked ${new Date(state.data.discovery.checked_at * 1000).toLocaleString()}. Discoveries are cached for one hour.`
           : "GitHub discovery runs in the background. Bundled recipes are available offline."}{" "}
-        Existing releases stay available for rollback. Unload running models
-        before changing recipes.
+        Existing releases stay available for rollback. Installation prepares files on the selected node. Launch checks available memory before starting.
       </p>
     </Panel>
   );

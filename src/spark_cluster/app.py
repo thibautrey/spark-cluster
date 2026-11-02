@@ -480,43 +480,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await storage_service.download_check(request, plan, cluster_registry.active())
 
     async def recipe_storage_preflight(recipe, cluster_id):
-        active = cluster_registry.active()
-        if not active or active.id != cluster_id:
-            raise ValueError("Select the recipe's target Spark before installing")
-        await storage_download_preflight(ModelDownloadRequest(
-            repo_id=recipe.model.repository, revision=recipe.model.revision,
-            bits_per_weight=recipe.launch.bits_per_weight,
-            context_length=recipe.launch.context_length,
-            concurrent_sequences=recipe.launch.max_num_seqs,
-            kv_cache_dtype=recipe.launch.kv_cache_dtype,
-        ))
+        target = cluster_registry.get(cluster_id)
+        if target.kind != "local-docker":
+            raise ValueError("Remote recipes must be prepared by their node bridge")
+        models, _ = pool_node.model_context()
+        request = ModelDownloadRequest(repo_id=recipe.model.repository, revision=recipe.model.revision,
+            bits_per_weight=recipe.launch.bits_per_weight, context_length=recipe.launch.context_length,
+            concurrent_sequences=recipe.launch.max_num_seqs, kv_cache_dtype=recipe.launch.kv_cache_dtype)
+        local = await models.managed_model(request.repo_id)
+        if local and local.revision != request.revision:
+            raise ValueError("Remove the previous downloaded revision before changing model weights")
+        plan = await models.fit_for_local(request) if local else await models.fit(request)
+        await storage_service.download_check(request, plan, target)
 
     recipe_catalog = RecipeCatalog(settings, runtime.store)
 
     async def recipe_download(request, cluster_id):
         target = cluster_registry.get(cluster_id)
-        active = cluster_registry.active()
-        if not active or active.id != cluster_id:
-            raise ValueError("Select the recipe target before starting its download")
-        local = await model_manager.managed_model(request.repo_id)
+        if target.kind != "local-docker":
+            raise ValueError("Remote weights must be downloaded on the node")
+        models, _ = pool_node.model_context()
+        local = await models.managed_model(request.repo_id)
+        if local and local.revision != request.revision:
+            raise ValueError("Remove the previous downloaded revision before changing model weights")
+        fit = await models.fit_for_local(request) if local else await models.fit(request)
+        await storage_service.download_check(request, fit, target)
         if local:
-            if local.revision != request.revision:
-                raise ValueError(
-                    "Remove the previous downloaded revision before changing model weights"
-                )
-            fit = await model_manager.fit_for_local(request)
-            if not fit.fits:
-                raise ModelDoesNotFit(fit)
-            return None  # Exact managed weights already exist; preserve/reuse them.
-        fit_plan = await model_fit_plan(request)
-        active = cluster_registry.active()
-        if not active or active.id != cluster_id:
-            raise ValueError("Pool selection changed during preflight; retry on the intended Spark")
-        await storage_service.download_check(request, fit_plan, target)
-        return await model_manager.enqueue(
-            request, destination="local", fit_plan=fit_plan,
-            target_cluster_id=target.id, target_cluster_name=target.name,
-        )
+            return None
+        return await model_manager.enqueue(request, destination="local", fit_plan=fit,
+            target_cluster_id=target.id, target_cluster_name=target.name)
 
     async def verify_recipe(recipe, target):
         profile = on_demand.profile_for(recipe.model.repository)
@@ -543,6 +535,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     recipe_installer.preflight = recipe_storage_preflight
+    from .remote_recipes import RemoteRecipes
+    remote_recipes = RemoteRecipes(settings, cluster_registry)
+    recipe_installer.remote = remote_recipes
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -551,7 +546,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             gpus = await asyncio.to_thread(detect_nvidia_gpus)
             if gpus:
                 cluster_registry.add_local(
-                    name="Unraid GPUs",
+                    name=settings.cluster_name if any(g.unified_memory for g in gpus) else "Unraid GPUs",
                     host_address=settings.docker_runtime_host,
                     runtime_port=settings.docker_runtime_port_start,
                     gpus=gpus,
@@ -890,7 +885,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/v1/controller/verify", dependencies=[Depends(require_model_token)])
     async def verify_controller():
-        return {"status": "ready", "cluster_name": settings.cluster_name}
+        from .remote_recipes import PROTOCOL
+        local = pool_node.local_cluster()
+        return {"status": "ready", "cluster_name": settings.cluster_name,
+                "recipe_protocol": PROTOCOL if local and docker_engine.available else None,
+                "node_target": local.model_dump(mode="json") if local else None}
 
     @app.post("/api/v1/setup/discover", dependencies=[Depends(require_model_token)])
     async def discover_nodes(request: DiscoveryRequest):

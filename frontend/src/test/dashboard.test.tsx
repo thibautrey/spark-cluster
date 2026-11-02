@@ -253,12 +253,12 @@ describe("React dashboard parity", () => {
       within(recipeDialog).getByText("Release hash: " + "b".repeat(64)),
     ).toBeTruthy();
     await user.click(
-      within(recipeDialog).getByRole("button", { name: "Install & launch" }),
+      within(recipeDialog).getByRole("button", { name: "Install recipe" }),
     );
     await waitFor(() =>
       expect(
         requests.find((r) => r.path === "/api/v1/recipes/install")?.body,
-      ).toEqual({ recipe_hash: "b".repeat(64), cluster_id: cluster.id }),
+      ).toEqual({ recipe_hash: "b".repeat(64), cluster_id: cluster.id, launch: false }),
     );
   });
 
@@ -377,7 +377,7 @@ describe("React dashboard parity", () => {
       ).disabled,
     ).toBe(true);
     expect(
-      screen.queryByRole("button", { name: "Install template & launch" }),
+      screen.queryByRole("button", { name: "Install template" }),
     ).toBeNull();
   });
 

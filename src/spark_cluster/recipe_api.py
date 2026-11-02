@@ -3,7 +3,7 @@
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .recipes import SparkRecipe
 from .storage import StorageShortage
@@ -12,6 +12,24 @@ from .storage import StorageShortage
 class RecipeInstallRequest(BaseModel):
     recipe_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     cluster_id: str = Field(min_length=1, max_length=80)
+    launch: bool = True
+
+
+class NodeRecipeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    recipe: SparkRecipe
+    recipe_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    launch: bool = False
+    request_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+    task: str | None = Field(default=None, max_length=100)
+
+    @model_validator(mode="after")
+    def verify_release(self):
+        if self.recipe.content_hash != self.recipe_hash:
+            raise ValueError("Recipe body differs from its immutable release hash")
+        if len(self.recipe.model_dump_json().encode()) > 128 * 1024:
+            raise ValueError("Recipe exceeds 128 KiB")
+        return self
 
 
 def register_recipes(app, catalog, installer, registry, require_token, settings):
@@ -40,6 +58,11 @@ def register_recipes(app, catalog, installer, registry, require_token, settings)
         catalog.start()
         discovery = await catalog.discovery_state()
         target = registry.get(cluster_id) if cluster_id else registry.active()
+        if target and target.kind == "remote-bridge" and installer.remote:
+            try:
+                target = await installer.remote.refresh(target)
+            except ValueError:
+                target = target.model_copy(update={"status": "offline"})
         page = await catalog_page(
             catalog,
             target,
@@ -68,12 +91,64 @@ def register_recipes(app, catalog, installer, registry, require_token, settings)
     @router.post("/install", status_code=202, dependencies=[Depends(mutation)])
     async def install(request: RecipeInstallRequest):
         try:
-            return await installer.create(request.recipe_hash, request.cluster_id)
+            return await installer.create(request.recipe_hash, request.cluster_id, launch=request.launch)
         except KeyError as error:
             raise HTTPException(404, "Recipe release or compute pool not found") from error
         except StorageShortage:
             raise
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
+
+    def local_target():
+        target = next((c for c in registry.list() if c.kind == "local-docker"), None)
+        if not target:
+            raise HTTPException(409, "This bridge has no measured Docker accelerator")
+        return target
+
+    async def node_check(request):
+        target = local_target()
+        blockers = await catalog.compatible(request.recipe, target)
+        if blockers:
+            raise ValueError("; ".join(blockers))
+        if installer.preflight:
+            await installer.preflight(request.recipe, target.id)
+        return target
+
+    @router.post("/node/preflight", dependencies=[Depends(mutation)])
+    async def node_preflight(request: NodeRecipeRequest):
+        try:
+            await node_check(request)
+            return {"status": "ready", "recipe_hash": request.recipe_hash}
+        except StorageShortage:
+            raise
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+
+    @router.post("/node/install", status_code=202, dependencies=[Depends(mutation)])
+    async def node_install(request: NodeRecipeRequest):
+        if not request.request_id:
+            raise HTTPException(422, "Remote installation requires an idempotency key")
+        try:
+            # Resolve replay before preflight: the original node job is authoritative.
+            prior = next((j for j in await installer.jobs() if j.get("request_id") == request.request_id), None)
+            if prior:
+                if prior["recipe_hash"] != request.recipe_hash or prior.get("launch", True) != request.launch:
+                    raise ValueError("Idempotency key belongs to another recipe request")
+                return prior
+            target = await node_check(request)
+            await catalog.remember(request.recipe, {"kind": "remote", "task": request.task})
+            return await installer.create(request.recipe_hash, target.id, launch=request.launch,
+                                          request_id=request.request_id)
+        except StorageShortage:
+            raise
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
+
+    @router.get("/node/jobs/{job_id}")
+    async def node_job(job_id: str):
+        job = next((j for j in await installer.jobs() if j["id"] == job_id and not j.get("remote")), None)
+        if not job:
+            raise HTTPException(404, "Node recipe installation not found")
+        return job
 
     app.include_router(router)

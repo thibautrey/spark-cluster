@@ -390,3 +390,76 @@ def test_local_gpu_inventory_recognizes_gb10_for_recipe_admission(env):
         model_storage_path=str(settings.model_cache_path),
     )
     assert generic.hardware == "nvidia-gpu"
+
+
+@pytest.mark.asyncio
+async def test_install_only_preserves_resident_and_replay(env):
+    _, store, catalog = env
+    await catalog.entries()
+    pool = SimpleNamespace(
+        inventory=AsyncMock(return_value={"clusters": [{"id": "spark", "available": True,
+            "resident_models": [{"model_id": "qwen"}]}]}),
+        enqueue=AsyncMock(),
+    )
+    library = SimpleNamespace(remote=SimpleNamespace(resolve_image=AsyncMock(return_value={})),
+        ensure_local_image=AsyncMock())
+    verify = AsyncMock()
+    installer = RecipeInstaller(catalog, SimpleNamespace(get=lambda _: target()), store,
+        library, pool, AsyncMock(return_value=None), verify, str)
+    job = await installer.create(starter().content_hash, "spark", launch=False, request_id="a" * 32)
+    await installer.tasks[job["id"]]
+    assert job["status"] == "completed" and job["stage"] == "installed"
+    assert job["inference_verified"] is False
+    pool.enqueue.assert_not_awaited()
+    verify.assert_not_awaited()
+    assert (await installer.create(starter().content_hash, "spark", launch=False,
+        request_id="a" * 32))["id"] == job["id"]
+    with pytest.raises(ValueError, match="Idempotency"):
+        await installer.create(starter().content_hash, "spark", launch=True, request_id="a" * 32)
+
+
+def test_node_recipe_hash_rejects_changed_release():
+    from spark_cluster.recipe_api import NodeRecipeRequest
+    with pytest.raises(ValidationError, match="immutable"):
+        NodeRecipeRequest(recipe=starter(), recipe_hash="0" * 64)
+
+
+@pytest.mark.asyncio
+async def test_remote_recipe_signed_delegation_and_storage_mapping(env):
+    from spark_cluster.remote_cluster import valid_controller_signature
+    from spark_cluster.remote_recipes import RemoteRecipes
+    from spark_cluster.storage import StorageShortage
+    settings, _, _ = env
+    remote = target().model_copy(update={"kind": "remote-bridge", "endpoint": "http://node"})
+    def handle(request):
+        assert valid_controller_signature(settings.model_admin_token, request.method,
+            request.url.path, request.headers.get("x-spark-timestamp"),
+            request.headers.get("x-spark-signature"), request.content)
+        body = json.loads(request.content)
+        assert body["recipe_hash"] == starter().content_hash
+        assert body["launch"] is False
+        return httpx.Response(507, json={"detail": {"storage": {"requirements": [
+            {"location_id": "local-node:models", "missing_bytes": 123}]}}})
+    bridge = RemoteRecipes(settings, None, httpx.MockTransport(handle))
+    with pytest.raises(StorageShortage) as error:
+        await bridge.prepare(remote, starter(), launch=False)
+    assert error.value.storage["requirements"][0]["location_id"] == "spark:models"
+
+
+def test_gb10_uses_measured_system_memory_only(monkeypatch):
+    import sys
+    from spark_cluster import local_docker
+    nvml = SimpleNamespace(nvmlInit=lambda: None, nvmlShutdown=lambda: None,
+        nvmlDeviceGetCount=lambda: 1, nvmlDeviceGetHandleByIndex=lambda _: 0,
+        nvmlDeviceGetCudaComputeCapability=lambda _: (12, 1),
+        nvmlDeviceGetName=lambda _: "NVIDIA GB10", nvmlDeviceGetUUID=lambda _: "GPU-spark",
+        NVMLError=RuntimeError)
+    monkeypatch.setitem(sys.modules, "pynvml", nvml)
+    monkeypatch.setattr(local_docker, "unified_memory_stats", lambda: {"total_gib": 121.63, "used_gib": 100})
+    gpu = local_docker.detect_nvidia_gpus()[0]
+    assert gpu.unified_memory and gpu.memory_gib == 121.63
+    monkeypatch.setattr(local_docker, "unified_memory_stats", lambda: None)
+    assert local_docker.detect_nvidia_gpus() == []
+    nvml.nvmlDeviceGetName = lambda _: "RTX 4090"
+    nvml.nvmlDeviceGetMemoryInfo = lambda _: (_ for _ in ()).throw(RuntimeError())
+    assert local_docker.detect_nvidia_gpus() == []

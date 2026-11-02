@@ -22,6 +22,7 @@ class GPUDevice(BaseModel):
     uuid: str
     memory_gib: float = Field(gt=0)
     compute_capability: str | None = None
+    unified_memory: bool = False
 
 
 class ClusterTarget(BaseModel):
@@ -220,6 +221,27 @@ class ClusterRegistry:
             self._save()
             self._apply_active()
             return cluster.model_copy(update={"active": cluster.id == self._active_id})
+
+    def update_remote_hardware(self, cluster_id: str, node: dict, capabilities: list[str]):
+        """Authenticated bridge inventory updates hardware, never endpoints or active selection."""
+        reported = ClusterTarget.model_validate(node)
+        if reported.kind != "local-docker" or not reported.gpus:
+            raise ValueError("Bridge has no measured Docker accelerator")
+        with self._lock:
+            current = self.get(cluster_id)
+            if current.kind != "remote-bridge":
+                raise ValueError("Expected a remote bridge")
+            values = {"hardware": reported.hardware, "gpus": reported.gpus,
+                      "gpu_count": len(reported.gpus),
+                      "gpu_memory_gib": min(g.memory_gib for g in reported.gpus),
+                      "gpu_model": reported.gpu_model, "status": "ready",
+                      "capabilities": sorted(set(current.capabilities) | set(capabilities))}
+            if all(getattr(current, k) == v for k, v in values.items()):
+                return current
+            updated = current.model_copy(update=values)
+            self._clusters[cluster_id] = updated
+            self._save()
+            return updated
 
     def set_external_runtime(
         self,
