@@ -75,6 +75,14 @@ def runtime_parallelism(payload: dict, *, prepare=False, ceiling=MAX_CONCURRENCY
     return 1 if "llama" in evidence or "gguf" in evidence else MAX_CONCURRENCY
 
 
+def runtime_owns_queue(payload: dict) -> bool:
+    """Known engines schedule their own waiting requests and KV/token budgets."""
+    evidence = " ".join(
+        str(payload.get(key, "")) for key in ("Image", "Entrypoint", "Cmd")
+    ).casefold()
+    return any(engine in evidence for engine in ("vllm", "sglang", "llama", "gguf"))
+
+
 def response_feedback(scope, model_id, path, send):
     if scope.get("method") in {"GET", "HEAD", "OPTIONS", "DELETE"}:
         return scope, None, send
@@ -106,7 +114,16 @@ class Admission:
 
 
 class ConcurrencyController:
-    def __init__(self, identity, ceiling=MAX_CONCURRENCY, learned=None, clock=time.monotonic):
+    def __init__(
+        self,
+        identity,
+        ceiling=MAX_CONCURRENCY,
+        learned=None,
+        clock=time.monotonic,
+        *,
+        runtime_managed=False,
+    ):
+        self.runtime_managed = runtime_managed
         self.identity = identity
         self.ceiling = max(1, min(MAX_CONCURRENCY, ceiling))
         self.clock = clock
@@ -149,6 +166,14 @@ class ConcurrencyController:
             except (KeyError, TypeError, ValueError, OverflowError):
                 pass
 
+        if self.runtime_managed:
+            self._runtime_policy()
+
+    def _runtime_policy(self):
+        self.limit = self.best_limit = MAX_CONCURRENCY
+        self.state = "runtime-managed"
+        self.reason = "Runtime owns queueing and batching; machine request bound remains enforced"
+
     def _account(self, now):
         if self.serving:
             self.busy_seconds += max(0.0, now - self.accounted_at)
@@ -166,12 +191,17 @@ class ConcurrencyController:
         self.demand = False
         self.peak = 0
 
-    def reconfigure(self, identity, ceiling):
+    def reconfigure(self, identity, ceiling, runtime_managed=False):
         ceiling = max(1, min(MAX_CONCURRENCY, ceiling))
-        if self.identity == identity and self.ceiling == ceiling:
+        if (
+            self.identity == identity
+            and self.ceiling == ceiling
+            and self.runtime_managed == runtime_managed
+        ):
             return
         # Preserve the same FIFO and in-flight counters when a runtime changes.
         self.identity, self.ceiling = identity, ceiling
+        self.runtime_managed = runtime_managed
         self.limit = self.best_limit = min(INITIAL_CONCURRENCY, ceiling)
         self.best_score = self.baseline_latency = self.metric = None
         self.latency_regressions = 0
@@ -179,6 +209,8 @@ class ConcurrencyController:
         self.cooldown = 0
         self._reset_window()
         self.changed = True
+        if self.runtime_managed:
+            self._runtime_policy()
 
     @contextlib.asynccontextmanager
     async def slot(self, record=None):
@@ -223,6 +255,9 @@ class ConcurrencyController:
                 self.condition.notify_all()
 
     def _complete(self, admission, now, error):
+        if self.runtime_managed:
+            self.samples += 1
+            return
         record = admission.record
         if record is None:
             return
@@ -338,6 +373,8 @@ class ConcurrencyController:
         return self.pressure is None or self.clock() - self.pressure_at > 15 or self.pressure < 0.9
 
     def backoff(self, reason):
+        if self.runtime_managed:
+            return
         now = self.clock()
         if now - self.last_backoff < 2:
             return
@@ -361,9 +398,9 @@ class ConcurrencyController:
             self.backoff("Sustained KV-cache pressure")
 
     def public(self):
-        runtime_limited = self.ceiling == 1 and self.state != "backoff"
+        runtime_limited = not self.runtime_managed and self.ceiling == 1 and self.state != "backoff"
         return {
-            "mode": "automatic",
+            "mode": "runtime-managed" if self.runtime_managed else "automatic",
             "learning_version": LEARNING_VERSION,
             "limit": self.limit,
             "running": self.running,
@@ -393,7 +430,7 @@ class AdaptiveConcurrency:
             except (OSError, ValueError, TypeError, AttributeError):
                 pass
 
-    def controller(self, runtime_id, identity, ceiling=MAX_CONCURRENCY):
+    def controller(self, runtime_id, identity, ceiling=MAX_CONCURRENCY, *, runtime_managed=False):
         controller = self.controllers.get(runtime_id)
         if controller is None:
             if len(self.controllers) >= 128:
@@ -416,10 +453,12 @@ class AdaptiveConcurrency:
                         self.learned = dict(list(self.learned.items())[-128:])
                 else:
                     raise RuntimeError("Adaptive runtime capacity is full")
-            controller = ConcurrencyController(identity, ceiling, self.learned.get(identity))
+            controller = ConcurrencyController(
+                identity, ceiling, self.learned.get(identity), runtime_managed=runtime_managed
+            )
             self.controllers[runtime_id] = controller
         else:
-            controller.reconfigure(identity, ceiling)
+            controller.reconfigure(identity, ceiling, runtime_managed)
         return controller
 
     def telemetry(self, samples):

@@ -26,6 +26,7 @@ from .adaptive_concurrency import (
     RuntimeCapacityError,
     fingerprint,
     response_feedback,
+    runtime_owns_queue,
     runtime_parallelism,
     startup_capacity_failure,
 )
@@ -296,7 +297,12 @@ class OnDemandInference:
                 "ceiling": resident.runtime_ceiling,
             }
         )
-        return self.concurrency.controller(profile.id, identity, resident.runtime_ceiling)
+        return self.concurrency.controller(
+            profile.id,
+            identity,
+            resident.runtime_ceiling,
+            runtime_managed=runtime_owns_queue(profile.container),
+        )
 
     def resident_state(self, resident):
         return dict(
@@ -665,7 +671,8 @@ class OnDemandInference:
                                 copy.deepcopy(profile.container), prepare=True
                             )
                             if (
-                                existing.parallelism_prepared
+                                runtime_owns_queue(profile.container)
+                                or existing.parallelism_prepared
                                 or existing.runtime_ceiling >= desired
                                 or existing.active_requests
                             ):

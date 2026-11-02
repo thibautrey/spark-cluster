@@ -198,13 +198,11 @@ populated only for a single resident. Runtime metrics include independent per-ru
 samples; aggregate counters and rates are summed without mixing latency percentiles.
 The Kubernetes launcher keeps its existing exclusive model-residency behavior.
 
-[Automatic concurrency](docs/adaptive-concurrency.md) adjusts request admission per
-runtime from real traffic. It probes higher concurrency when aggregate throughput
-improves, prioritizes aggregate throughput over individual response speed, and backs
-off for sustained latency regressions without a throughput gain, overload and KV-cache pressure,
-and periodically retests as conditions change. No user settings or synthetic warm-up
-requests are needed. Docker and Kubernetes requests can overlap while active streams
-protect their model from unloads. Placement status shows the learned limit and queue.
+[Request scheduling](docs/adaptive-concurrency.md) delegates queueing and continuous
+batching to vLLM, SGLang and llama.cpp. Each executing machine bounds outstanding
+requests at 64 across its models. Unknown backends retain adaptive admission.
+Docker and Kubernetes requests can overlap while active requests protect their
+model from unloads. Placement status distinguishes runtime scheduling from learning.
 
 [Inference reliability](docs/inference-reliability.md) adds managed Docker readiness
 supervision, bounded recovery backoff and gateway safeguards for real model calls.

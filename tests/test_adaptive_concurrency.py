@@ -15,6 +15,7 @@ from spark_cluster.adaptive_concurrency import (
     AdaptiveConcurrency,
     ConcurrencyController,
     fingerprint,
+    runtime_owns_queue,
     runtime_parallelism,
 )
 from spark_cluster.model_pool import ModelPreferences, PoolNode
@@ -504,3 +505,51 @@ def test_pinned_imported_recipe_preserves_batching_during_recovery():
     }
     assert runtime_parallelism(payload, prepare=True) == 8
     assert payload["Cmd"] == ["--max-num-seqs", "8"]
+
+
+@pytest.mark.parametrize(
+    "engine", ["vllm/vllm-openai", "sglang", "ghcr.io/ggml-org/llama.cpp:server"]
+)
+def test_known_schedulers_own_queue_without_changing_launch_settings(engine):
+    payload = {"Image": engine, "Cmd": ["--parallel", "2", "--ctx-size", "8192"]}
+    original = copy.deepcopy(payload)
+    assert runtime_owns_queue(payload)
+    assert payload == original
+    assert not runtime_owns_queue({"Image": "custom-serial-server"})
+
+
+@pytest.mark.asyncio
+async def test_runtime_queue_receives_burst_beyond_slots_and_ignores_old_learning():
+    c = ConcurrencyController(
+        "batching",
+        ceiling=2,
+        runtime_managed=True,
+        learned={"limit": 1, "updated_at": time.time(), "version": LEARNING_VERSION},
+    )
+    release = asyncio.Event()
+    all_dispatched = asyncio.Event()
+    started = 0
+
+    async def request():
+        nonlocal started
+        async with c.slot(feedback(status=503)) as admission:
+            admission.begin()
+            started += 1
+            if started == 8:
+                all_dispatched.set()
+            await release.wait()
+
+    tasks = [asyncio.create_task(request()) for _ in range(8)]
+    try:
+        await asyncio.wait_for(all_dispatched.wait(), 2)
+        assert c.running == 8 and not c.queue
+        c.telemetry({"gpu_kv_cache_usage": 0.99, "queued_requests": 6})
+        c.telemetry({"gpu_kv_cache_usage": 0.99, "queued_requests": 6})
+    finally:
+        release.set()
+        await asyncio.gather(*tasks)
+    assert c.limit == 64 and c.running == 0
+    assert c.public()["mode"] == "runtime-managed"
+    assert c.public()["runtime_ceiling"] == 2
+    c.reconfigure("replacement", 1, runtime_managed=True)
+    assert c.limit == 64 and c.public()["state"] == "runtime-managed"

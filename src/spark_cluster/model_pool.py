@@ -277,7 +277,10 @@ class PoolNode:
             }
         )
         return self.demand.concurrency.controller(
-            "runtime", identity, self.native.get("runtime_ceiling", MAX_CONCURRENCY)
+            "runtime",
+            identity,
+            self.native.get("runtime_ceiling", MAX_CONCURRENCY),
+            runtime_managed=True,
         )
 
     @contextlib.asynccontextmanager
