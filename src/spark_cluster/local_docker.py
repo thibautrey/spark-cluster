@@ -50,8 +50,15 @@ def gpu_process_memory(devices: list[GPUDevice]) -> list[dict]:
                 if gpu.unified_memory:
                     memory = unified_memory_stats()
                     if memory:
-                        result.append({"id": gpu.uuid, "index": gpu.index, **memory,
-                                       "processes": {}, "accounting_complete": False})
+                        result.append(
+                            {
+                                "id": gpu.uuid,
+                                "index": gpu.index,
+                                **memory,
+                                "processes": {},
+                                "accounting_complete": False,
+                            }
+                        )
                     continue
                 memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
                 processes = {}
@@ -104,9 +111,16 @@ def detect_nvidia_gpus() -> list[GPUDevice]:
                 total = measured["total_gib"]
             else:
                 total = pynvml.nvmlDeviceGetMemoryInfo(handle).total / GIB
-            devices.append(GPUDevice(index=index, name=name,
-                uuid=pynvml.nvmlDeviceGetUUID(handle), memory_gib=round(total, 2),
-                compute_capability=f"{major}.{minor}", unified_memory=unified))
+            devices.append(
+                GPUDevice(
+                    index=index,
+                    name=name,
+                    uuid=pynvml.nvmlDeviceGetUUID(handle),
+                    memory_gib=round(total, 2),
+                    compute_capability=f"{major}.{minor}",
+                    unified_memory=unified,
+                )
+            )
     except pynvml.NVMLError:
         return []
     finally:

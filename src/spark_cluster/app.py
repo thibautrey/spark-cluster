@@ -484,12 +484,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if target.kind != "local-docker":
             raise ValueError("Remote recipes must be prepared by their node bridge")
         models, _ = pool_node.model_context()
-        request = ModelDownloadRequest(repo_id=recipe.model.repository, revision=recipe.model.revision,
-            bits_per_weight=recipe.launch.bits_per_weight, context_length=recipe.launch.context_length,
-            concurrent_sequences=recipe.launch.max_num_seqs, kv_cache_dtype=recipe.launch.kv_cache_dtype)
+        request = ModelDownloadRequest(
+            repo_id=recipe.model.repository,
+            revision=recipe.model.revision,
+            bits_per_weight=recipe.launch.bits_per_weight,
+            context_length=recipe.launch.context_length,
+            concurrent_sequences=recipe.launch.max_num_seqs,
+            kv_cache_dtype=recipe.launch.kv_cache_dtype,
+        )
         local = await models.managed_model(request.repo_id)
         if local and local.revision != request.revision:
-            raise ValueError("Remove the previous downloaded revision before changing model weights")
+            raise ValueError(
+                "Remove the previous downloaded revision before changing model weights"
+            )
         plan = await models.fit_for_local(request) if local else await models.fit(request)
         await storage_service.download_check(request, plan, target)
 
@@ -502,13 +509,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         models, _ = pool_node.model_context()
         local = await models.managed_model(request.repo_id)
         if local and local.revision != request.revision:
-            raise ValueError("Remove the previous downloaded revision before changing model weights")
+            raise ValueError(
+                "Remove the previous downloaded revision before changing model weights"
+            )
         fit = await models.fit_for_local(request) if local else await models.fit(request)
         await storage_service.download_check(request, fit, target)
         if local:
             return None
-        return await model_manager.enqueue(request, destination="local", fit_plan=fit,
-            target_cluster_id=target.id, target_cluster_name=target.name)
+        return await model_manager.enqueue(
+            request,
+            destination="local",
+            fit_plan=fit,
+            target_cluster_id=target.id,
+            target_cluster_name=target.name,
+        )
 
     async def verify_recipe(recipe, target):
         profile = on_demand.profile_for(recipe.model.repository)
@@ -516,8 +530,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not profile or profile.launch_settings != expected:
             raise ValueError("Running model settings do not match the selected recipe release")
         # Exercise the selected pool's actual inference route, including dynamic private ports.
-        headers = ({"Authorization": f"Bearer {settings.model_admin_token}"}
-                   if settings.model_admin_token else {})
+        headers = (
+            {"Authorization": f"Bearer {settings.model_admin_token}"}
+            if settings.model_admin_token
+            else {}
+        )
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://recipe-check", timeout=120
         ) as client:
@@ -530,12 +547,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ValueError("Runtime changed during recipe verification")
 
     recipe_installer = RecipeInstaller(
-        recipe_catalog, cluster_registry, runtime.store, runtime_library, model_pool,
-        recipe_download, verify_recipe, model_manager.safe_error,
+        recipe_catalog,
+        cluster_registry,
+        runtime.store,
+        runtime_library,
+        model_pool,
+        recipe_download,
+        verify_recipe,
+        model_manager.safe_error,
     )
 
     recipe_installer.preflight = recipe_storage_preflight
     from .remote_recipes import RemoteRecipes
+
     remote_recipes = RemoteRecipes(settings, cluster_registry)
     recipe_installer.remote = remote_recipes
 
@@ -546,7 +570,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             gpus = await asyncio.to_thread(detect_nvidia_gpus)
             if gpus:
                 cluster_registry.add_local(
-                    name=settings.cluster_name if any(g.unified_memory for g in gpus) else "Unraid GPUs",
+                    name=settings.cluster_name
+                    if any(g.unified_memory for g in gpus)
+                    else "Unraid GPUs",
                     host_address=settings.docker_runtime_host,
                     runtime_port=settings.docker_runtime_port_start,
                     gpus=gpus,
@@ -730,8 +756,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.exception_handler(StorageShortage)
     async def insufficient_storage(_, error):
         return JSONResponse(status_code=507, content={"detail": error.detail()})
-    register_recipes(app, recipe_catalog, recipe_installer, cluster_registry,
-                     require_model_token, settings)
+
+    register_recipes(
+        app, recipe_catalog, recipe_installer, cluster_registry, require_model_token, settings
+    )
 
     @app.exception_handler(SetupFailure)
     async def setup_failure(_, error: SetupFailure):
@@ -886,10 +914,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/controller/verify", dependencies=[Depends(require_model_token)])
     async def verify_controller():
         from .remote_recipes import PROTOCOL
+
         local = pool_node.local_cluster()
-        return {"status": "ready", "cluster_name": settings.cluster_name,
-                "recipe_protocol": PROTOCOL if local and docker_engine.available else None,
-                "node_target": local.model_dump(mode="json") if local else None}
+        return {
+            "status": "ready",
+            "cluster_name": settings.cluster_name,
+            "recipe_protocol": PROTOCOL if local and docker_engine.available else None,
+            "node_target": local.model_dump(mode="json") if local else None,
+        }
 
     @app.post("/api/v1/setup/discover", dependencies=[Depends(require_model_token)])
     async def discover_nodes(request: DiscoveryRequest):
@@ -1764,10 +1796,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dependencies=[Depends(require_model_token)],
     )
     async def launch_model(request: ModelLaunchRequest) -> ModelLaunchJob:
-        await storage_service.launch_check(PoolLoadRequest(
-            model_id=request.model_id, settings=request,
-            cluster_id=cluster_registry.active().id if cluster_registry.active() else None,
-        ))
+        await storage_service.launch_check(
+            PoolLoadRequest(
+                model_id=request.model_id,
+                settings=request,
+                cluster_id=cluster_registry.active().id if cluster_registry.active() else None,
+            )
+        )
         try:
             async with storage_service.lock:
                 return await deployment_service.launch(request)

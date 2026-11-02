@@ -14,9 +14,13 @@ CAPABILITY = "recipes.v1"
 
 
 def remap_storage(storage, cluster_id):
-    return {**storage, "requirements": [
-        {**r, "location_id": cluster_id + ":" + r["location_id"].split(":", 1)[-1]}
-        for r in storage.get("requirements", [])]}
+    return {
+        **storage,
+        "requirements": [
+            {**r, "location_id": cluster_id + ":" + r["location_id"].split(":", 1)[-1]}
+            for r in storage.get("requirements", [])
+        ],
+    }
 
 
 class RemoteRecipes:
@@ -31,8 +35,9 @@ class RemoteRecipes:
         headers = signed_controller_headers(self.settings.model_admin_token, method, path, body)
         headers["content-type"] = "application/json"
         try:
-            async with httpx.AsyncClient(base_url=cluster.endpoint, transport=self.transport,
-                                         timeout=120, trust_env=False) as client:
+            async with httpx.AsyncClient(
+                base_url=cluster.endpoint, transport=self.transport, timeout=120, trust_env=False
+            ) as client:
                 response = await client.request(method, path, content=body, headers=headers)
         except httpx.HTTPError as error:
             raise ValueError("Recipe bridge is unavailable; reconnect it and retry") from error
@@ -54,20 +59,39 @@ class RemoteRecipes:
         payload = await self.request(target, "GET", "/api/v1/controller/verify")
         if payload.get("recipe_protocol") != PROTOCOL or not payload.get("node_target"):
             raise ValueError("Update this bridge to support remote recipe installation")
-        target = self.registry.update_remote_hardware(target.id, payload["node_target"], [CAPABILITY])
+        target = self.registry.update_remote_hardware(
+            target.id, payload["node_target"], [CAPABILITY]
+        )
         self.checked[target.id] = time.monotonic()
         return target
 
     async def prepare(self, target, recipe, *, launch):
-        return await self.request(target, "POST", "/api/v1/recipes/node/preflight", {
-            "recipe": recipe.model_dump(mode="json"), "recipe_hash": recipe.content_hash,
-            "launch": launch})
+        return await self.request(
+            target,
+            "POST",
+            "/api/v1/recipes/node/preflight",
+            {
+                "recipe": recipe.model_dump(mode="json"),
+                "recipe_hash": recipe.content_hash,
+                "launch": launch,
+            },
+        )
 
     async def install(self, target, job):
-        return await self.request(target, "POST", "/api/v1/recipes/node/install", {
-            "recipe": job["recipe"], "recipe_hash": job["recipe_hash"],
-            "request_id": job["id"], "launch": job.get("launch", True),
-            "task": job.get("origin", {}).get("task")})
+        return await self.request(
+            target,
+            "POST",
+            "/api/v1/recipes/node/install",
+            {
+                "recipe": job["recipe"],
+                "recipe_hash": job["recipe_hash"],
+                "request_id": job["id"],
+                "launch": job.get("launch", True),
+                "task": job.get("origin", {}).get("task"),
+            },
+        )
 
     async def job(self, target, job_id):
-        return await self.request(target, "GET", "/api/v1/recipes/node/jobs/" + quote(job_id, safe=""))
+        return await self.request(
+            target, "GET", "/api/v1/recipes/node/jobs/" + quote(job_id, safe="")
+        )

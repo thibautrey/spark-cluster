@@ -231,11 +231,15 @@ class ClusterRegistry:
             current = self.get(cluster_id)
             if current.kind != "remote-bridge":
                 raise ValueError("Expected a remote bridge")
-            values = {"hardware": reported.hardware, "gpus": reported.gpus,
-                      "gpu_count": len(reported.gpus),
-                      "gpu_memory_gib": min(g.memory_gib for g in reported.gpus),
-                      "gpu_model": reported.gpu_model, "status": "ready",
-                      "capabilities": sorted(set(current.capabilities) | set(capabilities))}
+            values = {
+                "hardware": reported.hardware,
+                "gpus": reported.gpus,
+                "gpu_count": len(reported.gpus),
+                "gpu_memory_gib": min(g.memory_gib for g in reported.gpus),
+                "gpu_model": reported.gpu_model,
+                "status": "ready",
+                "capabilities": sorted(set(current.capabilities) | set(capabilities)),
+            }
             if all(getattr(current, k) == v for k, v in values.items()):
                 return current
             updated = current.model_copy(update=values)

@@ -91,7 +91,9 @@ def register_recipes(app, catalog, installer, registry, require_token, settings)
     @router.post("/install", status_code=202, dependencies=[Depends(mutation)])
     async def install(request: RecipeInstallRequest):
         try:
-            return await installer.create(request.recipe_hash, request.cluster_id, launch=request.launch)
+            return await installer.create(
+                request.recipe_hash, request.cluster_id, launch=request.launch
+            )
         except KeyError as error:
             raise HTTPException(404, "Recipe release or compute pool not found") from error
         except StorageShortage:
@@ -130,15 +132,22 @@ def register_recipes(app, catalog, installer, registry, require_token, settings)
             raise HTTPException(422, "Remote installation requires an idempotency key")
         try:
             # Resolve replay before preflight: the original node job is authoritative.
-            prior = next((j for j in await installer.jobs() if j.get("request_id") == request.request_id), None)
+            prior = next(
+                (j for j in await installer.jobs() if j.get("request_id") == request.request_id),
+                None,
+            )
             if prior:
-                if prior["recipe_hash"] != request.recipe_hash or prior.get("launch", True) != request.launch:
+                if (
+                    prior["recipe_hash"] != request.recipe_hash
+                    or prior.get("launch", True) != request.launch
+                ):
                     raise ValueError("Idempotency key belongs to another recipe request")
                 return prior
             target = await node_check(request)
             await catalog.remember(request.recipe, {"kind": "remote", "task": request.task})
-            return await installer.create(request.recipe_hash, target.id, launch=request.launch,
-                                          request_id=request.request_id)
+            return await installer.create(
+                request.recipe_hash, target.id, launch=request.launch, request_id=request.request_id
+            )
         except StorageShortage:
             raise
         except ValueError as error:
@@ -146,7 +155,9 @@ def register_recipes(app, catalog, installer, registry, require_token, settings)
 
     @router.get("/node/jobs/{job_id}")
     async def node_job(job_id: str):
-        job = next((j for j in await installer.jobs() if j["id"] == job_id and not j.get("remote")), None)
+        job = next(
+            (j for j in await installer.jobs() if j["id"] == job_id and not j.get("remote")), None
+        )
         if not job:
             raise HTTPException(404, "Node recipe installation not found")
         return job
