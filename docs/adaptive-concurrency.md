@@ -24,79 +24,26 @@ and [vLLM scheduler](https://github.com/vllm-project/vllm/blob/main/vllm/v1/core
 
 ## Adaptive fallback for unknown backends
 
+Unrecognized Docker services retain the previous automatic policy. They begin with
+four admissions, bounded by their known engine ceiling, and learn from actual
+responses without synthetic warm-up prompts. The score uses reported output tokens
+per busy wall-clock second, input tokens for embedding services, or explicitly
+labelled requests/s when usage is unavailable. Concurrent durations are not summed.
 
-The pool automatically learns a request-admission limit for each running model
-instance. There is no tuning form or required configuration. It learns from actual
-responses; it does not generate prompts or send background benchmark requests.
+Throughput gains above 3% permit higher admission. Overload, failed streams and
+sustained active KV pressure can reduce it. Two comparable latency regressions
+without a throughput gain are required for latency backoff. Client validation errors
+and cancellations do not count as capacity failures. Learned fallback decisions are
+saved privately beside setup state and keyed by model, revision, image, settings and
+GPU allocation. Changing these revalidates the fallback limit.
 
-A new runtime begins with four admitted requests, bounded by its engine ceiling.
-Successful measurement
-windows compare aggregate reported output tokens per busy wall-clock second. For
-embedding services they use reported input tokens; without reported token usage they
-use requests per second, explicitly labelled. Concurrent request durations are never
-summed to calculate aggregate throughput. Queueing, model startup and idle periods
-are excluded from the service measurement. Workload or measurement-unit changes
-start a fresh comparison.
+New validated vLLM/SGLang launches keep their existing maximum-64 scheduler defaults
+and startup capacity retry behavior. Existing running engines are no longer restarted
+just to enlarge their scheduler ceiling: they can queue above their execution ceiling.
+Other launch settings, memory fractions, context lengths and GPU reservations stay
+under their existing runtime configuration and placement rules.
 
-Under sustained demand, the controller probes higher limits and retains increases
-that improve throughput by more than 3%. It prefers a lower limit within 3% of the
-same throughput, and periodically probes again after stable windows. Aggregate
-throughput takes priority over individual response speed: four requests generating
-12 output tokens/s each contribute 48 output tokens/s, not 12. A slower first token
-or service time does not undo a measured throughput gain. Latency only triggers a
-reduction after two consecutive comparable windows regress by more than twice the
-latency at the best throughput, without a greater-than-3% aggregate throughput gain.
-Workload/unit changes and healthy windows reset this confirmation.
-Overload responses, failed streams and timeouts still reduce admissions immediately;
-existing requests finish normally. After a reduction, eight successful observations
-allow a new parallelism probe instead of waiting for 32 observations.
-Client validation errors and cancellations do not count as capacity failures.
-
-Runtime KV-cache occupancy can block upward probes. Sustained high occupancy during
-active work reduces admissions; idle prefix caches and total allocated GPU memory
-are not treated as proof of overload. Missing telemetry remains unknown and the
-controller continues using request observations. Without simultaneous demand, the
-status explicitly reports that more traffic is needed to explore a higher limit.
-
-## Engine and lifecycle behavior
-
-The gateway's existing 64-request bound is also the upper exploration bound.
-The validated vLLM and SGLang Docker adapters set their continuous-batching scheduler
-ceiling accordingly. Memory fractions, KV-cache precision and requested context are
-preserved. Raising the scheduler ceiling does not reserve 64 full contexts: the
-engine manages its bounded KV pool and the adaptive gate determines actual admission.
-An already running older Docker recipe is upgraded only when active streams have
-drained, including a retained runtime; streams are never interrupted for tuning.
-If the engine reports a startup memory failure, batching capacity is halved and
-retried within the same reservation. The successful ceiling is retained, so a smaller
-GPU does not repeatedly retry an oversized CUDA-graph setup. Unrelated errors and
-exit code 137 without OOM evidence do not trigger this retry policy.
-
-Other engines retain their validated scheduling settings. In particular, llama.cpp
-admission respects the configured parallel-slot count because increasing it would
-split its context allocation. The controller cannot infer extra safe slots from
-unused VRAM alone. A serial backend can converge to one useful admission even when
-its HTTP server accepts several outstanding requests.
-
-Kubernetes keeps one resident model per bridge while allowing concurrent requests
-to that model. Model replacement and unload wait for all pinned requests, including
-requests in its adaptive queue. New managed launches expose the batching ceiling;
-existing runtimes remain bounded by their known execution configuration.
-
-Limits, running requests, queued requests, learning state, observed throughput unit
-and decision reason are available under `resident_models[].concurrency` in the pool
-and inference status APIs, and under each model placement. The UI shows a compact,
-read-only automatic-concurrency summary. Routing prefers the instance with lower
-queue pressure relative to its learned limit.
-
-Learned limits are saved privately beside setup state in `adaptive-concurrency.json`.
-Identities include the model revision, engine image, launch settings and GPU memory
-allocation; changing these resets learning. The saved cache is bounded and expires
-old results. Request bodies, generated text and credentials are never persisted by
-the learning controller. Without live GPU validation, local simulated-runtime tests
-prove admission behavior, not a hardware throughput gain or a universal optimum.
-
-Saved decisions carry a learning-policy version. Legacy decisions below four are
-revalidated from four (or the engine ceiling), so an old latency-first limit of one
-does not survive indefinitely. Newly measured serial limits and overload reductions
-remain valid across restarts. The status API exposes `concurrency.learning_version`.
+The UI's concurrency count reports outstanding gateway requests, rather than the
+number of executing sequences inside the engine. Routing still prefers less-loaded
+instances. Startup readiness, recovery supervision, cancellation and request tracking
+remain active independently of this scheduling policy.
