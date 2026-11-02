@@ -143,3 +143,26 @@ withdrawn from browsing and new installation. Persisted release records remain
 addressable for audit and existing installation snapshots are untouched. Withdrawal
 does not delete files, unload a runtime or rewrite release contents. The corrected
 active snapshot contains 1,073 format-checked templates and the two reviewed starters.
+
+## Delivery verification
+
+Deployed on Unraid as `spark-cluster:popular-recipes-bd5911e` (executable source
+`bd5911e`; image ID `sha256:ea4befae09048d07cac7c465797c9b3e47ddefad63a5e04533e7f988490ba77b`).
+The live authenticated API returned 1,075 active serving recipes: 1,073 generated
+plus two reviewed starters, alongside 160 references. Pagination returned distinct
+24-entry pages; search, embeddings sorting and image-reference filters passed.
+A known MLX mismatch returned zero active results. The browser confirmed corrected
+counts, workload controls, search results and pinned version selectors.
+
+Final validation: **482 backend tests**, **40 frontend tests**, Ruff and production
+frontend build passed. The wheel was inspected to contain exactly the 1,073-entry
+format-checked snapshot and the withdrawal manifest, without the superseded snapshot.
+Cold first bootstrap on Unraid took about seven seconds; subsequent search/filter
+requests in this check took about 0.16–0.36 seconds. These are observed timings,
+not a service-level guarantee.
+
+The existing `qwen3.8-flash-next` unified API still returned the expected synthetic
+answer after deployment. No new model weights were downloaded or deleted, and the
+Spark runtime was not restarted. The controller data has a consistent SQLite backup
+(`quick_check: ok`); stopped prior controller containers remain available for rollback.
+No Git push was performed.
