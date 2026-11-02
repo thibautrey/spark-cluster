@@ -15,6 +15,7 @@ from uuid import uuid4
 from starlette.requests import ClientDisconnect
 
 from .performance_history import DAY, PerformanceHistory
+from .token_usage_cache import TokenUsageCache
 
 logger = logging.getLogger(__name__)
 SCOPE_KEY = "spark.inference"
@@ -111,6 +112,7 @@ class InferenceTracker:
         self.recent = deque(recent, maxlen=512)
         self.pending = deque(maxlen=4096)
         self.runtime_pending = deque(maxlen=4096)
+        self.token_usage_cache = TokenUsageCache(self.journal)
         self.active = {}
         self.dropped = 0
         self.persistence_error = False
@@ -122,8 +124,10 @@ class InferenceTracker:
 
     async def start(self):
         self.task = asyncio.create_task(self._loop())
+        await self.token_usage_cache.start()
 
     async def stop(self):
+        await self.token_usage_cache.stop()
         if self.task:
             self.task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

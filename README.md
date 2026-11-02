@@ -564,3 +564,11 @@ for overall usage and model discovery in `entities`. Input, output and cached
 counts include known-observation counts; missing usage remains null. Responses
 include retention, coverage and persistence health. Boundary buckets are included
 whole, and requests bypassing the controller are outside this history.
+
+Token usage is cached in memory (128 entries maximum). A background worker
+precalculates 24-hour, 7-day and 30-day windows for overall usage and up to 24
+recent models, starting at application startup and refreshing every 60 seconds.
+Custom windows are computed once on a cache miss and subsequently refreshed by
+the worker. Concurrent misses share one computation. Responses expose cache age,
+generation time and refresh errors; failed refreshes retain the last good data.
+The cache is rebuilt after restart; persistence health remains live per MCP call.

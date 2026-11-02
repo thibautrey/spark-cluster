@@ -190,6 +190,11 @@ def test_mcp_token_usage_period_and_validation(tmp_path):
     app = mcp_client(tmp_path)
     calls = []
 
+    async def no_warmup():
+        pass
+
+    app.state.inference_tracker.token_usage_cache.start = no_warmup
+
     def summary(scope, entity, hours):
         calls.append((scope, entity, hours))
         return {"summary": {"input_tokens": 123, "output_tokens": None}, "history": []}

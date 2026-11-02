@@ -1,6 +1,5 @@
 """Stateless MCP Streamable HTTP tools for the Spark Cluster control plane."""
 
-import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -373,10 +372,7 @@ class SparkClusterMCP:
                 ):
                     raise ValueError("model_id must be a nonempty string up to 1024 characters")
                 tracker = self.inference_tracker
-                result = await asyncio.to_thread(
-                    tracker.journal.performance_summary,
-                    "model" if model else "overall", model or "all", hours,
-                )
+                result = await tracker.token_usage_cache.get(model, hours)
                 result["persistence"] = dict(
                     healthy=not tracker.persistence_error,
                     pending=len(tracker.pending) + len(tracker.runtime_pending),
