@@ -39,6 +39,7 @@ type Location = {
   node_ids: string[];
   node_names: string[];
   kind: string;
+  scanning?: boolean;
 };
 type Asset = {
   id: string;
@@ -155,6 +156,12 @@ export function StoragePanel() {
           <h3>
             {location.cluster_name} · {location.name}
           </h3>
+          {location.scanning && (
+            <p role="status" className="note">
+              Scanning stored files… sizes will appear when the disk scan
+              completes.
+            </p>
+          )}
           <p>
             {location.free_bytes === null
               ? "Docker free capacity is not reported"

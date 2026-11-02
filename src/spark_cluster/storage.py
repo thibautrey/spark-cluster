@@ -1,11 +1,14 @@
 """Physical model storage, scoped deletion, and recoverable disk admission errors."""
 
 import asyncio
+import concurrent.futures
+import copy
 import hashlib
 import json
 import os
 import shutil
 import stat
+import threading
 import time
 from pathlib import Path
 from urllib.parse import quote
@@ -99,6 +102,9 @@ class StorageService:
         self.cached = None
         self.cached_at = 0
         self.on_change = None
+        self.scan_future = None
+        self.scan_state = None
+        self.scan_at = 0
 
     def _scan(self):
         root = self.settings.model_cache_path
@@ -220,10 +226,92 @@ class StorageService:
                 models.add(job["recipe"]["model"]["repository"])
         return models, installs
 
+    def _quick_disk_state(self):
+        root = self.settings.model_cache_path.resolve()
+        root.mkdir(parents=True, exist_ok=True)
+        identity = "disk-" + token(str(root.stat().st_dev))[:16]
+        usage = shutil.disk_usage(root)
+        return {
+            "locations": [
+                {
+                    "id": identity,
+                    "name": "Model disk",
+                    "paths": [str(root)],
+                    "free_bytes": usage.free,
+                    "total_bytes": usage.total,
+                    "kind": "filesystem",
+                    "scope": "node",
+                }
+            ],
+            "assets": [],
+            "model_location_id": identity,
+        }
+
+    async def _file_inventory(self):
+        # A daemon thread cannot hold controller shutdown hostage to an unavailable NAS.
+        if self.scan_future is None or (
+            self.scan_future.done() and time.monotonic() - self.scan_at > 30
+        ):
+            future = concurrent.futures.Future()
+            self.scan_future = future
+
+            def scan():
+                try:
+                    result = self._scan()
+                    self.scan_at = time.monotonic()
+                    future.set_result(result)
+                except Exception as error:
+                    future.set_exception(error)
+
+            threading.Thread(target=scan, daemon=True, name="storage-inventory").start()
+        try:
+            state, _ = await asyncio.wait_for(
+                asyncio.shield(asyncio.wrap_future(self.scan_future)), timeout=0.25
+            )
+            self.scan_state = state
+            scanning = False
+        except TimeoutError:
+            state = self.scan_state or await asyncio.to_thread(self._quick_disk_state)
+            scanning = True
+        result = copy.deepcopy(state)
+        for location in result["locations"]:
+            usage = await asyncio.to_thread(shutil.disk_usage, location["paths"][0])
+            location.update(free_bytes=usage.free, total_bytes=usage.total, scanning=scanning)
+        result["scanning"] = scanning
+        return result
+
+    def _resolve_selection(self, selected):
+        paths = {}
+        for asset in selected:
+            if asset["kind"] not in {"weights", "huggingface-cache"}:
+                continue
+            path = Path(asset["path"])
+            root = (
+                self.settings.model_cache_path
+                if asset["kind"] == "weights"
+                else Path(os.getenv("HF_HOME", Path.home() / ".cache/huggingface")) / "hub"
+            ).resolve()
+            if (
+                path.is_symlink()
+                or path.resolve() == root
+                or not path.resolve().is_relative_to(root)
+            ):
+                raise ValueError("Unsafe storage path")
+            _, _, signature = measure(path)
+            revision = asset.get("revision")
+            if (path / ".spark-cluster.json").is_file():
+                revision = json.loads((path / ".spark-cluster.json").read_text()).get("revision")
+            info = path.stat()
+            identity = token(f"{path}:{info.st_ino}:{info.st_mtime_ns}:{revision}:{signature}")
+            if identity != asset["id"]:
+                raise ValueError("Stored files changed; refresh before deleting")
+            paths[identity] = (path, root)
+        return paths
+
     async def local(self, *, fresh=False):
         if not fresh and self.cached and time.monotonic() - self.cached_at < 10:
             return self.cached
-        value, _ = await asyncio.to_thread(self._scan)
+        value = await self._file_inventory()
         busy, installs = await self._busy()
         local = self.node.local_cluster()
         nodes = (
@@ -258,7 +346,6 @@ class StorageService:
 
     async def _docker_assets(self, value, installs):
         docker = self.library.docker
-        images = (await docker.request("GET", "/system/df")).json()
         # Recipe runtime images and cache volumes are catalogued, never unrelated Docker data.
         refs = {}
         for job in installs:
@@ -302,6 +389,7 @@ class StorageService:
                         asset["blockers"].append("Files may be used by an external GPU container")
         if not refs:
             return
+        images = (await docker.request("GET", "/system/df", timeout=10)).json()
         value["locations"].append(
             {
                 "id": "docker",
@@ -378,7 +466,10 @@ class StorageService:
         headers = signed_controller_headers(self.settings.model_admin_token, method, path, body)
         headers["content-type"] = "application/json"
         async with httpx.AsyncClient(
-            base_url=cluster.endpoint, transport=self.transport, timeout=120, trust_env=False
+            base_url=cluster.endpoint,
+            transport=self.transport,
+            timeout=20 if method == "GET" else 120,
+            trust_env=False,
         ) as client:
             response = await client.request(method, path, headers=headers, content=body)
             response.raise_for_status()
@@ -443,7 +534,7 @@ class StorageService:
                     raise ValueError(asset["name"] + ": " + "; ".join(asset["blockers"]))
                 selected.append(asset)
             # Validate the entire selection before touching any file; re-resolve server-owned paths.
-            _, paths = await asyncio.to_thread(self._scan)
+            paths = await asyncio.to_thread(self._resolve_selection, selected)
             for asset in selected:
                 if asset["kind"] in {"weights", "huggingface-cache"} and asset["id"] not in paths:
                     raise ValueError("Stored files changed; refresh before deleting")
@@ -494,6 +585,11 @@ class StorageService:
                 except (OSError, httpx.HTTPError, ValueError) as error:
                     errors.append(asset["name"] + ": " + self.node.models.safe_error(error))
             self.cached = None
+            self.scan_future = None
+            if self.scan_state:
+                self.scan_state["assets"] = [
+                    a for a in self.scan_state["assets"] if a["id"] not in deleted
+                ]
             self.node.demand.profiles[:] = [
                 p
                 for p in self.node.demand.profiles
@@ -590,7 +686,7 @@ class StorageService:
         await self.require(requirements, [request.repo_id])
 
     async def local_launch_check(self, model_id):
-        state, _ = await asyncio.to_thread(self._scan)
+        state = await asyncio.to_thread(self._quick_disk_state)
         disk = next(p for p in state["locations"] if p["id"] == state["model_location_id"])
         reserve = 64 * 1024**2
         if disk["free_bytes"] < reserve:
