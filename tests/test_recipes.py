@@ -559,6 +559,8 @@ async def test_docker29_manifest_identity_still_requires_exact_digest(env):
     settings, _, _ = env
     docker = DockerEngineClient(settings)
     settings.docker_runtime_enabled = True
+    settings.docker_socket_path = settings.database_path.parent / "docker.sock"
+    settings.docker_socket_path.touch()
     digest, config = "sha256:" + "a" * 64, "sha256:" + "b" * 64
     payload = {"Id": digest, "Os": "linux", "Architecture": "arm64",
         "Descriptor": {"digest": digest, "mediaType": "application/vnd.oci.image.manifest.v1+json"}}
