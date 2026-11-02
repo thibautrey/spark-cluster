@@ -54,8 +54,8 @@ let override: (
   method: string,
   body: Record<string, unknown>,
 ) => unknown;
-function mount(route: Route) {
-  history.replaceState(null, "", `#${route}`);
+function mount(route: Route, tab?: string) {
+  history.replaceState(null, "", `#${route}${tab ? `?tab=${tab}` : ""}`);
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: 1000, gcTime: 0 } },
   });
@@ -238,6 +238,7 @@ describe("React dashboard parity", () => {
           }
         : undefined;
     mount("models");
+    await user.click(screen.getByRole("tab", { name: "Recipes", exact: true }));
     const select = await screen.findByLabelText("Version for Qwen recipe");
     await user.selectOptions(select, "b".repeat(64));
     expect(
@@ -335,6 +336,7 @@ describe("React dashboard parity", () => {
       };
     };
     mount("models");
+    await user.click(screen.getByRole("tab", { name: "Recipes", exact: true }));
     await screen.findByRole("heading", { name: "Serving model 0" });
     expect(screen.getAllByText("Generated template · untested")).toHaveLength(
       24,
@@ -367,6 +369,63 @@ describe("React dashboard parity", () => {
     ).toBe(true);
     expect(
       screen.queryByRole("button", { name: "Install template & launch" }),
+    ).toBeNull();
+  });
+
+  it("separates the model library into lazy-loaded tabs with keyboard navigation", async () => {
+    const user = userEvent.setup();
+    mount("models");
+    await screen.findByRole("heading", { name: "Stored on disk" });
+    expect(
+      screen.queryByRole("heading", { name: "Recipes", exact: true }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Discover models" }),
+    ).toBeNull();
+    expect(requests.some((r) => r.path.startsWith("/api/v1/recipes"))).toBe(
+      false,
+    );
+    expect(
+      requests.some((r) => r.path.startsWith("/api/v1/catalog/models?")),
+    ).toBe(false);
+    const downloaded = screen.getByRole("tab", { name: "Downloaded models" });
+    downloaded.focus();
+    await user.keyboard("{ArrowRight}");
+    await screen.findByRole("heading", { name: "Recipes", exact: true });
+    expect(
+      screen
+        .getByRole("tab", { name: "Recipes", exact: true })
+        .getAttribute("aria-selected"),
+    ).toBe("true");
+    expect(
+      screen.queryByRole("heading", { name: "Stored on disk" }),
+    ).toBeNull();
+    expect(location.hash).toBe("#models?tab=recipes");
+    await user.keyboard("{End}");
+    await screen.findByRole("heading", { name: /Download history/ });
+    expect(
+      screen.queryByRole("heading", { name: "Recipes", exact: true }),
+    ).toBeNull();
+    await user.keyboard("{Home}");
+    await screen.findByRole("heading", { name: "Stored on disk" });
+  });
+
+  it("opens recipe deep links and follows tab navigation from browser history", async () => {
+    mount("models", "recipes");
+    await screen.findByRole("heading", { name: "Recipes", exact: true });
+    expect(
+      screen.getByRole("heading", { name: "Model library", level: 1 }),
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("heading", { name: "Stored on disk" }),
+    ).toBeNull();
+    await act(async () => {
+      history.replaceState(null, "", "#models?tab=models");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await screen.findByRole("heading", { name: "Discover models" });
+    expect(
+      screen.queryByRole("heading", { name: "Recipes", exact: true }),
     ).toBeNull();
   });
 
@@ -486,6 +545,7 @@ describe("React dashboard parity", () => {
   it("requires a fresh fit before downloading and sends the exact selected parameters", async () => {
     const user = userEvent.setup();
     mount("models");
+    await user.click(screen.getByRole("tab", { name: "Models", exact: true }));
     await user.click(
       await screen.findByRole("button", { name: /acme.*chat/i }),
     );
@@ -528,6 +588,7 @@ describe("React dashboard parity", () => {
             ? { ...catalog, files: [{ name: "model-Q2.gguf", size: 100 }] }
             : undefined;
     mount("models");
+    await user.click(screen.getByRole("tab", { name: "Models", exact: true }));
     await user.click(
       await screen.findByRole("button", { name: /acme.*chat/i }),
     );
@@ -558,6 +619,7 @@ describe("React dashboard parity", () => {
           })
         : undefined;
     mount("models");
+    await user.click(screen.getByRole("tab", { name: "Models", exact: true }));
     await user.click(
       await screen.findByRole("button", { name: /acme.*chat/i }),
     );
@@ -601,6 +663,9 @@ describe("React dashboard parity", () => {
           ]
         : undefined;
     mount("models");
+    await user.click(
+      screen.getByRole("tab", { name: "Downloads", exact: true }),
+    );
     await user.click(await screen.findByRole("button", { name: /^Cancel$/ }));
     expect(requests.some((r) => r.path.endsWith("/cancel"))).toBe(false);
     await screen.findByRole("heading", {
@@ -633,6 +698,7 @@ describe("React dashboard parity", () => {
           }
         : undefined;
     mount("models");
+    await user.click(screen.getByRole("tab", { name: "Models", exact: true }));
     const modelCard = await screen.findByRole("button", {
       name: /acme.*chat/i,
     });

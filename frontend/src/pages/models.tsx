@@ -470,7 +470,104 @@ const activeStatuses = new Set([
   "preparing-transfer",
   "distributing",
 ]);
+const modelTabs = [
+  ["downloaded", "Downloaded models"],
+  ["recipes", "Recipes"],
+  ["models", "Models"],
+  ["downloads", "Downloads"],
+] as const;
+type ModelTab = (typeof modelTabs)[number][0];
+function modelTabFromHash(): ModelTab {
+  const value = new URLSearchParams(location.hash.split("?")[1] || "").get(
+    "tab",
+  );
+  return modelTabs.find(([key]) => key === value)?.[0] || "downloaded";
+}
 export function Models() {
+  const [tab, setTab] = useState<ModelTab>(modelTabFromHash);
+  const buttons = useRef<Partial<Record<ModelTab, HTMLButtonElement | null>>>(
+    {},
+  );
+  useEffect(() => {
+    const sync = () => setTab(modelTabFromHash());
+    window.addEventListener("hashchange", sync);
+    window.addEventListener("popstate", sync);
+    return () => {
+      window.removeEventListener("hashchange", sync);
+      window.removeEventListener("popstate", sync);
+    };
+  }, []);
+  function select(value: ModelTab) {
+    if (value !== tab) history.pushState(null, "", `#models?tab=${value}`);
+    setTab(value);
+  }
+  return (
+    <>
+      <div
+        className="model-library-tabs"
+        role="tablist"
+        aria-label="Model library sections"
+      >
+        {modelTabs.map(([key, label], index) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            id={`model-tab-${key}`}
+            aria-selected={tab === key}
+            aria-controls={`model-panel-${key}`}
+            tabIndex={tab === key ? 0 : -1}
+            ref={(node) => {
+              buttons.current[key] = node;
+            }}
+            onClick={() => select(key)}
+            onKeyDown={(event) => {
+              const next =
+                event.key === "ArrowRight"
+                  ? (index + 1) % modelTabs.length
+                  : event.key === "ArrowLeft"
+                    ? (index + modelTabs.length - 1) % modelTabs.length
+                    : event.key === "Home"
+                      ? 0
+                      : event.key === "End"
+                        ? modelTabs.length - 1
+                        : null;
+              if (next === null) return;
+              event.preventDefault();
+              const target = modelTabs[next][0];
+              select(target);
+              buttons.current[target]?.focus();
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {modelTabs.map(([key]) => (
+        <div
+          key={key}
+          role="tabpanel"
+          id={`model-panel-${key}`}
+          aria-labelledby={`model-tab-${key}`}
+          hidden={tab !== key}
+          tabIndex={0}
+        >
+          {tab === key &&
+            (key === "downloaded" ? (
+              <StoragePanel />
+            ) : key === "recipes" ? (
+              <Recipes />
+            ) : key === "models" ? (
+              <ModelCatalog />
+            ) : (
+              <Downloads />
+            ))}
+        </div>
+      ))}
+    </>
+  );
+}
+function ModelCatalog() {
   const inspect = useModelDetails();
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -562,9 +659,6 @@ export function Models() {
     );
   return (
     <>
-      <Downloads />
-      <StoragePanel />
-      <Recipes />
       <Panel
         title="Discover models"
         actions={
@@ -833,7 +927,7 @@ function Downloads() {
       <Message error={downloads.error} />
       {!!active.length && (
         <Panel
-          title="Downloads"
+          title="Active downloads"
           actions={
             <Button variant="outline" onClick={() => setHfOpen(true)}>
               {hf.data?.configured
@@ -900,43 +994,38 @@ function Downloads() {
           })}
         </Panel>
       )}
-      <Panel>
-        <details>
-          <summary>Download history · {history.length}</summary>
-          {history.map((j) => (
-            <article className="list-row" key={j.id}>
-              <div>
-                <Button
-                  variant="link"
-                  onClick={() => inspect(j.repo_id, j.revision)}
-                >
-                  {j.repo_id}
-                </Button>
-                <small>
-                  {j.message} · attempt {j.attempts} · {j.destination} ·{" "}
-                  {j.target_cluster_name}
-                </small>
-              </div>
-              <Badge>{j.status}</Badge>
-              {j.status === "failed" && (
-                <Button
-                  variant="outline"
-                  disabled={action.busy}
-                  onClick={() =>
-                    void action.run(() =>
-                      post(`/api/v1/downloads/${j.id}/retry`),
-                    )
-                  }
-                >
-                  Retry
-                </Button>
-              )}
-            </article>
-          ))}
-          {!history.length && (
-            <Empty>Completed and failed transfers will appear here.</Empty>
-          )}
-        </details>
+      <Panel title={`Download history · ${history.length}`}>
+        {history.map((j) => (
+          <article className="list-row" key={j.id}>
+            <div>
+              <Button
+                variant="link"
+                onClick={() => inspect(j.repo_id, j.revision)}
+              >
+                {j.repo_id}
+              </Button>
+              <small>
+                {j.message} · attempt {j.attempts} · {j.destination} ·{" "}
+                {j.target_cluster_name}
+              </small>
+            </div>
+            <Badge>{j.status}</Badge>
+            {j.status === "failed" && (
+              <Button
+                variant="outline"
+                disabled={action.busy}
+                onClick={() =>
+                  void action.run(() => post(`/api/v1/downloads/${j.id}/retry`))
+                }
+              >
+                Retry
+              </Button>
+            )}
+          </article>
+        ))}
+        {!history.length && (
+          <Empty>Completed and failed transfers will appear here.</Empty>
+        )}
         <Message error={action.error}>{action.message}</Message>
       </Panel>
       <Sheet

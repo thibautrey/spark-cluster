@@ -22,10 +22,10 @@ export const routes = {
   memory: "Memory",
 };
 export type Route = keyof typeof routes;
-const routeFromHash = () =>
-  location.hash.slice(1) in routes
-    ? (location.hash.slice(1) as Route)
-    : "overview";
+const routeFromHash = () => {
+  const route = location.hash.slice(1).split("?")[0];
+  return route in routes ? (route as Route) : "overview";
+};
 export function useRoute() {
   const [route, setRoute] = useState<Route>(routeFromHash);
   useEffect(() => {
