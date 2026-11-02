@@ -6,6 +6,9 @@
 The **Recipes** tab in **Models** lists bundled, imported, and GitHub-discovered releases.
 The other tabs separate downloaded files, model discovery, and active transfers/history.
 Tabs have shareable links (for example `#models?tab=recipes`) and load their content on demand.
+Recipes use the same visual card grid as Models, with artwork, publisher identity and compact
+requirements. **Details** opens release pins, licenses, notes and full compatibility checks;
+version selection and installation remain available on each card.
 The [popular-model catalog](popular-recipes.md) adds over 1,000 explicitly generated,
 version-pinned serving templates, workload references, search and pagination. Pick a version
 and choose **Install & launch**. The controller validates hardware and the immutable ARM64
