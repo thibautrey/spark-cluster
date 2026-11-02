@@ -16,6 +16,8 @@ from .inference_tracking import SCOPE_KEY, RequestRecord
 from .pool_memory import command_value
 
 MAX_CONCURRENCY = 64  # Also bounded by the existing gateway request queue.
+INITIAL_CONCURRENCY = 4
+LEARNING_VERSION = 2
 
 
 class RuntimeCapacityError(RuntimeError):
@@ -108,7 +110,7 @@ class ConcurrencyController:
         self.identity = identity
         self.ceiling = max(1, min(MAX_CONCURRENCY, ceiling))
         self.clock = clock
-        self.limit = min(2, self.ceiling)
+        self.limit = min(INITIAL_CONCURRENCY, self.ceiling)
         self.condition = asyncio.Condition()
         self.queue = deque()
         self.running = self.serving = 0
@@ -117,6 +119,7 @@ class ConcurrencyController:
         self.best_score = None
         self.metric = None
         self.baseline_latency = None
+        self.latency_regressions = 0
         self.state = "learning"
         self.reason = "Learning from real requests"
         self.pressure = None
@@ -135,6 +138,14 @@ class ConcurrencyController:
                 if 0 <= time.time() - learned["updated_at"] < 7 * 86400:
                     self.limit = self.best_limit = max(1, min(self.ceiling, int(learned["limit"])))
                     self.reason = "Revalidating previously learned concurrency"
+                    if learned.get("version") != LEARNING_VERSION:
+                        # Old latency-first decisions can pin a batching engine to one
+                        # request indefinitely. Revalidate them with actual parallelism.
+                        self.limit = self.best_limit = max(
+                            self.limit, min(INITIAL_CONCURRENCY, self.ceiling)
+                        )
+                        self.reason = "Relearning concurrency with aggregate throughput priority"
+                        self.changed = True
             except (KeyError, TypeError, ValueError, OverflowError):
                 pass
 
@@ -161,8 +172,9 @@ class ConcurrencyController:
             return
         # Preserve the same FIFO and in-flight counters when a runtime changes.
         self.identity, self.ceiling = identity, ceiling
-        self.limit = self.best_limit = min(2, ceiling)
+        self.limit = self.best_limit = min(INITIAL_CONCURRENCY, ceiling)
         self.best_score = self.baseline_latency = self.metric = None
+        self.latency_regressions = 0
         self.state, self.reason = "learning", "Runtime or GPU allocation changed; relearning"
         self.cooldown = 0
         self._reset_window()
@@ -268,18 +280,30 @@ class ConcurrencyController:
         if self.metric != metric_key:
             self.metric = metric_key
             self.best_score = self.baseline_latency = None
-        if self.baseline_latency is not None and latency > max(
-            self.baseline_latency * 2, self.baseline_latency + 0.1
-        ):
-            self.backoff("First-token or service latency regressed")
-            return
-        self.baseline_latency = min(self.baseline_latency or latency, latency)
+            self.latency_regressions = 0
         improving = self.best_score is None or score > self.best_score * 1.03
+        latency_regressed = self.baseline_latency is not None and latency > max(
+            self.baseline_latency * 2, self.baseline_latency + 0.1
+        )
+        # Batching can slow each response while producing substantially more total
+        # tokens. Evaluate that gain before treating slower responses as overload.
+        if latency_regressed and not improving:
+            self.latency_regressions += 1
+            if self.latency_regressions >= 2:
+                self.backoff("Sustained latency regression without aggregate throughput gain")
+            else:
+                self.state = "learning"
+                self.reason = "Confirming latency regression without aggregate throughput gain"
+                self.changed = True
+                self._reset_window()
+            return
+        self.latency_regressions = 0
         efficient_lower = (
             self.limit < self.best_limit and score >= (self.best_score or score) * 0.97
         )
         if improving or efficient_lower:
             self.best_limit, self.best_score = self.limit, score
+            self.baseline_latency = latency
         elif self.limit != self.best_limit:
             self.limit = self.best_limit
             self.cooldown = 32
@@ -321,7 +345,8 @@ class ConcurrencyController:
         self.limit = max(1, math.floor(self.limit / 2))
         self.best_limit = self.limit
         self.best_score = self.baseline_latency = None
-        self.cooldown = 32
+        self.latency_regressions = 0
+        self.cooldown = 8
         self.state, self.reason = "backoff", reason
         self.changed = True
         self._reset_window()
@@ -339,6 +364,7 @@ class ConcurrencyController:
         runtime_limited = self.ceiling == 1 and self.state != "backoff"
         return {
             "mode": "automatic",
+            "learning_version": LEARNING_VERSION,
             "limit": self.limit,
             "running": self.running,
             "waiting": len(self.queue),
@@ -385,6 +411,7 @@ class AdaptiveConcurrency:
                         self.learned[previous.identity] = {
                             "limit": previous.best_limit,
                             "updated_at": time.time(),
+                            "version": LEARNING_VERSION,
                         }
                         self.learned = dict(list(self.learned.items())[-128:])
                 else:
@@ -410,6 +437,7 @@ class AdaptiveConcurrency:
                     self.learned[controller.identity] = {
                         "limit": controller.best_limit,
                         "updated_at": time.time(),
+                        "version": LEARNING_VERSION,
                     }
                     controller.changed = False
             self.learned = dict(list(self.learned.items())[-128:])

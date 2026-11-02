@@ -4,7 +4,8 @@ The pool automatically learns a request-admission limit for each running model
 instance. There is no tuning form or required configuration. It learns from actual
 responses; it does not generate prompts or send background benchmark requests.
 
-A new runtime begins with at most two admitted requests. Successful measurement
+A new runtime begins with four admitted requests, bounded by its engine ceiling.
+Successful measurement
 windows compare aggregate reported output tokens per busy wall-clock second. For
 embedding services they use reported input tokens; without reported token usage they
 use requests per second, explicitly labelled. Concurrent request durations are never
@@ -14,9 +15,16 @@ start a fresh comparison.
 
 Under sustained demand, the controller probes higher limits and retains increases
 that improve throughput by more than 3%. It prefers a lower limit within 3% of the
-same throughput, backs off for significant first-token/service-latency regressions,
-and periodically probes again after stable windows. Overload responses, failed
-streams and timeouts reduce admissions immediately; existing requests finish normally.
+same throughput, and periodically probes again after stable windows. Aggregate
+throughput takes priority over individual response speed: four requests generating
+12 output tokens/s each contribute 48 output tokens/s, not 12. A slower first token
+or service time does not undo a measured throughput gain. Latency only triggers a
+reduction after two consecutive comparable windows regress by more than twice the
+latency at the best throughput, without a greater-than-3% aggregate throughput gain.
+Workload/unit changes and healthy windows reset this confirmation.
+Overload responses, failed streams and timeouts still reduce admissions immediately;
+existing requests finish normally. After a reduction, eight successful observations
+allow a new parallelism probe instead of waiting for 32 observations.
 Client validation errors and cancellations do not count as capacity failures.
 
 Runtime KV-cache occupancy can block upward probes. Sustained high occupancy during
@@ -62,3 +70,8 @@ allocation; changing these resets learning. The saved cache is bounded and expir
 old results. Request bodies, generated text and credentials are never persisted by
 the learning controller. Without live GPU validation, local simulated-runtime tests
 prove admission behavior, not a hardware throughput gain or a universal optimum.
+
+Saved decisions carry a learning-policy version. Legacy decisions below four are
+revalidated from four (or the engine ceiling), so an old latency-first limit of one
+does not survive indefinitely. Newly measured serial limits and overload reductions
+remain valid across restarts. The status API exposes `concurrency.learning_version`.

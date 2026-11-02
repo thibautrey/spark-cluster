@@ -1,5 +1,8 @@
 import asyncio
+import contextlib
 import copy
+import json
+import time
 from types import SimpleNamespace
 
 import httpx
@@ -8,6 +11,7 @@ from test_model_pool import FakePool
 from test_pool_memory import gpu, manager_for, profile
 
 from spark_cluster.adaptive_concurrency import (
+    LEARNING_VERSION,
     AdaptiveConcurrency,
     ConcurrencyController,
     fingerprint,
@@ -72,17 +76,31 @@ def test_no_parallel_demand_does_not_claim_a_discovered_higher_limit():
     for _ in range(16):
         c.busy_seconds += 1
         c.observe(100, "output_tokens/s", 0.05, ("generation", 5, 7))
-    assert c.limit == 2
+    assert c.limit == 4
     assert c.state == "awaiting-demand"
 
 
-def test_latency_regression_and_overload_reduce_limit_without_killing_in_flight_requests():
+def test_slower_individual_responses_keep_parallelism_when_total_throughput_improves():
+    c = ConcurrencyController("batching", ceiling=8)
+    window(c, capacity=8, latency=1)
+    assert c.best_limit == 4 and c.limit == 5
+    # Five slower responses still deliver more total tokens than four fast ones.
+    window(c, capacity=8, latency=4)
+    assert c.best_limit == 5
+    assert c.best_score == pytest.approx(500)
+    assert c.state != "backoff"
+
+
+def test_latency_backoff_requires_two_windows_without_aggregate_throughput_gain():
     clock = Clock()
     c = ConcurrencyController("model", ceiling=16, clock=clock)
-    window(c, capacity=8)
-    assert c.limit == 3
-    window(c, capacity=8, latency=0.5)
-    assert c.limit == 1
+    window(c, capacity=4)
+    assert c.limit == 5
+    window(c, capacity=4, latency=0.5)
+    assert c.limit == 5
+    assert "Confirming" in c.reason
+    window(c, capacity=4, latency=0.5)
+    assert c.limit == 2
     assert c.state == "backoff"
     assert "latency" in c.reason
     c.limit, c.running = 8, 8
@@ -92,6 +110,26 @@ def test_latency_regression_and_overload_reduce_limit_without_killing_in_flight_
     assert c.running == 8  # Existing requests drain; they are not cancelled.
     c.backoff("another simultaneous failure")
     assert c.limit == 4
+
+
+def test_transient_latency_regression_does_not_accumulate_across_healthy_windows():
+    c = ConcurrencyController("model", ceiling=8)
+    window(c, capacity=4)
+    window(c, capacity=4, latency=0.5)
+    assert c.latency_regressions == 1
+    window(c, capacity=4)
+    assert c.latency_regressions == 0 and c.state != "backoff"
+
+
+def test_low_concurrency_retries_parallelism_after_eight_successes_following_overload():
+    c = ConcurrencyController("model", ceiling=8)
+    c.limit = 2
+    c.backoff("Runtime overload")
+    assert c.limit == 1
+    window(c, capacity=8)
+    assert c.limit == 1
+    window(c, capacity=8)
+    assert c.limit == 2
 
 
 def test_kv_cache_pressure_requires_sustained_active_pressure_and_missing_metrics_stay_unknown():
@@ -118,7 +156,7 @@ def test_workload_or_measurement_unit_changes_are_not_compared_as_a_throughput_g
     assert c.metric[0] == "output_tokens/s"
     window(c, capacity=1, metric="requests/s", workload=("embedding", 10, 0))
     assert c.metric == ("requests/s", ("embedding", 10, 0))
-    assert c.best_limit == 3
+    assert c.best_limit == 5
     assert c.best_score == pytest.approx(100)
 
 
@@ -126,14 +164,28 @@ def test_workload_or_measurement_unit_changes_are_not_compared_as_a_throughput_g
 async def test_overlapping_requests_use_busy_wall_time_for_aggregate_tokens_per_second():
     clock = Clock()
     c = ConcurrencyController("model", ceiling=4, clock=clock)
-    for _ in range(2):
+    for _ in range(4):
         async with c.slot(feedback()) as one, c.slot(feedback()) as two:
             one.begin()
             two.begin()
             clock.now += 1
-    assert c.best_score == pytest.approx(200)  # 400 tokens / 2 s, not / 4 request-seconds.
+    assert c.best_score == pytest.approx(200)  # 800 tokens / 4 s, not / 8 request-seconds.
     assert c.public()["throughput_unit"] == "output_tokens/s"
     assert c.running == c.serving == 0
+
+
+@pytest.mark.asyncio
+async def test_four_slow_generations_are_measured_as_48_total_tokens_per_second():
+    clock = Clock()
+    c = ConcurrencyController("qwen", ceiling=8, clock=clock)
+    for _ in range(2):
+        async with contextlib.AsyncExitStack() as stack:
+            for _ in range(4):
+                admission = await stack.enter_async_context(c.slot(feedback(output=120)))
+                admission.begin()
+            clock.now += 10  # Each request produces 120 tokens in 10 s: 12 tokens/s.
+    assert c.best_score == pytest.approx(48)  # Four requests, not a mean of 12 tokens/s.
+    assert c.running == 0
 
 
 @pytest.mark.asyncio
@@ -170,15 +222,15 @@ async def test_client_errors_and_cancellations_do_not_teach_capacity_failures():
     invalid.outcome = "failed"  # A normal JSON validation error includes an error object.
     async with c.slot(invalid) as admission:
         admission.begin()
-    assert c.samples == 0 and c.limit == 2
+    assert c.samples == 0 and c.limit == 4
     with pytest.raises(asyncio.CancelledError):
         async with c.slot(feedback()) as admission:
             admission.begin()
             raise asyncio.CancelledError
-    assert c.limit == 2 and c.running == 0
+    assert c.limit == 4 and c.running == 0
     async with c.slot(feedback(status=503)) as admission:
         admission.begin()
-    assert c.limit == 1 and c.state == "backoff"
+    assert c.limit == 2 and c.state == "backoff"
 
 
 @pytest.mark.asyncio
@@ -191,18 +243,37 @@ async def test_learning_persists_privately_and_resets_for_new_runtime_identity(t
     await manager.flush(force=True)
     assert path.stat().st_mode & 0o777 == 0o600
     assert "org/model" not in path.read_text()
+    assert json.loads(path.read_text())[key]["version"] == LEARNING_VERSION
     restored = AdaptiveConcurrency(path)
     assert restored.controller("model", key, 4).limit == 4
-    assert restored.controller("model", fingerprint({"context": 32768}), 16).limit == 2
+    assert restored.controller("model", fingerprint({"context": 32768}), 16).limit == 4
     path.write_text("not json")
-    assert AdaptiveConcurrency(path).controller("model", key).limit == 2
+    assert AdaptiveConcurrency(path).controller("model", key).limit == 4
+
+
+@pytest.mark.parametrize("ceiling, expected", [(1, 1), (2, 2), (8, 4)])
+def test_legacy_serial_learning_is_revalidated_within_engine_limits(ceiling, expected):
+    c = ConcurrencyController(
+        "legacy", ceiling=ceiling, learned={"limit": 1, "updated_at": time.time()}
+    )
+    assert c.limit == expected and c.changed
+    assert c.public()["learning_version"] == LEARNING_VERSION
+
+
+def test_current_policy_preserves_a_measured_serial_runtime_on_restart():
+    c = ConcurrencyController(
+        "serial",
+        ceiling=8,
+        learned={"limit": 1, "updated_at": time.time(), "version": LEARNING_VERSION},
+    )
+    assert c.limit == 1
 
 
 def test_reconfiguration_retains_in_flight_counters_and_bounds_new_admissions():
     c = ConcurrencyController("old", ceiling=16)
     c.limit, c.running = 8, 7
     c.reconfigure("new-image-and-gpu-budget", 4)
-    assert c.limit == 2 and c.running == 7
+    assert c.limit == 4 and c.running == 7
     assert c.best_score is None
 
 

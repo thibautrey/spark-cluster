@@ -200,7 +200,8 @@ The Kubernetes launcher keeps its existing exclusive model-residency behavior.
 
 [Automatic concurrency](docs/adaptive-concurrency.md) adjusts request admission per
 runtime from real traffic. It probes higher concurrency when aggregate throughput
-improves, backs off for latency regressions, overload and sustained KV-cache pressure,
+improves, prioritizes aggregate throughput over individual response speed, and backs
+off for sustained latency regressions without a throughput gain, overload and KV-cache pressure,
 and periodically retests as conditions change. No user settings or synthetic warm-up
 requests are needed. Docker and Kubernetes requests can overlap while active streams
 protect their model from unloads. Placement status shows the learned limit and queue.
