@@ -277,8 +277,13 @@ export function Recipes() {
       });
       await refresh();
     });
-  const isInstalledRelease = (digest: string) => jobs.some((job) =>
-    job.recipe_hash === digest && job.status === "completed" && job.artifacts_present);
+  const isInstalledRelease = (digest: string) =>
+    jobs.some(
+      (job) =>
+        job.recipe_hash === digest &&
+        job.status === "completed" &&
+        job.artifacts_present,
+    );
   const installLabel = (recipe: Recipe) =>
     recipe.validation === "generated-template"
       ? "Install template"
@@ -505,10 +510,19 @@ export function Recipes() {
                     }
                     onClick={() => install(entry)}
                   >
-                    {running ? "Installing…" : isInstalledRelease(entry.id) ? "Reinstall release" : installLabel(r)}
+                    {running
+                      ? "Installing…"
+                      : isInstalledRelease(entry.id)
+                        ? "Reinstall release"
+                        : installLabel(r)}
                   </Button>
                   {isInstalledRelease(entry.id) && (
-                    <Button disabled={action.busy || busy || !!entry.blockers.length} onClick={() => install(entry, true)}>Launch release</Button>
+                    <Button
+                      disabled={action.busy || busy || !!entry.blockers.length}
+                      onClick={() => install(entry, true)}
+                    >
+                      Launch release
+                    </Button>
                   )}
                 </footer>
               </div>
@@ -708,10 +722,17 @@ export function Recipes() {
               }
               onClick={() => install(detailEntry)}
             >
-              {isInstalledRelease(detailEntry.id) ? "Reinstall release" : installLabel(detailRecipe)}
+              {isInstalledRelease(detailEntry.id)
+                ? "Reinstall release"
+                : installLabel(detailRecipe)}
             </Button>
             {isInstalledRelease(detailEntry.id) && (
-              <Button disabled={action.busy || busy || !!detailEntry.blockers.length} onClick={() => install(detailEntry, true)}>Launch release</Button>
+              <Button
+                disabled={action.busy || busy || !!detailEntry.blockers.length}
+                onClick={() => install(detailEntry, true)}
+              >
+                Launch release
+              </Button>
             )}
           </>
         )}
@@ -754,7 +775,10 @@ export function Recipes() {
           <Meter value={job.progress} label="Recipe installation" />
           <Message error={job.error} />
           {job.status === "failed" &&
-            (job.storage || /ENOSPC|no space left|not enough (disk|storage)|disk.*(full|space|capacity)|insufficient (disk|storage)/i.test(job.error || "")) && (
+            (job.storage ||
+              /ENOSPC|no space left|not enough (disk|storage)|disk.*(full|space|capacity)|insufficient (disk|storage)/i.test(
+                job.error || "",
+              )) && (
               <Button
                 variant="outline"
                 disabled={action.busy || busy}
@@ -778,7 +802,10 @@ export function Recipes() {
             )}
 
           {job.status === "completed" && job.artifacts_present && (
-            <Button disabled={action.busy || busy} onClick={() => install({ id: job.recipe_hash } as Entry, true)}>
+            <Button
+              disabled={action.busy || busy}
+              onClick={() => install({ id: job.recipe_hash } as Entry, true)}
+            >
               Launch this release
             </Button>
           )}
@@ -791,7 +818,7 @@ export function Recipes() {
                   await post("/api/v1/recipes/install", {
                     recipe_hash: job.recipe_hash,
                     cluster_id: job.cluster_id,
-                        launch: job.launch ?? true,
+                    launch: job.launch ?? true,
                   });
                   await refresh();
                 })
@@ -806,7 +833,9 @@ export function Recipes() {
         {state.data?.discovery.checked_at
           ? `GitHub checked ${new Date(state.data.discovery.checked_at * 1000).toLocaleString()}. Discoveries are cached for one hour.`
           : "GitHub discovery runs in the background. Bundled recipes are available offline."}{" "}
-        Existing releases stay available for rollback. Installation prepares files on the selected node. Launch checks available memory before starting.
+        Existing releases stay available for rollback. Installation prepares
+        files on the selected node. Launch checks available memory before
+        starting.
       </p>
     </Panel>
   );

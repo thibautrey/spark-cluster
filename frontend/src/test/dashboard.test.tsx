@@ -233,14 +233,29 @@ describe("React dashboard parity", () => {
               release("1.10.0", "a".repeat(64)),
               release("1.9.0", "b".repeat(64)),
             ],
-            jobs: [{ id: "blocked", cluster_id: cluster.id, recipe_hash: "a".repeat(64), recipe: release("1.10.0", "a".repeat(64)).recipe, status: "failed", stage: "preflight", progress: 0, launch: true, error: "Recipe can remain installed on disk. Launch blocked: Waiting for GPU memory" }],
+            jobs: [
+              {
+                id: "blocked",
+                cluster_id: cluster.id,
+                recipe_hash: "a".repeat(64),
+                recipe: release("1.10.0", "a".repeat(64)).recipe,
+                status: "failed",
+                stage: "preflight",
+                progress: 0,
+                launch: true,
+                error:
+                  "Recipe can remain installed on disk. Launch blocked: Waiting for GPU memory",
+              },
+            ],
             discovery: { checked_at: null, errors: [] },
           }
         : undefined;
     mount("models");
     await user.click(screen.getByRole("tab", { name: "Recipes" }));
     const select = await screen.findByLabelText("Version for Qwen recipe");
-    expect(screen.queryByRole("button", { name: "Free disk space and retry" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Free disk space and retry" }),
+    ).toBeNull();
     await user.selectOptions(select, "b".repeat(64));
     expect(
       (screen.getByLabelText("Version for Qwen recipe") as HTMLSelectElement)
@@ -259,7 +274,11 @@ describe("React dashboard parity", () => {
     await waitFor(() =>
       expect(
         requests.find((r) => r.path === "/api/v1/recipes/install")?.body,
-      ).toEqual({ recipe_hash: "b".repeat(64), cluster_id: cluster.id, launch: false }),
+      ).toEqual({
+        recipe_hash: "b".repeat(64),
+        cluster_id: cluster.id,
+        launch: false,
+      }),
     );
   });
 
