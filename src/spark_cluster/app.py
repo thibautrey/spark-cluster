@@ -1569,13 +1569,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def pool_node_inference(request: Request, path: str, model_id: str):
         from urllib.parse import parse_qsl, urlencode
 
+        # Signed authentication reads and caches the body on this Request. The
+        # response's raw ASGI receive channel has already been consumed, so replay
+        # the verified bytes rather than waiting for a second request body.
+        try:
+            body = await read_inference_body(request)
+        except RequestTooLarge as error:
+            return inference_error(str(error), status=413)
+        delivered = False
+
+        async def replay_receive():
+            nonlocal delivered
+            if delivered:
+                return await request.receive()
+            delivered = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
         scope = dict(request.scope)
         scope["query_string"] = urlencode(
             [(k, v) for k, v in parse_qsl(request.url.query) if k != "model_id"]
         ).encode()
 
         async def handler(_, receive, send):
-            await pool_node.infer(model_id, path, scope, receive, send)
+            await pool_node.infer(model_id, path, scope, replay_receive, send)
 
         return PoolResponse(handler)
 

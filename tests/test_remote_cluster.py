@@ -1,3 +1,4 @@
+import asyncio
 import json
 import stat
 import time
@@ -5,6 +6,8 @@ import time
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from spark_cluster.app import create_app
 from spark_cluster.config import Settings
@@ -32,6 +35,43 @@ def controller_settings(tmp_path, **values):
         openai_api_base="http://127.0.0.1:9/v1",
         **values,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("signed", [True, False])
+async def test_node_inference_replays_authenticated_body(tmp_path, signed):
+    app = create_app(controller_settings(tmp_path))
+    body = b'{"model":"qwen3.8-flash-next","messages":[{"role":"user","content":"7+5"}]}'
+    target = "/api/v1/pool/node/inference/v1/chat/completions?model_id=org%2Fqwen&trace=1"
+    headers = (
+        signed_controller_headers("controller-secret", "POST", target, body)
+        if signed
+        else {"Authorization": "Bearer controller-secret"}
+    )
+
+    async def infer(model_id, path, scope, receive, send):
+        received = await read_body(scope, receive)
+        assert received == body
+        assert model_id == "org/qwen"
+        assert path == "v1/chat/completions"
+        assert scope["query_string"] == b"trace=1"
+        await JSONResponse({"answer": "12"})(scope, receive, send)
+
+    async def read_body(scope, receive):
+        return await Request(scope, receive).body()
+
+    app.state.pool_node.infer = infer
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app), base_url="http://bridge"
+    ) as client:
+        response = await asyncio.wait_for(
+            client.post(
+                target, content=body, headers={**headers, "Content-Type": "application/json"}
+            ),
+            timeout=2,
+        )
+    assert response.status_code == 200
+    assert response.json() == {"answer": "12"}
 
 
 @pytest.mark.parametrize(
