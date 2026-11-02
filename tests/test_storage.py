@@ -305,8 +305,7 @@ async def test_api_requires_token_for_deletion_and_preserves_storage_shortage_pa
         )
         assert response.status_code == 507
         assert response.json()["detail"]["storage"]["requirements"][0]["missing_bytes"] == 99
-        app.state.model_manager.enqueue = AsyncMock()
-        app.state.model_manager.enqueue.assert_not_awaited()
+        assert app.state.runtime.store.list_downloads() == []
 
 
 @pytest.mark.asyncio
@@ -346,3 +345,44 @@ async def test_partial_cleanup_reports_deleted_files_and_separate_failures(setup
         result = await setup.delete_local([a["id"] for a in assets])
     assert result["deleted"] == [assets[0]["id"]]
     assert result["errors"] and not first.exists()
+
+
+@pytest.mark.asyncio
+async def test_recipe_space_rejection_does_not_create_installation_job(setup):
+    from spark_cluster.recipe_install import RecipeInstaller
+    from spark_cluster.recipes import bundled_recipes
+
+    recipe = bundled_recipes()[0]
+    catalog = SimpleNamespace(
+        get=AsyncMock(return_value={"recipe": recipe.model_dump(mode="json"), "origin": {}}),
+        compatible=AsyncMock(return_value=[]),
+    )
+    download = AsyncMock()
+    installer = RecipeInstaller(
+        catalog,
+        setup.registry,
+        setup.store,
+        setup.library,
+        SimpleNamespace(),
+        download,
+        AsyncMock(),
+        str,
+    )
+    installer.preflight = AsyncMock(
+        side_effect=StorageShortage(
+            [
+                {
+                    "location_id": "node:disk",
+                    "required_bytes": 100,
+                    "available_bytes": 1,
+                    "missing_bytes": 99,
+                    "name": "Node",
+                }
+            ]
+        )
+    )
+    with pytest.raises(StorageShortage):
+        await installer.create(recipe.content_hash, "local-aaaaaaaaaaaa")
+    assert setup.store.runtime_objects("recipe-install") == []
+    assert not installer.tasks
+    download.assert_not_awaited()
