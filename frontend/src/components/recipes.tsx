@@ -277,7 +277,7 @@ export function Recipes() {
       });
       await refresh();
     });
-  const installed = (digest: string) => jobs.some((job) =>
+  const isInstalledRelease = (digest: string) => jobs.some((job) =>
     job.recipe_hash === digest && job.status === "completed" && job.artifacts_present);
   const installLabel = (recipe: Recipe) =>
     recipe.validation === "generated-template"
@@ -505,9 +505,9 @@ export function Recipes() {
                     }
                     onClick={() => install(entry)}
                   >
-                    {running ? "Installing…" : installed(entry.id) ? "Reinstall release" : installLabel(r)}
+                    {running ? "Installing…" : isInstalledRelease(entry.id) ? "Reinstall release" : installLabel(r)}
                   </Button>
-                  {installed(entry.id) && (
+                  {isInstalledRelease(entry.id) && (
                     <Button disabled={action.busy || busy || !!entry.blockers.length} onClick={() => install(entry, true)}>Launch release</Button>
                   )}
                 </footer>
@@ -708,9 +708,9 @@ export function Recipes() {
               }
               onClick={() => install(detailEntry)}
             >
-              {installed(detailEntry.id) ? "Reinstall release" : installLabel(detailRecipe)}
+              {isInstalledRelease(detailEntry.id) ? "Reinstall release" : installLabel(detailRecipe)}
             </Button>
-            {installed(detailEntry.id) && (
+            {isInstalledRelease(detailEntry.id) && (
               <Button disabled={action.busy || busy || !!detailEntry.blockers.length} onClick={() => install(detailEntry, true)}>Launch release</Button>
             )}
           </>
