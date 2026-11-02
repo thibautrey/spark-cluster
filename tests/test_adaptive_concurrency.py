@@ -426,7 +426,10 @@ async def test_successful_smaller_engine_ceiling_is_not_retried_on_every_request
 
 
 def test_pinned_imported_recipe_preserves_batching_during_recovery():
-    payload = {"Image": "vllm/vllm-openai:latest", "Cmd": ["--max-num-seqs", "8"],
-               "Labels": {"spark-cluster.preserve-launch-settings": "true"}}
+    payload = {
+        "Image": "vllm/vllm-openai:latest",
+        "Cmd": ["--max-num-seqs", "8"],
+        "Labels": {"spark-cluster.preserve-launch-settings": "true"},
+    }
     assert runtime_parallelism(payload, prepare=True) == 8
     assert payload["Cmd"] == ["--max-num-seqs", "8"]
