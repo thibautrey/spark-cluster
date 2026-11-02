@@ -49,7 +49,7 @@ def register_recipes(app, catalog, installer, registry, require_token, settings)
         try:
             return await installer.create(request.recipe_hash, request.cluster_id)
         except KeyError as error:
-            raise HTTPException(404, "Recipe release not found") from error
+            raise HTTPException(404, "Recipe release or compute pool not found") from error
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
 

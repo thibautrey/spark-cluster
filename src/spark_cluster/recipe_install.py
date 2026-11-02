@@ -110,18 +110,21 @@ class RecipeInstaller:
                 ),
                 target.id,
             )
-            await self.save(job, stage="download-model", progress=10, download_job_id=download.id)
-            deadline = time.monotonic() + 86400
-            while time.monotonic() < deadline:
-                result = await asyncio.to_thread(self.store.get_download, download.id)
-                if result and result.status == "completed":
-                    break
-                if result and result.status in {"failed", "cancelled", "deleted"}:
-                    raise ValueError(result.error or result.message)
-                await self.save(job, progress=10 + (result.progress if result else 0) * 0.45)
-                await asyncio.sleep(3)
-            else:
-                raise ValueError("Model download exceeded 24 hours")
+            if download is not None:
+                await self.save(
+                    job, stage="download-model", progress=10, download_job_id=download.id
+                )
+                deadline = time.monotonic() + 86400
+                while time.monotonic() < deadline:
+                    result = await asyncio.to_thread(self.store.get_download, download.id)
+                    if result and result.status == "completed":
+                        break
+                    if result and result.status in {"failed", "cancelled", "deleted"}:
+                        raise ValueError(result.error or result.message)
+                    await self.save(job, progress=10 + (result.progress if result else 0) * 0.45)
+                    await asyncio.sleep(3)
+                else:
+                    raise ValueError("Model download exceeded 24 hours")
             await self.save(job, stage="prepare-runtime", progress=60)
             if target.kind == "local-docker":
                 await self.library.ensure_local_image(metadata)
@@ -135,6 +138,17 @@ class RecipeInstaller:
                     RuntimeImportRequest(artifact_id=cached["id"], cluster_id=target.id)
                 )
                 await self._wait_library(queued["id"])
+            # A long download must not turn into an implicit replacement of a newer workload.
+            inventory = await self.pool.inventory(force=True)
+            current = next((c for c in inventory["clusters"] if c["id"] == target.id), None)
+            if not current or current.get("resident_models") or current.get("active_model"):
+                raise ValueError("Spark workload changed during installation; unload it and retry")
+            if any(
+                j.get("model_id") == recipe.model.repository
+                and j["status"] in {"queued", "waiting", "loading"}
+                for j in self.pool.jobs
+            ):
+                raise ValueError("Another launch for this model is running; wait and retry")
             await self.save(job, stage="launch", progress=80)
             queued = await self.pool.enqueue(
                 PoolLoadRequest(

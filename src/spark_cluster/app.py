@@ -473,10 +473,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not active or active.id != cluster_id:
             raise ValueError("Select the recipe target before starting its download")
         local = await model_manager.managed_model(request.repo_id)
-        if local and local.revision != request.revision:
-            raise ValueError(
-                "Remove the previous downloaded revision before changing model weights"
-            )
+        if local:
+            if local.revision != request.revision:
+                raise ValueError(
+                    "Remove the previous downloaded revision before changing model weights"
+                )
+            fit = await model_manager.fit_for_local(request)
+            if not fit.fits:
+                raise ModelDoesNotFit(fit)
+            return None  # Exact managed weights already exist; preserve/reuse them.
         fit_plan = await model_fit_plan(request)
         active = cluster_registry.active()
         if not active or active.id != cluster_id:
@@ -487,6 +492,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     async def verify_recipe(recipe, target):
+        profile = on_demand.profile_for(recipe.model.repository)
+        expected = recipe.launch_request().model_dump()
+        if not profile or profile.launch_settings != expected:
+            raise ValueError("Running model settings do not match the selected recipe release")
         # Exercise the selected pool's actual inference route, including dynamic private ports.
         headers = ({"Authorization": f"Bearer {settings.model_admin_token}"}
                    if settings.model_admin_token else {})
@@ -505,6 +514,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             choices = response.json().get("choices", [])
             if not choices or not choices[0].get("message", {}).get("content"):
                 raise ValueError("Recipe endpoint returned no generated text")
+        current = on_demand.profile_for(recipe.model.repository)
+        if not current or current.launch_settings != expected:
+            raise ValueError("Runtime changed during recipe verification")
 
     recipe_installer = RecipeInstaller(
         recipe_catalog, cluster_registry, runtime.store, runtime_library, model_pool,

@@ -335,3 +335,57 @@ async def test_recipe_api_auth_import_schema_and_incompatible_target(env):
         listing = (await client.get("/api/v1/recipes", headers=headers)).json()
         assert len(listing["recipes"]) >= 2
         assert all(entry["blockers"] for entry in listing["recipes"])
+
+
+@pytest.mark.asyncio
+async def test_recipe_upgrade_reuses_managed_weights_without_download(env):
+    _, store, catalog = env
+    await catalog.entries()
+    pool = SimpleNamespace(
+        inventory=AsyncMock(return_value={"clusters": [{"id": "spark", "available": True}]}),
+        jobs=[{"id": "load", "status": "ready"}],
+        enqueue=AsyncMock(return_value={"id": "load"}),
+    )
+    library = SimpleNamespace(
+        remote=SimpleNamespace(resolve_image=AsyncMock(return_value={})),
+        ensure_local_image=AsyncMock(),
+    )
+    installer = RecipeInstaller(
+        catalog,
+        SimpleNamespace(get=lambda _: target()),
+        store,
+        library,
+        pool,
+        AsyncMock(return_value=None),
+        AsyncMock(),
+        str,
+    )
+    job = await installer.create(starter().content_hash, "spark")
+    await installer.tasks[job["id"]]
+    assert (await installer.jobs())[0]["status"] == "completed"
+    assert (await installer.jobs())[0]["download_job_id"] is None
+    pool.enqueue.assert_awaited_once()
+
+
+def test_local_gpu_inventory_recognizes_gb10_for_recipe_admission(env):
+    from spark_cluster.cluster_registry import ClusterRegistry
+
+    settings, _, _ = env
+    registry = ClusterRegistry(settings)
+    spark = registry.add_local(
+        name="Spark",
+        host_address="127.0.0.1",
+        runtime_port=30000,
+        gpus=target().gpus,
+        model_storage_path=str(settings.model_cache_path),
+    )
+    assert spark.hardware == "dgx-spark"
+    assert ClusterRegistry(settings).get(spark.id).hardware == "dgx-spark"
+    generic = registry.add_local(
+        name="Generic",
+        host_address="127.0.0.1",
+        runtime_port=30000,
+        gpus=[GPUDevice(index=0, name="NVIDIA RTX 5090", uuid="GPU-other", memory_gib=32)],
+        model_storage_path=str(settings.model_cache_path),
+    )
+    assert generic.hardware == "nvidia-gpu"

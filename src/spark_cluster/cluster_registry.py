@@ -269,7 +269,11 @@ class ClusterRegistry:
             models = sorted({item.name for item in gpus})
             values = {
                 "name": name,
-                "hardware": "nvidia-gpu",
+                "hardware": (
+                    "dgx-spark"
+                    if all(re.search(r"\bGB10\b", gpu.name) for gpu in gpus)
+                    else "nvidia-gpu"
+                ),
                 "status": "ready",
                 "host_address": host_address,
                 "runtime_port": runtime_port,
