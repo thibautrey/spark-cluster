@@ -245,7 +245,16 @@ describe("React dashboard parity", () => {
       (screen.getByLabelText("Version for Qwen recipe") as HTMLSelectElement)
         .value,
     ).toBe("b".repeat(64));
-    await user.click(screen.getByRole("button", { name: "Install & launch" }));
+    await user.click(
+      screen.getByRole("button", { name: "Details for Qwen recipe" }),
+    );
+    const recipeDialog = screen.getByRole("dialog");
+    expect(
+      within(recipeDialog).getByText("Release hash: " + "b".repeat(64)),
+    ).toBeTruthy();
+    await user.click(
+      within(recipeDialog).getByRole("button", { name: "Install & launch" }),
+    );
     await waitFor(() =>
       expect(
         requests.find((r) => r.path === "/api/v1/recipes/install")?.body,
@@ -341,6 +350,18 @@ describe("React dashboard parity", () => {
     expect(screen.getAllByText("Generated template · untested")).toHaveLength(
       24,
     );
+    const recipeArticle = screen
+      .getByRole("heading", { name: "Serving model 0" })
+      .closest("article")!;
+    expect(recipeArticle.parentElement?.classList.contains("card-grid")).toBe(
+      true,
+    );
+    expect(
+      recipeArticle.querySelector(".catalog-cover img")?.getAttribute("src"),
+    ).toContain("social-thumbnails/models/models/model-0.png");
+    expect(
+      within(recipeArticle).queryByText("Recipe details and licenses"),
+    ).toBeNull();
     expect(
       screen.queryByRole("heading", { name: "Serving model 24" }),
     ).toBeNull();
@@ -359,7 +380,7 @@ describe("React dashboard parity", () => {
       screen.getByLabelText("Recipe workload"),
       "text-to-image",
     );
-    await screen.findByRole("heading", { name: "images/Flux" });
+    await screen.findByRole("heading", { name: "Flux" });
     expect(
       (
         screen.getByRole("button", {
