@@ -49,7 +49,11 @@ def profile_runtime(profile: InferenceProfile) -> dict:
         reason = "GGUF model detected; using its validated llama.cpp runtime."
     elif "vllm" in evidence:
         engine_id, name = "vllm", "vLLM"
-        if "embedding" in evidence or "bge" in evidence or "pooling" in evidence:
+        if (
+            "embedding" in (profile.model_id or profile.model).casefold()
+            or "bge" in (profile.model_id or profile.model).casefold()
+            or "pooling" in command
+        ):
             reason = "Embedding model detected; using vLLM pooling mode."
         elif "awq" in evidence:
             reason = "AWQ transformer detected; using the validated vLLM quantized runtime."

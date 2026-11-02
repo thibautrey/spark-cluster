@@ -312,6 +312,14 @@ def test_runtime_detection_classifies_specialized_model_profiles():
 
     cases = [
         (
+            {"Image": "vllm/vllm-openai:latest", "Cmd": [
+                "--rope-parameters", '{"original_max_position_embeddings": 262144}'
+            ]},
+            "nvidia/Qwen3.8-Flash-Next-NVFP4",
+            "vllm",
+            "Transformer model detected",
+        ),
+        (
             {
                 "Image": "vllm/vllm-openai:latest",
                 "Cmd": ["BAAI/bge-small-en-v1.5", "--runner", "pooling"],
