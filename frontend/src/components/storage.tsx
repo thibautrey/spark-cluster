@@ -99,6 +99,7 @@ function assetDescription(asset: Asset) {
 export function StoragePanel() {
   const storage = useApi<Inventory>("/api/v1/storage", 15000);
   const open = useStorageRecovery();
+  const action = useAction();
   const [node, setNode] = useState("all");
   const nodes = new Map<string, string>();
   for (const location of storage.data?.locations || []) {
@@ -118,7 +119,13 @@ export function StoragePanel() {
     <Panel
       title="Stored on disk"
       actions={
-        <Button variant="outline" onClick={() => storage.refetch()}>
+        <Button
+          variant="outline"
+          disabled={action.busy}
+          onClick={() =>
+            action.run(() => api("/api/v1/storage", { interactive: true }))
+          }
+        >
           Refresh storage
         </Button>
       }
@@ -139,7 +146,7 @@ export function StoragePanel() {
           </option>
         ))}
       </Select>
-      <Message error={storage.error} />
+      <Message error={storage.error || action.error} />
       {storage.data?.errors.map((error) => (
         <Message key={error}>{error}</Message>
       ))}

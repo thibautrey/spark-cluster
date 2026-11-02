@@ -307,3 +307,42 @@ async def test_api_requires_token_for_deletion_and_preserves_storage_shortage_pa
         assert response.json()["detail"]["storage"]["requirements"][0]["missing_bytes"] == 99
         app.state.model_manager.enqueue = AsyncMock()
         app.state.model_manager.enqueue.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_legacy_runtime_without_recipe_still_protects_its_weights(setup):
+    weights(setup)
+
+    def response(method, path, **kwargs):
+        if path == "/system/df":
+            return httpx.Response(200, json={"Images": [], "Volumes": []})
+        return httpx.Response(
+            200, json=[{"State": "running", "Labels": {"spark-cluster.model-id": "owner/model"}}]
+        )
+
+    setup.library.docker = SimpleNamespace(available=True, request=AsyncMock(side_effect=response))
+    state = await setup.local(fresh=True)
+    assert state["assets"][0]["blockers"]
+
+
+@pytest.mark.asyncio
+async def test_partial_cleanup_reports_deleted_files_and_separate_failures(setup):
+    first = weights(setup, "owner/first")
+    weights(setup, "owner/second")
+    state = await setup.local(fresh=True)
+    assets = sorted(state["assets"], key=lambda a: a["model_id"])
+    import shutil
+
+    actual = shutil.rmtree
+
+    def remove(path):
+        if path.name == "second":
+            raise PermissionError("second model could not be removed")
+        actual(path)
+
+    from unittest.mock import patch
+
+    with patch("spark_cluster.storage.shutil.rmtree", side_effect=remove):
+        result = await setup.delete_local([a["id"] for a in assets])
+    assert result["deleted"] == [assets[0]["id"]]
+    assert result["errors"] and not first.exists()

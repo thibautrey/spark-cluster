@@ -266,11 +266,42 @@ class StorageService:
             refs.setdefault(recipe["runtime"]["image"], []).append(
                 {"id": recipe["id"], "version": recipe["version"]}
             )
-        if not refs:
-            return
         containers = (
             await docker.request("GET", "/containers/json", params={"all": "true"})
         ).json()
+        protected_models = set()
+        for container in containers:
+            if container.get("State") == "running":
+                model = container.get("Labels", {}).get("spark-cluster.model-id")
+                if model:
+                    protected_models.add(model)
+        for asset in value["assets"]:
+            if asset["model_id"] in protected_models:
+                asset["blockers"].append("Model is mounted by a running container")
+        # Legacy/manual GPU runtimes may not have a recipe installation record.
+        for container in containers:
+            if container.get("State") != "running" or container.get("Labels", {}).get(
+                "spark-cluster.model-id"
+            ):
+                continue
+            details = (await docker.request("GET", f"/containers/{container['Id']}/json")).json()
+            host_config = details.get("HostConfig", {})
+            if not host_config.get("DeviceRequests") and host_config.get("Runtime") != "nvidia":
+                continue
+            for asset in value["assets"]:
+                path = Path(asset["path"])
+                host_path = (
+                    self.settings.docker_host_model_path
+                    / path.relative_to(self.settings.model_cache_path.resolve())
+                    if asset["kind"] == "weights"
+                    else path
+                )
+                for mount in details.get("Mounts", []):
+                    source = Path(mount.get("Source") or "/nonexistent-spark-source")
+                    if host_path.is_relative_to(source) or source.is_relative_to(host_path):
+                        asset["blockers"].append("Files may be used by an external GPU container")
+        if not refs:
+            return
         value["locations"].append(
             {
                 "id": "docker",
@@ -284,15 +315,6 @@ class StorageService:
                 "total_bytes": None,
             }
         )
-        protected_models = set()
-        for container in containers:
-            if container.get("State") == "running":
-                model = container.get("Labels", {}).get("spark-cluster.model-id")
-                if model:
-                    protected_models.add(model)
-        for asset in value["assets"]:
-            if asset["model_id"] in protected_models:
-                asset["blockers"].append("Model is mounted by a running container")
         for image in images.get("Images") or []:
             matching = [
                 ref
@@ -425,45 +447,52 @@ class StorageService:
             for asset in selected:
                 if asset["kind"] in {"weights", "huggingface-cache"} and asset["id"] not in paths:
                     raise ValueError("Stored files changed; refresh before deleting")
-            deleted = []
+            deleted, errors = [], []
             for asset in selected:
-                if asset["kind"] in {"weights", "huggingface-cache"}:
-                    path, root = paths[asset["id"]]
-                    if path.is_symlink() or not path.resolve().is_relative_to(root) or path == root:
-                        raise ValueError("Unsafe storage path")
-                    if path.is_dir():
-                        await asyncio.to_thread(shutil.rmtree, path)
-                    else:
-                        await asyncio.to_thread(path.unlink)
-                    for job in await asyncio.to_thread(self.store.list_downloads):
+                try:
+                    if asset["kind"] in {"weights", "huggingface-cache"}:
+                        path, root = paths[asset["id"]]
                         if (
-                            job.repo_id == asset["model_id"]
-                            and job.status == "completed"
-                            and Path(job.target_path) == path
+                            path.is_symlink()
+                            or not path.resolve().is_relative_to(root)
+                            or path == root
                         ):
-                            job.status, job.message = (
-                                "deleted",
-                                "Removed from this storage location",
-                            )
-                            await asyncio.to_thread(self.store.save_download, job)
-                    self.node.models._invalidate_inventory()
-                    with self.node.models._inventory_guard:
-                        self.node.models._local_fit_cache.pop(asset["model_id"], None)
-                elif asset["kind"] == "runtime-image":
-                    await self.library.docker.request(
-                        "DELETE",
-                        "/images/" + quote(asset["path"], safe=""),
-                        params={"force": "false"},
-                    )
-                elif asset["kind"] == "recipe-cache":
-                    await self.library.docker.request(
-                        "DELETE",
-                        "/volumes/" + quote(asset["path"], safe=""),
-                        params={"force": "false"},
-                    )
-                self.cached = None
-                await self._mark_recipe_files_removed(asset)
-                deleted.append(asset["id"])
+                            raise ValueError("Unsafe storage path")
+                        if path.is_dir():
+                            await asyncio.to_thread(shutil.rmtree, path)
+                        else:
+                            await asyncio.to_thread(path.unlink)
+                        for job in await asyncio.to_thread(self.store.list_downloads):
+                            if (
+                                job.repo_id == asset["model_id"]
+                                and job.status == "completed"
+                                and Path(job.target_path) == path
+                            ):
+                                job.status, job.message = (
+                                    "deleted",
+                                    "Removed from this storage location",
+                                )
+                                await asyncio.to_thread(self.store.save_download, job)
+                        self.node.models._invalidate_inventory()
+                        with self.node.models._inventory_guard:
+                            self.node.models._local_fit_cache.pop(asset["model_id"], None)
+                    elif asset["kind"] == "runtime-image":
+                        await self.library.docker.request(
+                            "DELETE",
+                            "/images/" + quote(asset["path"], safe=""),
+                            params={"force": "false"},
+                        )
+                    elif asset["kind"] == "recipe-cache":
+                        await self.library.docker.request(
+                            "DELETE",
+                            "/volumes/" + quote(asset["path"], safe=""),
+                            params={"force": "false"},
+                        )
+                    self.cached = None
+                    await self._mark_recipe_files_removed(asset)
+                    deleted.append(asset["id"])
+                except (OSError, httpx.HTTPError, ValueError) as error:
+                    errors.append(asset["name"] + ": " + self.node.models.safe_error(error))
             self.cached = None
             self.node.demand.profiles[:] = [
                 p
@@ -473,13 +502,14 @@ class StorageService:
                     and any(
                         a["kind"] == "weights" and a["model_id"] == (p.model_id or p.model)
                         for a in selected
+                        if a["id"] in deleted
                     )
                 )
             ]
             self.node.demand.persist()
             if self.on_change:
                 self.on_change()
-            return {"deleted": deleted}
+            return {"deleted": deleted, "errors": errors}
 
     async def _mark_recipe_files_removed(self, asset):
         for job in await asyncio.to_thread(self.store.runtime_objects, "recipe-install"):
@@ -511,6 +541,7 @@ class StorageService:
                     cluster = self.registry.get(cluster_id)
                     done = await self._remote(cluster, "POST", "/delete", {"asset_ids": values})
                 result["deleted"].extend(cluster_id + ":" + value for value in done["deleted"])
+                result["errors"].extend(done.get("errors", []))
             except (httpx.HTTPError, ValueError, KeyError) as error:
                 result["errors"].append(self.node.models.safe_error(error))
         return result
