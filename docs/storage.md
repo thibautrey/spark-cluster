@@ -1,6 +1,6 @@
 # Stored models and space recovery
 
-**Models → Stored on disk** shows actual files, independently of download history or whether
+**Models → Downloaded models → Stored on disk** shows actual files, independently of download history or whether
 a model is loaded in GPU memory. Filter by node to see its accessible model disks. Shared NFS
 model storage appears once and identifies the nodes that share it; deleting that copy affects
 all of those nodes. A controller copy and a remote cluster copy are separate deletion targets.
