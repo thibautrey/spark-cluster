@@ -250,6 +250,8 @@ def build_execution_plan(
     image_overrides: dict[str, str] | None = None,
     cluster_kind: str | None = None,
 ) -> RuntimeExecutionPlan:
+    if request.recipe_runtime:
+        image_overrides = {**(image_overrides or {}), request.engine_id: request.recipe_runtime.image}
     matrix = capabilities(settings, image_overrides)
     engine_id = request.engine_id
     warnings: list[str] = []
@@ -264,6 +266,8 @@ def build_execution_plan(
             engine_id = "llama-cpp"
             warnings.append("Managed GGUF files selected the llama.cpp adapter.")
     engine = matrix[engine_id]
+    if request.recipe_runtime and engine_id != "vllm":
+        raise ValueError("Recipe format v1 executes the vLLM adapter only")
     blockers = list(engine.blockers)
     if request.model_id == MODEL_ID:
         blockers.append(MANAGED_LAUNCH_BLOCKER)
@@ -398,6 +402,11 @@ def build_execution_plan(
     )
     if engine.supports_expert_parallel:
         exposed.append("expert parallelism")
+    if request.recipe_runtime:
+        environment.update(request.recipe_runtime.environment)
+        environment["SPARK_RECIPE_ARGUMENTS"] = json.dumps(request.recipe_runtime.arguments)
+        if request.recipe_revision:
+            environment["SPARK_RECIPE_REVISION"] = request.recipe_revision
     return RuntimeExecutionPlan(
         engine_id=engine_id,
         engine_name=engine.name,
@@ -502,6 +511,33 @@ def _command_preview(engine_id: str, request: ModelLaunchRequest) -> list[str]:
     return commands.get(engine_id, [])
 
 
+def recipe_launch_script() -> str:
+    # The source is static; only JSON argv and quoted environment values are input.
+    import shlex
+
+    source = """
+import os, json
+e = os.environ
+a = ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+for flag, key in [
+    ("--model", "MODEL_ID"), ("--served-model-name", "SERVED_MODEL_NAME"),
+    ("--port", "RUNTIME_PORT"), ("--tensor-parallel-size", "TENSOR_PARALLEL_SIZE"),
+    ("--pipeline-parallel-size", "PIPELINE_PARALLEL_SIZE"),
+    ("--max-model-len", "MAX_MODEL_LEN"), ("--max-num-seqs", "MAX_NUM_SEQS"),
+    ("--max-num-batched-tokens", "MAX_NUM_BATCHED_TOKENS"),
+    ("--gpu-memory-utilization", "GPU_MEMORY_UTILIZATION"),
+]:
+    a += [flag, e[key]]
+a += ["--host", "0.0.0.0", "--distributed-executor-backend", "ray"]
+if e.get("SPARK_RECIPE_REVISION"):
+    a += ["--revision", e["SPARK_RECIPE_REVISION"],
+          "--code-revision", e["SPARK_RECIPE_REVISION"]]
+a += json.loads(e["SPARK_RECIPE_ARGUMENTS"])
+os.execvp(a[0], a)
+"""
+    return "exec python3 -c " + shlex.quote(source)
+
+
 def container_launch_script(engine_id: str) -> str:
     """Return a static shell contract; launch values enter only through quoted env vars."""
 
@@ -520,6 +556,9 @@ def container_launch_script(engine_id: str) -> str:
             "enable_blending: true",
             "EOF",
             'ray start --head --node-ip-address="$NODE_IP" --port=6379 --dashboard-host=0.0.0.0',
+            'if test -n "${SPARK_RECIPE_ARGUMENTS:-}"; then',
+            recipe_launch_script(),
+            'fi',
             'set -- --model "$MODEL_ID" --served-model-name "$SERVED_MODEL_NAME" '
             "--distributed-executor-backend ray "
             '--tensor-parallel-size "$TENSOR_PARALLEL_SIZE" '

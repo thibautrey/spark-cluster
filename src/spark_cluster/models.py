@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 NodeStatus = Literal["healthy", "degraded", "offline"]
 NodeRole = Literal["head", "worker", "cache"]
@@ -304,7 +304,44 @@ LaunchStatus = Literal[
 ]
 
 
+class RecipeRuntime(BaseModel):
+    """Immutable container and literal argv; never evaluated by a host shell."""
+
+    model_config = ConfigDict(extra="forbid")
+    image: str = Field(pattern=r"^(docker\.io|ghcr\.io|nvcr\.io)/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$")
+    arguments: list[str] = Field(default_factory=list, max_length=150)
+    environment: dict[str, str] = Field(default_factory=dict, max_length=80)
+    unconfined: bool = False
+
+    @field_validator("arguments")
+    @classmethod
+    def literal_arguments(cls, values):
+        reserved = {"--model", "--model-path", "--host", "--port", "--served-model-name",
+                    "--tensor-parallel-size", "--pipeline-parallel-size", "--tp",
+                    "--distributed-executor-backend", "--revision", "--code-revision",
+                    "--max-model-len", "--max-num-seqs", "--gpu-memory-utilization",
+                    "--max-num-batched-tokens", "--nnodes", "--node-rank", "--master-addr"}
+        for value in values:
+            if len(value) > 4096 or "\x00" in value or value.split("=", 1)[0] in reserved:
+                raise ValueError("Invalid or controller-owned recipe argument")
+        return values
+
+    @field_validator("environment")
+    @classmethod
+    def runtime_environment(cls, values):
+        import re
+
+        for key, value in values.items():
+            if not re.fullmatch(r"(?:VLLM|B12X|CUTE|SAFETENSORS|NCCL|PYTORCH)_[A-Z0-9_]+", key):
+                raise ValueError("Recipe environment must use a supported runtime prefix")
+            if len(value) > 4096 or "\x00" in value:
+                raise ValueError("Invalid recipe environment value")
+        return values
+
+
 class ModelLaunchRequest(BaseModel):
+    recipe_runtime: RecipeRuntime | None = None
+    recipe_revision: str | None = Field(default=None, pattern=r"^[a-f0-9]{40}$")
     model_id: str = Field(min_length=1, max_length=200)
     served_model_name: str = Field(min_length=1, max_length=100)
     bits_per_weight: float = Field(default=4, gt=0, le=32)

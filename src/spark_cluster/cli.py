@@ -32,6 +32,11 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--bits", type=float, default=4)
     plan.add_argument("--context", type=int, default=524288)
     plan.add_argument("--concurrency", type=int, default=1)
+    recipes = commands.add_parser("recipe", help="Validate and publish Spark Cluster recipe files")
+    actions = recipes.add_subparsers(dest="recipe_command", required=True)
+    validate = actions.add_parser("validate", help="Validate a recipe and print its immutable hash")
+    validate.add_argument("files", nargs="+")
+    actions.add_parser("schema", help="Print the recipe v1 JSON Schema")
     return parser
 
 
@@ -60,7 +65,21 @@ async def run_agent(args: argparse.Namespace) -> None:
 
 def main() -> None:
     args = build_parser().parse_args()
-    if args.command == "serve":
+    if args.command == "recipe":
+        from pathlib import Path
+        from .recipes import SparkRecipe, read_recipe
+
+        if args.recipe_command == "schema":
+            print(json.dumps(SparkRecipe.model_json_schema(), indent=2))
+        else:
+            for filename in args.files:
+                try:
+                    recipe = read_recipe(Path(filename).read_bytes())
+                except (ValueError, OSError) as error:
+                    print(f"{filename}: {error}", file=sys.stderr)
+                    raise SystemExit(1) from error
+                print(f"{recipe.id}@{recipe.version} sha256:{recipe.content_hash}")
+    elif args.command == "serve":
         uvicorn.run("spark_cluster.app:app", host=args.host, port=args.port)
     elif args.command == "agent":
         asyncio.run(run_agent(args))

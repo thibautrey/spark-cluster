@@ -1,0 +1,64 @@
+{
+  "schema_version": "spark-cluster.recipe/v1",
+  "id": "thibautrey/deepseek-r1-distill-qwen32b-spark",
+  "version": "1.0.0",
+  "controller_min_version": "0.1.0",
+  "title": "DeepSeek R1 Distill Qwen 32B \u00b7 BF16 \u00b7 1 Spark",
+  "description": "DeepSeek R1 Distill Qwen 32B \u00b7 BF16 \u00b7 1 Spark starter for one 128 GB DGX Spark. Exact weights and ARM64 runtime are pinned; hardware verification remains required.",
+  "license": "Apache-2.0",
+  "source": {
+    "repository": "deepseek-ai/DeepSeek-R1",
+    "commit": "0cf78561f1d51c84a21b2190626b21116d5c68bb",
+    "path": "README.md",
+    "license": "MIT"
+  },
+  "model": {
+    "repository": "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
+    "revision": "711ad2ea6aa40cfca18895e8aca02ab92df1a746",
+    "license": "mit"
+  },
+  "requirements": {
+    "hardware": "dgx-spark",
+    "platform": "linux/arm64",
+    "nodes": 1,
+    "memory_gib_per_node": 96,
+    "disk_gib_per_node": 150,
+    "topology": "single"
+  },
+  "runtime": {
+    "image": "docker.io/vllm/vllm-openai@sha256:6755b858d1dd7098b48c4239c0c13533a9ebf2887ce4e3ae8b73dc6ab546c6e0",
+    "arguments": [
+      "--dtype",
+      "bfloat16",
+      "--enable-prefix-caching",
+      "--reasoning-parser",
+      "deepseek_r1"
+    ],
+    "environment": {},
+    "unconfined": false
+  },
+  "launch": {
+    "model_id": "deepseek-ai/DeepSeek-R1-Distill-Qwen-32B",
+    "served_model_name": "deepseek-r1-distill-qwen32b-spark",
+    "engine_id": "vllm",
+    "bits_per_weight": 16,
+    "context_length": 16384,
+    "max_num_seqs": 1,
+    "max_num_batched_tokens": 4096,
+    "tensor_parallel": 1,
+    "pipeline_parallel": 1,
+    "gpu_memory_utilization": 0.8,
+    "memory_budget_mode": "fixed",
+    "kv_cache_dtype": "auto",
+    "cache_cpu_gib": 0,
+    "cache_disk_gib": 0,
+    "speculative_method": "off"
+  },
+  "validation": "source-reviewed",
+  "notes": [
+    "This is DeepSeek-R1-Distill-Qwen-32B, not full DeepSeek-R1 or DeepSeek-V4.",
+    "Upstream DeepSeek documents vLLM serving of distilled models; the selected ARM64 vLLM v0.11.0 digest was resolved on 2026-11-02.",
+    "Source-reviewed starter; the exact image/checkpoint/hardware combination still requires a real Spark run.",
+    "See docs/recipes.md for separately sourced multi-Spark DeepSeek V4 recipes and unsupported bootstrap requirements."
+  ]
+}

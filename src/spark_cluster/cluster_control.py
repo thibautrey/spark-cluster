@@ -471,6 +471,8 @@ class RuntimeDeploymentService:
         local = await self.models.managed_model(request.model_id)
         if local is None or local.path is None:
             raise ModelNotManaged(request.model_id)
+        if request.recipe_revision and local.revision != request.recipe_revision:
+            raise ValueError("Installed model revision differs from the recipe lock")
         fit = await self.models.fit_for_local(
             ModelFitRequest(
                 repo_id=request.model_id,
@@ -611,6 +613,8 @@ class RuntimeDeploymentService:
             cpu_offload_gib=job.request.cpu_offload_gib,
             gpu_layers=job.request.gpu_layers,
             cuda_graphs=job.request.cuda_graphs,
+            recipe_runtime=job.request.recipe_runtime,
+            recipe_revision=job.request.recipe_revision,
         )
         await self._update(
             job, "waiting-ready", 75, f"Waiting for {plan.engine_name} health endpoint"

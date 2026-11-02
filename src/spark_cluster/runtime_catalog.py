@@ -9,7 +9,7 @@ import hashlib
 import json
 import re
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from urllib.parse import parse_qs, urlparse
 
 import httpx
@@ -455,9 +455,25 @@ class RuntimeRegistry:
                     }
                 raise RegistryError("GitHub releases are unavailable or rate limited") from error
 
-    async def resolve(self, runtime_id: str, version: str, platform: str) -> dict:
+    async def resolve_image(self, runtime_id: str, image: str, platform: str) -> dict:
+        if not re.fullmatch(
+            r"(?:docker\.io|ghcr\.io|nvcr\.io)/[a-z0-9._/-]+@sha256:[a-f0-9]{64}", image
+        ):
+            raise RegistryError("Recipes require an immutable public-registry image")
+        repository, digest = image.split("@")
+        return await self.resolve(runtime_id, digest, platform, repository=repository)
+
+    async def resolve(
+        self, runtime_id: str, version: str, platform: str, *, repository: str | None = None
+    ) -> dict:
         runtime = runtime_entry(runtime_id)
-        if not re.fullmatch(TAG, version):
+        if repository:
+            if not re.fullmatch(
+                r"(?:docker\.io|ghcr\.io|nvcr\.io)/[a-z0-9._/-]+", repository
+            ):
+                raise RegistryError("Unsupported recipe registry")
+            runtime = replace(runtime, repository=repository)
+        if not re.fullmatch(DIGEST if repository else TAG, version):
             raise RegistryError("Invalid runtime version")
         if platform not in runtime.platforms:
             raise RegistryError(f"{runtime.name} is not distributed for {platform}")
@@ -511,7 +527,8 @@ class RuntimeRegistry:
                     "platform": platform,
                     "repository": runtime.repository,
                     "digest": digest,
-                    "image": f"{runtime.repository}:{version}",
+                    "image": (f"{runtime.repository}@{digest}" if repository
+                              else f"{runtime.repository}:{version}"),
                     "config_digest": config_digest,
                     "size_bytes": sum(item.get("size", 0) for item in body.get("layers", [])),
                 }

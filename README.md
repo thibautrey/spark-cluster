@@ -36,6 +36,20 @@ The exact LibertAI EXL3 2.9 and 3.5 bpw revisions also expose
 including measured memory envelopes, shared position-pool limits, per-rank NVMe preparation,
 engine and kernel-kit pins, external benchmarks and managed-launch blockers.
 
+## Recipes: install, create, and publish
+
+**[Create and publish a recipe — authoring skill](skills/spark-cluster-recipes/SKILL.md)**
+
+Models → **Recipes** offers versioned files with pinned weights and runtime images, cached
+GitHub discovery, file import, and **Install & launch** progress. Start with the bundled
+[Qwen3.8 Flash-Next](recipes/qwen38-flash-next.spark-recipe.json) and
+[DeepSeek R1 Distill Qwen 32B](recipes/deepseek-r1-distill-qwen32b.spark-recipe.json) recipes.
+The first executor supports vLLM on one directly connected Docker Spark; specialized multi-node
+recipes require a compatible adapter. Bundled recipes are source-reviewed and still need hardware
+verification. Read the **[format, versioning, discovery, and publishing guide](docs/recipes.md)**
+and [JSON Schema](recipes/schema-v1.json). Publish a public JSON index with the GitHub topic
+`spark-cluster-recipes` to make your recipes discoverable without central registration.
+
 ## Why Spark Cluster
 
 | Capability | What it changes for the operator |

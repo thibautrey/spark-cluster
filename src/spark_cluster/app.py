@@ -138,6 +138,9 @@ from .runtime_library import RuntimeHostRequest, RuntimeLibrary
 from .runtime_library_api import register_runtime_library
 from .runtime_prerequisites import RuntimePrerequisiteService
 from .runtime_workflows import RuntimeWorkflowService
+from .recipes import RecipeCatalog
+from .recipe_install import RecipeInstaller
+from .recipe_api import register_recipes
 from .setup_models import (
     BootstrapConfirmRequest,
     BootstrapCreateRequest,
@@ -462,6 +465,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             target_cluster_url=target.endpoint if target else None,
         )
 
+    recipe_catalog = RecipeCatalog(settings, runtime.store)
+
+    async def recipe_download(request, cluster_id):
+        target = cluster_registry.get(cluster_id)
+        active = cluster_registry.active()
+        if not active or active.id != cluster_id:
+            raise ValueError("Select the recipe target before starting its download")
+        local = await model_manager.managed_model(request.repo_id)
+        if local and local.revision != request.revision:
+            raise ValueError("Remove the previous downloaded revision before changing model weights")
+        fit_plan = await model_fit_plan(request)
+        active = cluster_registry.active()
+        if not active or active.id != cluster_id:
+            raise ValueError("Pool selection changed during preflight; retry on the intended Spark")
+        return await model_manager.enqueue(
+            request, destination="local", fit_plan=fit_plan,
+            target_cluster_id=target.id, target_cluster_name=target.name,
+        )
+
+    async def verify_recipe(recipe, target):
+        # Exercise the selected pool's actual inference route, including dynamic private ports.
+        headers = ({"Authorization": f"Bearer {settings.model_admin_token}"}
+                   if settings.model_admin_token else {})
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://recipe-check", timeout=120
+        ) as client:
+            response = await client.post(
+                "/api/v1/pool/node/inference/v1/chat/completions",
+                params={"model_id": recipe.model.repository}, headers=headers,
+                json={"model": recipe.launch.served_model_name,
+                      "messages": [{"role": "user", "content": "Reply with OK."}],
+                      "max_tokens": 128, "temperature": 0,
+                      "chat_template_kwargs": {"thinking": False}},
+            )
+            response.raise_for_status()
+            choices = response.json().get("choices", [])
+            if not choices or not choices[0].get("message", {}).get("content"):
+                raise ValueError("Recipe endpoint returned no generated text")
+
+    recipe_installer = RecipeInstaller(
+        recipe_catalog, cluster_registry, runtime.store, runtime_library, model_pool,
+        recipe_download, verify_recipe, model_manager.safe_error,
+    )
+
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         local_monitor: asyncio.Task | None = None
@@ -542,9 +589,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await on_demand.start()
         await pool_node.start()
         await prefix_warmup.start()
+        await recipe_installer.start()
+        recipe_catalog.start()
         try:
             yield
         finally:
+            await recipe_catalog.stop()
+            await recipe_installer.stop()
             await prefix_warmup.stop()
             await model_pool.close()
             await pool_node.close()
@@ -577,6 +628,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.runtime_prerequisites = runtime_prerequisites
     app.state.runtime_library = runtime_library
     app.state.runtime_workflows = runtime_workflows
+    app.state.recipe_catalog = recipe_catalog
+    app.state.recipe_installer = recipe_installer
     app.state.telemetry_service = telemetry_service
     app.state.inference_tracker = inference_tracker
     app.state.optimization_lab = optimization_lab
@@ -639,6 +692,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         raise HTTPException(status_code=401, detail="Invalid model administration token")
 
     register_runtime_library(app, runtime_library, require_model_token, settings)
+    register_recipes(app, recipe_catalog, recipe_installer, cluster_registry,
+                     require_model_token, settings)
 
     @app.exception_handler(SetupFailure)
     async def setup_failure(_, error: SetupFailure):

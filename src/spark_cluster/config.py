@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     title: str = "Spark Cluster"
     mode: str = "demo"
     database_path: Path = Path("./spark-cluster.db")
+    recipes_github_token: str | None = None
     catalog_cache_path: Path | None = None
     sample_interval_seconds: float = 2.0
     history_retention_hours: int = 24

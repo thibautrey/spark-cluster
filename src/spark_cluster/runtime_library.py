@@ -367,6 +367,15 @@ class RuntimeLibrary:
             raise ValueError("Install skopeo on the controller (included in the Spark image)")
         return await self._enqueue("download", request.model_dump(), self._download)
 
+    async def download_resolved(self, metadata: dict):
+        """Archive a recipe image using its already verified immutable manifest."""
+        if not shutil.which("skopeo"):
+            raise ValueError("Install skopeo on the controller (included in the Spark image)")
+        return await self._enqueue(
+            "download", {"image": metadata["image"], "platform": metadata["platform"]},
+            self._download, resolved_metadata=metadata,
+        )
+
     async def ensure_local_image(self, metadata: dict) -> dict:
         cluster_platform = metadata.get("platform")
         if not cluster_platform or not cluster_platform.startswith("linux/"):
@@ -383,7 +392,7 @@ class RuntimeLibrary:
             job["message"] = "Resolving immutable package and target platform"
             await self._save("job", job)
             request = job["request"]
-            metadata = await self.remote.resolve(**request)
+            metadata = job.get("resolved_metadata") or await self.remote.resolve(**request)
             artifacts = await asyncio.to_thread(self.store.runtime_objects, "artifact")
             for artifact in artifacts:
                 if all(

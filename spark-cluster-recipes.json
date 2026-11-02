@@ -1,0 +1,7 @@
+{
+  "schema_version": "spark-cluster.recipe-index/v1",
+  "recipes": [
+    "recipes/deepseek-r1-distill-qwen32b.spark-recipe.json",
+    "recipes/qwen38-flash-next.spark-recipe.json"
+  ]
+}

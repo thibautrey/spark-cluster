@@ -35,6 +35,7 @@ import {
   Badge,
   Facts,
 } from "@/components/common";
+import { Recipes } from "@/components/recipes";
 import { PerformanceButton } from "@/components/performance";
 const DetailsContext = createContext<(id: string, revision?: string) => void>(
   () => {},
@@ -539,6 +540,7 @@ export function Models() {
   return (
     <>
       <Downloads />
+      <Recipes />
       <Inventory />
       <Panel
         title="Discover models"

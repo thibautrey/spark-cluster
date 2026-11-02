@@ -672,6 +672,8 @@ class PoolNode:
         )
         if not fit.fits:
             raise ValueError("This model and its saved settings do not fit this cluster")
+        if launch.recipe_revision and local.revision != launch.recipe_revision:
+            raise ValueError("Installed model revision differs from the recipe lock")
         plan = self.deployments.execution_plan(launch, local.path, self.local_cluster(), settings)
         if not plan.executable or not plan.image:
             raise ValueError("This cluster has no executable engine for these settings")
@@ -715,6 +717,8 @@ class PoolNode:
                 cpu_offload_gib=launch.cpu_offload_gib,
                 gpu_layers=launch.gpu_layers,
                 cuda_graphs=launch.cuda_graphs,
+                recipe_runtime=launch.recipe_runtime,
+                recipe_revision=launch.recipe_revision,
             )
             payload["Labels"]["spark-cluster.model-id"] = request.model_id
             # Bind only loopback; inference is routed through the authenticated pool gateway.

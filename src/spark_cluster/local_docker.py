@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import shutil
 from datetime import UTC, datetime
@@ -443,6 +444,8 @@ class DockerEngineClient:
         cpu_offload_gib: float = 0,
         gpu_layers: int | None = None,
         cuda_graphs: bool = True,
+        recipe_runtime=None,
+        recipe_revision: str | None = None,
     ) -> dict:
         if tensor_parallel * pipeline_parallel > cluster.gpu_count:
             raise ValueError("Requested parallelism exceeds GPUs assigned to this cluster")
@@ -597,6 +600,34 @@ class DockerEngineClient:
                 "spark-cluster.engine": engine_id,
             },
         }
+        if recipe_runtime:
+            if engine_id != "vllm":
+                raise ValueError("Recipe format v1 requires vLLM")
+            payload["Image"] = recipe_runtime.image
+            payload["Cmd"] = [
+                runtime_model, "--served-model-name", served_model_name,
+                "--host", "0.0.0.0", "--port", str(cluster.runtime_port),
+                "--tensor-parallel-size", str(tensor_parallel),
+                "--pipeline-parallel-size", str(pipeline_parallel),
+                "--max-model-len", str(context_length), "--max-num-seqs", str(max_num_seqs),
+                "--max-num-batched-tokens", str(max_num_batched_tokens),
+                "--gpu-memory-utilization", str(gpu_memory_utilization),
+                *(["--revision", recipe_revision, "--code-revision", recipe_revision]
+                  if recipe_revision else []),
+                *recipe_runtime.arguments,
+            ]
+            payload["Env"].extend(f"{k}={v}" for k, v in recipe_runtime.environment.items())
+            # Isolated persistent compilation/PLE cache; model files remain read-only.
+            volume = "spark-recipe-" + hashlib.sha256(recipe_runtime.image.encode()).hexdigest()[:16]
+            payload["HostConfig"]["Binds"].append(f"{volume}:/root/.cache")
+            payload["HostConfig"]["Ulimits"] = [
+                {"Name": "memlock", "Soft": -1, "Hard": -1},
+                {"Name": "stack", "Soft": 67108864, "Hard": 67108864},
+            ]
+            if recipe_runtime.unconfined:
+                payload["HostConfig"]["SecurityOpt"] = [
+                    "seccomp=unconfined", "apparmor=unconfined"
+                ]
         return payload
 
     async def launch(
@@ -620,6 +651,8 @@ class DockerEngineClient:
         cpu_offload_gib: float = 0,
         gpu_layers: int | None = None,
         cuda_graphs: bool = True,
+        recipe_runtime=None,
+        recipe_revision: str | None = None,
     ) -> str:
         if tensor_parallel * pipeline_parallel > cluster.gpu_count:
             raise ValueError("Requested parallelism exceeds GPUs assigned to this cluster")
@@ -649,6 +682,8 @@ class DockerEngineClient:
             cpu_offload_gib=cpu_offload_gib,
             gpu_layers=gpu_layers,
             cuda_graphs=cuda_graphs,
+            recipe_runtime=recipe_runtime,
+            recipe_revision=recipe_revision,
         )
         payload["Labels"]["spark-cluster.model-id"] = model_id
         name = self.container_name(cluster.id)
