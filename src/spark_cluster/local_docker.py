@@ -337,7 +337,18 @@ class DockerEngineClient:
         )
         if f"{value.get('Os')}/{architecture}" != platform:
             raise ValueError("Docker pulled an image for a different architecture")
-        if value.get("Id") != config_digest:
+        # Docker 29 containerd stores expose the manifest digest as Id; classic
+        # stores expose the config digest. Both must match the resolved immutable image.
+        descriptor = value.get("Descriptor") or {}
+        manifest_identity = (
+            value.get("Id") == digest
+            and descriptor.get("digest") == digest
+            and descriptor.get("mediaType") in {
+                "application/vnd.docker.distribution.manifest.v2+json",
+                "application/vnd.oci.image.manifest.v1+json",
+            }
+        )
+        if value.get("Id") != config_digest and not manifest_identity:
             raise ValueError("Docker image configuration does not match the resolved digest")
         return value
 

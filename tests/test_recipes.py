@@ -552,3 +552,18 @@ async def test_remote_install_reconnects_saved_node_job_without_local_transfer(e
     assert job["inference_verified"] is False
     assert bridge.install.await_count == 2
     assert bridge.install.call_args.args[1]["id"] == job["id"]
+
+
+@pytest.mark.asyncio
+async def test_docker29_manifest_identity_still_requires_exact_digest(env):
+    settings, _, _ = env
+    docker = DockerEngineClient(settings)
+    settings.docker_runtime_enabled = True
+    digest, config = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+    payload = {"Id": digest, "Os": "linux", "Architecture": "arm64",
+        "Descriptor": {"digest": digest, "mediaType": "application/vnd.oci.image.manifest.v1+json"}}
+    docker.request = AsyncMock(side_effect=lambda *a, **k: httpx.Response(200, json=payload))
+    assert await docker.ensure_runtime_image("docker.io/vllm/vllm-openai", digest, "linux/arm64", config)
+    payload["Descriptor"]["digest"] = config
+    with pytest.raises(ValueError, match="configuration"):
+        await docker.ensure_runtime_image("docker.io/vllm/vllm-openai", digest, "linux/arm64", config)
