@@ -511,15 +511,35 @@ def test_gb10_uses_measured_system_memory_only(monkeypatch):
 async def test_remote_install_reconnects_saved_node_job_without_local_transfer(env):
     _, store, catalog = env
     await catalog.entries()
-    remote_target = target().model_copy(update={"kind": "remote-bridge", "capabilities": ["recipes.v1"]})
+    remote_target = target().model_copy(
+        update={"kind": "remote-bridge", "capabilities": ["recipes.v1"]}
+    )
     bridge = SimpleNamespace(
-        refresh=AsyncMock(return_value=remote_target), prepare=AsyncMock(),
-        install=AsyncMock(return_value={"id": "node-job", "recipe_hash": starter().content_hash,
-            "status": "completed", "stage": "installed", "progress": 100,
-            "artifacts_present": True, "inference_verified": False}))
+        refresh=AsyncMock(return_value=remote_target),
+        prepare=AsyncMock(),
+        install=AsyncMock(
+            return_value={
+                "id": "node-job",
+                "recipe_hash": starter().content_hash,
+                "status": "completed",
+                "stage": "installed",
+                "progress": 100,
+                "artifacts_present": True,
+                "inference_verified": False,
+            }
+        ),
+    )
     download, verify = AsyncMock(), AsyncMock()
-    installer = RecipeInstaller(catalog, SimpleNamespace(get=lambda _: remote_target),
-        store, None, None, download, verify, str)
+    installer = RecipeInstaller(
+        catalog,
+        SimpleNamespace(get=lambda _: remote_target),
+        store,
+        None,
+        None,
+        download,
+        verify,
+        str,
+    )
     installer.remote = bridge
     job = await installer.create(starter().content_hash, "spark", launch=False)
     await installer.tasks[job["id"]]

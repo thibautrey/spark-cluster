@@ -193,8 +193,12 @@ def test_bridge_verification_requires_admin_authentication(tmp_path):
                 "controller-secret", "GET", "/api/v1/controller/verify"
             ),
         )
-    assert response.json() == {"status": "ready", "cluster_name": "gb10-lab",
-        "recipe_protocol": None, "node_target": None}
+    assert response.json() == {
+        "status": "ready",
+        "cluster_name": "gb10-lab",
+        "recipe_protocol": None,
+        "node_target": None,
+    }
     assert signed.status_code == 200
 
 
