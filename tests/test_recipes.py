@@ -562,10 +562,18 @@ async def test_docker29_manifest_identity_still_requires_exact_digest(env):
     settings.docker_socket_path = settings.database_path.parent / "docker.sock"
     settings.docker_socket_path.touch()
     digest, config = "sha256:" + "a" * 64, "sha256:" + "b" * 64
-    payload = {"Id": digest, "Os": "linux", "Architecture": "arm64",
-        "Descriptor": {"digest": digest, "mediaType": "application/vnd.oci.image.manifest.v1+json"}}
+    payload = {
+        "Id": digest,
+        "Os": "linux",
+        "Architecture": "arm64",
+        "Descriptor": {"digest": digest, "mediaType": "application/vnd.oci.image.manifest.v1+json"},
+    }
     docker.request = AsyncMock(side_effect=lambda *a, **k: httpx.Response(200, json=payload))
-    assert await docker.ensure_runtime_image("docker.io/vllm/vllm-openai", digest, "linux/arm64", config)
+    assert await docker.ensure_runtime_image(
+        "docker.io/vllm/vllm-openai", digest, "linux/arm64", config
+    )
     payload["Descriptor"]["digest"] = config
     with pytest.raises(ValueError, match="configuration"):
-        await docker.ensure_runtime_image("docker.io/vllm/vllm-openai", digest, "linux/arm64", config)
+        await docker.ensure_runtime_image(
+            "docker.io/vllm/vllm-openai", digest, "linux/arm64", config
+        )

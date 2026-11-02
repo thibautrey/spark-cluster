@@ -343,7 +343,8 @@ class DockerEngineClient:
         manifest_identity = (
             value.get("Id") == digest
             and descriptor.get("digest") == digest
-            and descriptor.get("mediaType") in {
+            and descriptor.get("mediaType")
+            in {
                 "application/vnd.docker.distribution.manifest.v2+json",
                 "application/vnd.oci.image.manifest.v1+json",
             }
