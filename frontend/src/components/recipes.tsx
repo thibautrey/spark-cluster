@@ -327,8 +327,8 @@ export function Recipes() {
       }
     >
       <p className="note recipe-intro">
-        Find a model setup for {target?.name || "your Spark"}. Choose a pinned
-        release and make it yours.
+        Find a model setup for {target?.name || "your Spark"}. Choose a version,
+        review its requirements, then install.
       </p>
       <div className="toolbar recipe-toolbar">
         <div className="recipe-search">
