@@ -37,6 +37,8 @@ def startup_capacity_failure(state: dict, logs: bytes) -> bool:
 
 def runtime_parallelism(payload: dict, *, prepare=False, ceiling=MAX_CONCURRENCY) -> int:
     """Only validated continuous-batching engines receive automatic launch flags."""
+    if prepare and payload.get("Labels", {}).get("spark-cluster.preserve-launch-settings") == "true":
+        return runtime_parallelism(payload)
     command = payload.setdefault("Cmd", []) if prepare else payload.get("Cmd", [])
     evidence = str(payload.get("Image", "")) + " " + str(payload.get("Entrypoint", ""))
     evidence += " " + " ".join(str(item) for item in command[:3])
