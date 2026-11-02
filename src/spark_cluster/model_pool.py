@@ -626,6 +626,8 @@ class PoolNode:
         return models, settings
 
     async def prepare(self, request: PoolLoadRequest):
+        if getattr(self, "disk_admission", None):
+            await self.disk_admission(request.model_id)
         if request.settings and request.settings.model_id != request.model_id:
             raise ValueError("Launch settings must belong to this model")
         profile = self.demand.profile_for(request.model_id)

@@ -218,7 +218,8 @@ export const library: Library = {
   message: "Verified packages for managed targets.",
 };
 export function baseline(path: string): unknown {
-  if (path.startsWith("/api/v1/storage")) return {locations: [], assets: [], errors: []};
+  if (path.startsWith("/api/v1/storage"))
+    return { locations: [], assets: [], errors: [] };
   if (path.startsWith("/api/v1/recipes"))
     return {
       recipes: [],

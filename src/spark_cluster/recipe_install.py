@@ -180,7 +180,11 @@ class RecipeInstaller:
             )
             raise
         except Exception as error:
-            await self.save(job, status="failed", error=self.safe_error(error),
-                            storage=getattr(error, "storage", None))
+            await self.save(
+                job,
+                status="failed",
+                error=self.safe_error(error),
+                storage=getattr(error, "storage", None),
+            )
         finally:
             self.tasks.pop(job["id"], None)

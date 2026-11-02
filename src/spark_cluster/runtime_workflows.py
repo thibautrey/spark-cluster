@@ -48,6 +48,7 @@ class RuntimeWorkflowService:
         self.library = library
         self.deployments = deployments
         self.model_pool = model_pool
+        self.launch_preflight = None
         self.tasks: dict[str, asyncio.Task] = {}
         self.http_transport: httpx.AsyncBaseTransport | None = None
 
@@ -186,6 +187,14 @@ class RuntimeWorkflowService:
         )
 
     async def create(self, request: RuntimeWorkflowRequest) -> RuntimeWorkflowJob:
+        if request.launch and self.launch_preflight:
+            await self.launch_preflight(
+                PoolLoadRequest(
+                    model_id=request.launch.model_id,
+                    settings=request.launch,
+                    cluster_id=request.cluster_id,
+                )
+            )
         guide = await self.guide(request.cluster_id, request.model_id, request.engine_id)
         if not guide.compatible or not guide.version or not guide.image or not guide.digest:
             raise ValueError(guide.summary)

@@ -89,92 +89,95 @@ export function App() {
   };
   return (
     <StorageRecoveryProvider>
-    <ModelDetailsProvider>
-      <div className="shell">
-        <aside className="sidebar">
-          <a className="brand" href="#overview">
-            <span className="brand-mark" aria-hidden="true">
-              <Layers size={19} />
-            </span>
-            <span>
-              <b>SPARK</b>
-              <small>CLUSTER CONTROL</small>
-            </span>
-          </a>
-          <nav aria-label="Main navigation">
-            {Object.entries(routes).map(([key, label]) => {
-              const Icon = icons[key as Route];
-              return (
-                <a
-                  key={key}
-                  href={`#${key}`}
-                  aria-current={route === key ? "page" : undefined}
-                  className={route === key ? "active" : ""}
-                >
-                  <Icon size={17} />
-                  {label}
-                </a>
-              );
-            })}
-          </nav>
-          <div className="sidebar-footer">
-            <i className="status-dot" />
-            Connected infrastructure
-          </div>
-        </aside>
-        <main>
-          <header className="topbar">
-            <div>
-              <p className="eyebrow">SPARK CLUSTER</p>
-              <h1>{routes[route]}</h1>
-            </div>
-            <div className="topbar-controls">
-              <Field label="Compute pool">
-                <Select
-                  aria-label="Compute pool"
-                  value={context}
-                  onChange={(e) => void selectCluster(e.target.value)}
-                  disabled={action.busy}
-                >
-                  <option value="all">All compute pools</option>
-                  {clusters?.clusters.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name} ·{" "}
-                      {c.kind === "local-docker"
-                        ? `${c.gpu_count} GPUs`
-                        : "remote"}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <span className="note stream-status" title={snapshot?.timestamp}>
-                <i aria-hidden="true" />
-                {snapshot ? "Live telemetry" : "Connecting"}
+      <ModelDetailsProvider>
+        <div className="shell">
+          <aside className="sidebar">
+            <a className="brand" href="#overview">
+              <span className="brand-mark" aria-hidden="true">
+                <Layers size={19} />
               </span>
+              <span>
+                <b>SPARK</b>
+                <small>CLUSTER CONTROL</small>
+              </span>
+            </a>
+            <nav aria-label="Main navigation">
+              {Object.entries(routes).map(([key, label]) => {
+                const Icon = icons[key as Route];
+                return (
+                  <a
+                    key={key}
+                    href={`#${key}`}
+                    aria-current={route === key ? "page" : undefined}
+                    className={route === key ? "active" : ""}
+                  >
+                    <Icon size={17} />
+                    {label}
+                  </a>
+                );
+              })}
+            </nav>
+            <div className="sidebar-footer">
+              <i className="status-dot" />
+              Connected infrastructure
             </div>
-          </header>
-          <div className="mobile-route">
-            <Select
-              aria-label="Page"
-              value={route}
-              onChange={(e) => {
-                location.hash = `#${e.target.value}`;
-              }}
-            >
-              {Object.entries(routes).map(([k, l]) => (
-                <option key={k} value={k}>
-                  {l}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <Message error={action.error} />
-          <div className="page">
-            <ErrorBoundary route={route}>{views[route]}</ErrorBoundary>
-          </div>
-        </main>
-      </div>
-    </ModelDetailsProvider>
+          </aside>
+          <main>
+            <header className="topbar">
+              <div>
+                <p className="eyebrow">SPARK CLUSTER</p>
+                <h1>{routes[route]}</h1>
+              </div>
+              <div className="topbar-controls">
+                <Field label="Compute pool">
+                  <Select
+                    aria-label="Compute pool"
+                    value={context}
+                    onChange={(e) => void selectCluster(e.target.value)}
+                    disabled={action.busy}
+                  >
+                    <option value="all">All compute pools</option>
+                    {clusters?.clusters.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name} ·{" "}
+                        {c.kind === "local-docker"
+                          ? `${c.gpu_count} GPUs`
+                          : "remote"}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <span
+                  className="note stream-status"
+                  title={snapshot?.timestamp}
+                >
+                  <i aria-hidden="true" />
+                  {snapshot ? "Live telemetry" : "Connecting"}
+                </span>
+              </div>
+            </header>
+            <div className="mobile-route">
+              <Select
+                aria-label="Page"
+                value={route}
+                onChange={(e) => {
+                  location.hash = `#${e.target.value}`;
+                }}
+              >
+                {Object.entries(routes).map(([k, l]) => (
+                  <option key={k} value={k}>
+                    {l}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <Message error={action.error} />
+            <div className="page">
+              <ErrorBoundary route={route}>{views[route]}</ErrorBoundary>
+            </div>
+          </main>
+        </div>
+      </ModelDetailsProvider>
     </StorageRecoveryProvider>
   );
 }

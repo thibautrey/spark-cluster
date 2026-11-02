@@ -149,9 +149,9 @@ from .setup_models import (
     SetupRequest,
 )
 from .simulator import ClusterSimulator
-from .store import SnapshotStore
 from .storage import StorageService, StorageShortage
 from .storage_api import register_storage
+from .store import SnapshotStore
 from .telemetry import InferenceTelemetryService
 
 
@@ -468,9 +468,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             target_cluster_url=target.endpoint if target else None,
         )
 
-    storage_service = StorageService(settings, runtime.store, cluster_registry, pool_node, runtime_library)
+    storage_service = StorageService(
+        settings, runtime.store, cluster_registry, pool_node, runtime_library
+    )
 
     storage_service.on_change = lambda: setattr(model_pool, "cache", None)
+    runtime_workflows.launch_preflight = storage_service.launch_check
 
     async def storage_download_preflight(request):
         plan = await model_fit_plan(request)
@@ -733,7 +736,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         raise HTTPException(status_code=401, detail="Invalid model administration token")
 
     register_runtime_library(app, runtime_library, require_model_token, settings)
-    register_storage(app, storage_service, require_model_token, settings, storage_download_preflight)
+    register_storage(
+        app, storage_service, require_model_token, settings, storage_download_preflight
+    )
 
     @app.exception_handler(StorageShortage)
     async def insufficient_storage(_, error):
@@ -1773,7 +1778,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             cluster_id=cluster_registry.active().id if cluster_registry.active() else None,
         ))
         try:
-            return await deployment_service.launch(request)
+            async with storage_service.lock:
+                return await deployment_service.launch(request)
         except ModelNotManaged as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except StorageShortage:
@@ -1795,7 +1801,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     async def retry_launch(job_id: str) -> ModelLaunchJob:
         try:
-            return await deployment_service.retry(job_id)
+            async with storage_service.lock:
+                return await deployment_service.retry(job_id)
         except KeyError as error:
             raise HTTPException(status_code=404, detail="Launch job not found") from error
         except EngineNotExecutable as error:
@@ -1855,6 +1862,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def create_runtime_workflow(request: RuntimeWorkflowRequest) -> RuntimeWorkflowJob:
         try:
             return await runtime_workflows.create(request)
+        except StorageShortage:
+            raise
         except KeyError as error:
             raise HTTPException(
                 status_code=404, detail="Compute pool or runtime not found"

@@ -142,7 +142,10 @@ export function Recipes() {
             versions.find((v) => v.id === selected[id]) || versions[0];
           const r = entry.recipe;
           const installed = jobs.find(
-            (j) => j.recipe.id === id && j.status === "completed" && j.artifacts_present !== false,
+            (j) =>
+              j.recipe.id === id &&
+              j.status === "completed" &&
+              j.artifacts_present !== false,
           );
           const running = jobs.find(
             (j) =>
@@ -246,14 +249,28 @@ export function Recipes() {
           </p>
           <Meter value={job.progress} label="Recipe installation" />
           <Message error={job.error} />
-          {job.status === "failed" && (job.storage || /space|disk|storage/i.test(job.error || "")) &&
-            <Button variant="outline" disabled={action.busy || busy}
-              onClick={() => action.run(async () => {
-                if (await recoverStorage({space: job.storage, retry: true})) {
-                  await post("/api/v1/recipes/install", {recipe_hash: job.recipe_hash, cluster_id: job.cluster_id});
-                  await refresh();
+          {job.status === "failed" &&
+            (job.storage || /space|disk|storage/i.test(job.error || "")) && (
+              <Button
+                variant="outline"
+                disabled={action.busy || busy}
+                onClick={() =>
+                  action.run(async () => {
+                    if (
+                      await recoverStorage({ space: job.storage, retry: true })
+                    ) {
+                      await post("/api/v1/recipes/install", {
+                        recipe_hash: job.recipe_hash,
+                        cluster_id: job.cluster_id,
+                      });
+                      await refresh();
+                    }
+                  })
                 }
-              })}>Free disk space and retry</Button>}
+              >
+                Free disk space and retry
+              </Button>
+            )}
 
           {job.status === "failed" && (
             <Button

@@ -16,13 +16,22 @@ from .model_manager import WEIGHT_SUFFIXES
 from .remote_cluster import signed_controller_headers
 
 GIB = 2**30
-ACTIVE_DOWNLOADS = {"queued", "resolving", "downloading", "paused", "preparing-transfer", "distributing"}
+ACTIVE_DOWNLOADS = {
+    "queued",
+    "resolving",
+    "downloading",
+    "paused",
+    "preparing-transfer",
+    "distributing",
+}
 
 
 class StorageShortage(ValueError):
     def __init__(self, requirements, excluded_models=()):
         self.storage = {"requirements": requirements, "excluded_model_ids": list(excluded_models)}
-        super().__init__("Not enough disk space. Choose stored models or recipe artifacts to remove.")
+        super().__init__(
+            "Not enough disk space. Choose stored models or recipe artifacts to remove."
+        )
 
     def detail(self):
         return {"message": str(self), "code": "insufficient_storage", "storage": self.storage}
@@ -34,8 +43,14 @@ def token(value):
 
 def measure(path):
     """Count allocated blocks once; external hard links/symlink targets aren't reclaimable."""
-    files = [path] if path.is_file() else (
-        Path(root) / name for root, _, names in os.walk(path, followlinks=False) for name in names
+    files = (
+        [path]
+        if path.is_file()
+        else (
+            Path(root) / name
+            for root, _, names in os.walk(path, followlinks=False)
+            for name in names
+        )
     )
     inodes = {}
     logical = 0
@@ -52,14 +67,25 @@ def measure(path):
         else:
             inodes[key] = [info, 1]
             logical += info.st_size
-    reclaimable = sum(info.st_blocks * 512 for info, count in inodes.values()
-                      if count >= info.st_nlink)
-    return logical, reclaimable
+    reclaimable = sum(
+        info.st_blocks * 512 for info, count in inodes.values() if count >= info.st_nlink
+    )
+    signature = token(
+        str(
+            sorted(
+                (key, info.st_size, info.st_mtime_ns, info.st_nlink)
+                for key, (info, _) in inodes.items()
+            )
+        )
+    )
+    allocated = sum(info.st_blocks * 512 for info, _ in inodes.values())
+    return allocated, reclaimable, signature
 
 
 def weight_directory(path):
-    return path.is_dir() and (any(path.glob("*.safetensors")) or any(path.glob("*.gguf"))
-                             or any(path.glob("*.bin")))
+    return path.is_dir() and (
+        any(path.glob("*.safetensors")) or any(path.glob("*.gguf")) or any(path.glob("*.bin"))
+    )
 
 
 class StorageService:
@@ -69,6 +95,7 @@ class StorageService:
         self.transport = None
         self.lock = node.storage_lock
         node.models.storage_lock = self.lock
+        node.disk_admission = self.local_launch_check
         self.cached = None
         self.cached_at = 0
         self.on_change = None
@@ -87,11 +114,18 @@ class StorageService:
             device = str(base.stat().st_dev)
             location_id = "disk-" + token(device)[:16]
             usage = shutil.disk_usage(base)
-            location = locations.setdefault(location_id, {
-                "id": location_id, "name": "Model disk", "paths": [],
-                "free_bytes": usage.free, "total_bytes": usage.total,
-                "kind": "filesystem", "scope": "node",
-            })
+            location = locations.setdefault(
+                location_id,
+                {
+                    "id": location_id,
+                    "name": "Model disk",
+                    "paths": [],
+                    "free_bytes": usage.free,
+                    "total_bytes": usage.total,
+                    "kind": "filesystem",
+                    "scope": "node",
+                },
+            )
             location["paths"].append(str(base))
             if kind == "models":
                 model_location = location_id
@@ -102,7 +136,11 @@ class StorageService:
                     if first.is_file() and first.suffix.lower() in WEIGHT_SUFFIXES:
                         candidates.append((first, first.stem, None, "weights"))
                     elif first.is_dir():
-                        dirs = [first] if (first / ".spark-cluster.json").is_file() or weight_directory(first) else list(first.iterdir())
+                        dirs = (
+                            [first]
+                            if (first / ".spark-cluster.json").is_file() or weight_directory(first)
+                            else list(first.iterdir())
+                        )
                         for path in dirs:
                             if not path.is_dir() or path.is_symlink():
                                 continue
@@ -110,31 +148,58 @@ class StorageService:
                             if manifest.is_file():
                                 try:
                                     data = json.loads(manifest.read_text())
-                                    candidates.append((path, data["repo_id"], data.get("revision"), "weights"))
+                                    candidates.append(
+                                        (path, data["repo_id"], data.get("revision"), "weights")
+                                    )
                                 except (ValueError, KeyError, OSError):
                                     continue
                             elif weight_directory(path):
-                                candidates.append((path, path.relative_to(base).as_posix(), None, "weights"))
+                                candidates.append(
+                                    (path, path.relative_to(base).as_posix(), None, "weights")
+                                )
             else:
-                candidates = [(p, p.name.removeprefix("models--").replace("--", "/", 1), None, "huggingface-cache")
-                              for p in base.glob("models--*") if p.is_dir() and not p.is_symlink()]
+                candidates = [
+                    (
+                        p,
+                        p.name.removeprefix("models--").replace("--", "/", 1),
+                        None,
+                        "huggingface-cache",
+                    )
+                    for p in base.glob("models--*")
+                    if p.is_dir() and not p.is_symlink()
+                ]
             for path, model_id, revision, asset_kind in candidates:
                 if not path.resolve().is_relative_to(base) or path.resolve() == base:
                     continue
-                logical, reclaimable = measure(path)
+                logical, reclaimable, signature = measure(path)
                 info = path.stat()
-                identity = token(f"{path}:{info.st_ino}:{info.st_mtime_ns}:{revision}:{logical}")
-                assets.append({"id": identity, "location_id": location_id, "kind": asset_kind,
-                               "name": model_id, "model_id": model_id, "revision": revision,
-                               "path": str(path), "size_bytes": logical,
-                               "reclaimable_bytes": reclaimable, "recipe_refs": [],
-                               "blockers": []})
+                identity = token(f"{path}:{info.st_ino}:{info.st_mtime_ns}:{revision}:{signature}")
+                assets.append(
+                    {
+                        "id": identity,
+                        "location_id": location_id,
+                        "kind": asset_kind,
+                        "name": model_id,
+                        "model_id": model_id,
+                        "revision": revision,
+                        "path": str(path),
+                        "size_bytes": logical,
+                        "reclaimable_bytes": reclaimable,
+                        "recipe_refs": [],
+                        "blockers": [],
+                    }
+                )
                 paths[identity] = (path, base)
-        return {"locations": list(locations.values()), "assets": assets,
-                "model_location_id": model_location}, paths
+        return {
+            "locations": list(locations.values()),
+            "assets": assets,
+            "model_location_id": model_location,
+        }, paths
 
     async def _busy(self):
-        models = {r.profile.model_id or r.profile.model for r in self.node.demand.residents.values()}
+        models = {
+            r.profile.model_id or r.profile.model for r in self.node.demand.residents.values()
+        }
         if not self.settings.remote_cluster_url and not self.node.local_cluster():
             endpoint = await self.node.models.runtime_endpoint()
             models.update(endpoint.loaded_model_ids)
@@ -161,17 +226,25 @@ class StorageService:
         value, _ = await asyncio.to_thread(self._scan)
         busy, installs = await self._busy()
         local = self.node.local_cluster()
-        nodes = [] if self.settings.remote_cluster_url and not local else self.node.machine_inventory()
+        nodes = (
+            [] if self.settings.remote_cluster_url and not local else self.node.machine_inventory()
+        )
         node_ids = [m["id"] for m in nodes] or [local.host_address if local else "controller"]
         names = [m["name"] for m in nodes] or [local.name if local else "Controller"]
         for location in value["locations"]:
-            location.update(node_ids=node_ids, node_names=names,
-                            scope="shared" if not local and len(node_ids) > 1 else "node")
+            location.update(
+                node_ids=node_ids,
+                node_names=names,
+                scope="shared" if not local and len(node_ids) > 1 else "node",
+            )
         for asset in value["assets"]:
             if asset["model_id"] in busy:
                 asset["blockers"].append("In use by a runtime, download, or recipe installation")
-            asset["recipe_refs"] = [{"id": j["recipe"]["id"], "version": j["recipe"]["version"]}
-                                    for j in installs if j["recipe"]["model"]["repository"] == asset["model_id"]]
+            asset["recipe_refs"] = [
+                {"id": j["recipe"]["id"], "version": j["recipe"]["version"]}
+                for j in installs
+                if j["recipe"]["model"]["repository"] == asset["model_id"]
+            ]
         value["errors"] = []
         if self.library.docker.available:
             try:
@@ -191,15 +264,26 @@ class StorageService:
         for job in installs:
             recipe = job["recipe"]
             refs.setdefault(recipe["runtime"]["image"], []).append(
-                {"id": recipe["id"], "version": recipe["version"]})
+                {"id": recipe["id"], "version": recipe["version"]}
+            )
         if not refs:
             return
-        containers = (await docker.request("GET", "/containers/json", params={"all": "true"})).json()
-        value["locations"].append({"id": "docker", "name": "Docker images and recipe caches",
-                                   "kind": "docker", "paths": [], "scope": "node",
-                                   "node_ids": value["locations"][0]["node_ids"],
-                                   "node_names": value["locations"][0]["node_names"],
-                                   "free_bytes": None, "total_bytes": None})
+        containers = (
+            await docker.request("GET", "/containers/json", params={"all": "true"})
+        ).json()
+        value["locations"].append(
+            {
+                "id": "docker",
+                "name": "Docker images and recipe caches",
+                "kind": "docker",
+                "paths": [],
+                "scope": "node",
+                "node_ids": value["locations"][0]["node_ids"],
+                "node_names": value["locations"][0]["node_names"],
+                "free_bytes": None,
+                "total_bytes": None,
+            }
+        )
         protected_models = set()
         for container in containers:
             if container.get("State") == "running":
@@ -210,30 +294,59 @@ class StorageService:
             if asset["model_id"] in protected_models:
                 asset["blockers"].append("Model is mounted by a running container")
         for image in images.get("Images") or []:
-            matching = [ref for ref in refs if ref.removeprefix("docker.io/") in
-                        {r.removeprefix("docker.io/") for r in image.get("RepoDigests") or []}]
+            matching = [
+                ref
+                for ref in refs
+                if ref.removeprefix("docker.io/")
+                in {r.removeprefix("docker.io/") for r in image.get("RepoDigests") or []}
+            ]
             if not matching:
                 continue
             used = any(c.get("ImageID") == image["Id"] for c in containers)
-            active_install = any(j["status"] in {"queued", "running"} and
-                                 j["recipe"]["runtime"]["image"] in matching for j in installs)
-            value["assets"].append({"id": "image-" + token(image["Id"]), "location_id": "docker",
-                "kind": "runtime-image", "name": matching[0], "model_id": None, "path": image["Id"],
-                "size_bytes": image.get("Size", 0),
-                "reclaimable_bytes": max(0, image.get("Size", 0) - max(0, image.get("SharedSize", 0))),
-                "recipe_refs": [r for ref in matching for r in refs[ref]],
-                "blockers": ["Referenced by a container or active installation"] if used or active_install else []})
+            active_install = any(
+                j["status"] in {"queued", "running"} and j["recipe"]["runtime"]["image"] in matching
+                for j in installs
+            )
+            value["assets"].append(
+                {
+                    "id": "image-" + token(image["Id"]),
+                    "location_id": "docker",
+                    "kind": "runtime-image",
+                    "name": matching[0],
+                    "model_id": None,
+                    "path": image["Id"],
+                    "size_bytes": image.get("Size", 0),
+                    "reclaimable_bytes": max(
+                        0, image.get("Size", 0) - max(0, image.get("SharedSize", 0))
+                    ),
+                    "recipe_refs": [r for ref in matching for r in refs[ref]],
+                    "blockers": ["Referenced by a container or active installation"]
+                    if used or active_install
+                    else [],
+                }
+            )
         volumes = {"spark-recipe-" + token(image)[:16]: recipes for image, recipes in refs.items()}
         for volume in images.get("Volumes") or []:
             if volume["Name"] not in volumes:
                 continue
             usage = volume.get("UsageData") or {}
             count = usage.get("RefCount", -1)
-            value["assets"].append({"id": "volume-" + token(volume["Name"]), "location_id": "docker",
-                "kind": "recipe-cache", "name": volume["Name"], "model_id": None,
-                "path": volume["Name"], "size_bytes": max(0, usage.get("Size", 0)),
-                "reclaimable_bytes": max(0, usage.get("Size", 0)), "recipe_refs": volumes[volume["Name"]],
-                "blockers": ["Cache is attached to a container or its usage is unknown"] if count != 0 else []})
+            value["assets"].append(
+                {
+                    "id": "volume-" + token(volume["Name"]),
+                    "location_id": "docker",
+                    "kind": "recipe-cache",
+                    "name": volume["Name"],
+                    "model_id": None,
+                    "path": volume["Name"],
+                    "size_bytes": max(0, usage.get("Size", 0)),
+                    "reclaimable_bytes": max(0, usage.get("Size", 0)),
+                    "recipe_refs": volumes[volume["Name"]],
+                    "blockers": ["Cache is attached to a container or its usage is unknown"]
+                    if count != 0
+                    else [],
+                }
+            )
 
     async def _remote(self, cluster, method, suffix, payload=None):
         if not self.settings.model_admin_token:
@@ -242,8 +355,9 @@ class StorageService:
         body = json.dumps(payload).encode() if payload is not None else b""
         headers = signed_controller_headers(self.settings.model_admin_token, method, path, body)
         headers["content-type"] = "application/json"
-        async with httpx.AsyncClient(base_url=cluster.endpoint, transport=self.transport,
-                                     timeout=120, trust_env=False) as client:
+        async with httpx.AsyncClient(
+            base_url=cluster.endpoint, transport=self.transport, timeout=120, trust_env=False
+        ) as client:
             response = await client.request(method, path, headers=headers, content=body)
             response.raise_for_status()
             return response.json()
@@ -252,24 +366,47 @@ class StorageService:
         local = await self.local(fresh=fresh)
         target = self.node.local_cluster()
         result = {"locations": [], "assets": [], "errors": list(local["errors"])}
-        self._merge(result, local, target.id if target else "controller", target.name if target else "Controller")
+        self._merge(
+            result,
+            local,
+            target.id if target else "controller",
+            target.name if target else "Controller",
+        )
+
         async def remote(cluster):
             try:
                 state = await self._remote(cluster, "GET", "")
                 self._merge(result, state, cluster.id, cluster.name)
             except (httpx.HTTPError, ValueError, KeyError):
-                result["errors"].append(f"{cluster.name}: storage unavailable; update or reconnect its bridge")
-        await asyncio.gather(*(remote(c) for c in self.registry.list() if c.kind == "remote-bridge"))
+                result["errors"].append(
+                    f"{cluster.name}: storage unavailable; update or reconnect its bridge"
+                )
+
+        await asyncio.gather(
+            *(remote(c) for c in self.registry.list() if c.kind == "remote-bridge")
+        )
         return result
 
     @staticmethod
     def _merge(result, state, cluster_id, name):
         for location in state["locations"]:
-            result["locations"].append({**location, "id": cluster_id + ":" + location["id"],
-                                        "cluster_id": cluster_id, "cluster_name": name})
+            result["locations"].append(
+                {
+                    **location,
+                    "id": cluster_id + ":" + location["id"],
+                    "cluster_id": cluster_id,
+                    "cluster_name": name,
+                }
+            )
         for asset in state["assets"]:
-            result["assets"].append({**asset, "id": cluster_id + ":" + asset["id"],
-                "location_id": cluster_id + ":" + asset["location_id"], "cluster_id": cluster_id})
+            result["assets"].append(
+                {
+                    **asset,
+                    "id": cluster_id + ":" + asset["id"],
+                    "location_id": cluster_id + ":" + asset["location_id"],
+                    "cluster_id": cluster_id,
+                }
+            )
         result["errors"].extend(f"{name}: {e}" for e in state.get("errors", []))
 
     async def delete_local(self, ids):
@@ -299,25 +436,46 @@ class StorageService:
                     else:
                         await asyncio.to_thread(path.unlink)
                     for job in await asyncio.to_thread(self.store.list_downloads):
-                        if job.repo_id == asset["model_id"] and job.status == "completed" and Path(job.target_path) == path:
-                            job.status, job.message = "deleted", "Removed from this storage location"
+                        if (
+                            job.repo_id == asset["model_id"]
+                            and job.status == "completed"
+                            and Path(job.target_path) == path
+                        ):
+                            job.status, job.message = (
+                                "deleted",
+                                "Removed from this storage location",
+                            )
                             await asyncio.to_thread(self.store.save_download, job)
                     self.node.models._invalidate_inventory()
                     with self.node.models._inventory_guard:
                         self.node.models._local_fit_cache.pop(asset["model_id"], None)
                 elif asset["kind"] == "runtime-image":
-                    await self.library.docker.request("DELETE", "/images/" + quote(asset["path"], safe=""),
-                                                      params={"force": "false"})
+                    await self.library.docker.request(
+                        "DELETE",
+                        "/images/" + quote(asset["path"], safe=""),
+                        params={"force": "false"},
+                    )
                 elif asset["kind"] == "recipe-cache":
-                    await self.library.docker.request("DELETE", "/volumes/" + quote(asset["path"], safe=""),
-                                                      params={"force": "false"})
+                    await self.library.docker.request(
+                        "DELETE",
+                        "/volumes/" + quote(asset["path"], safe=""),
+                        params={"force": "false"},
+                    )
                 self.cached = None
                 await self._mark_recipe_files_removed(asset)
                 deleted.append(asset["id"])
             self.cached = None
-            self.node.demand.profiles[:] = [p for p in self.node.demand.profiles if not (
-                p.id in self.node.demand.dynamic and
-                any(a["kind"] == "weights" and a["model_id"] == (p.model_id or p.model) for a in selected))]
+            self.node.demand.profiles[:] = [
+                p
+                for p in self.node.demand.profiles
+                if not (
+                    p.id in self.node.demand.dynamic
+                    and any(
+                        a["kind"] == "weights" and a["model_id"] == (p.model_id or p.model)
+                        for a in selected
+                    )
+                )
+            ]
             self.node.demand.persist()
             if self.on_change:
                 self.on_change()
@@ -329,7 +487,10 @@ class StorageService:
             local = self.node.local_cluster()
             if job.get("cluster_id") != (local.id if local else "controller"):
                 continue
-            if any(r["id"] == recipe["id"] and r["version"] == recipe["version"] for r in asset["recipe_refs"]):
+            if any(
+                r["id"] == recipe["id"] and r["version"] == recipe["version"]
+                for r in asset["recipe_refs"]
+            ):
                 job.update(artifacts_present=False)
                 await asyncio.to_thread(self.store.save_runtime_object, "recipe-install", job)
 
@@ -362,9 +523,15 @@ class StorageService:
             if not location or location["free_bytes"] is None:
                 raise ValueError("Storage capacity unavailable; refresh the selected node")
             if needed > location["free_bytes"]:
-                shortages.append({"location_id": location_id, "name": location["cluster_name"] + " · " + location["name"],
-                                  "required_bytes": needed, "available_bytes": location["free_bytes"],
-                                  "missing_bytes": needed - location["free_bytes"]})
+                shortages.append(
+                    {
+                        "location_id": location_id,
+                        "name": location["cluster_name"] + " · " + location["name"],
+                        "required_bytes": needed,
+                        "available_bytes": location["free_bytes"],
+                        "missing_bytes": needed - location["free_bytes"],
+                    }
+                )
         if shortages:
             raise StorageShortage(shortages, excluded_models)
         return state
@@ -373,21 +540,53 @@ class StorageService:
         local = await self.local(fresh=True)
         cluster = self.node.local_cluster()
         local_id = (cluster.id if cluster else "controller") + ":" + local["model_location_id"]
-        installed = any(a["model_id"] == request.repo_id and a.get("revision") == request.revision
-                        for a in local["assets"] if a["kind"] == "weights")
+        installed = any(
+            a["model_id"] == request.repo_id and a.get("revision") == request.revision
+            for a in local["assets"]
+            if a["kind"] == "weights"
+        )
         requirements = {local_id: (0 if installed else plan.repository_bytes) + 64 * 1024**2}
         if target and target.kind == "remote-bridge":
             remote = await self._remote(target, "GET", "")
-            present = any(a["model_id"] == request.repo_id and a.get("revision") == request.revision
-                          for a in remote["assets"] if a["kind"] == "weights")
-            requirements[target.id + ":" + remote["model_location_id"]] = 0 if present else plan.repository_bytes
+            present = any(
+                a["model_id"] == request.repo_id and a.get("revision") == request.revision
+                for a in remote["assets"]
+                if a["kind"] == "weights"
+            )
+            requirements[target.id + ":" + remote["model_location_id"]] = (
+                0 if present else plan.repository_bytes
+            )
         await self.require(requirements, [request.repo_id])
+
+    async def local_launch_check(self, model_id):
+        state, _ = await asyncio.to_thread(self._scan)
+        disk = next(p for p in state["locations"] if p["id"] == state["model_location_id"])
+        reserve = 64 * 1024**2
+        if disk["free_bytes"] < reserve:
+            cluster = self.node.local_cluster()
+            location = (cluster.id if cluster else "controller") + ":" + disk["id"]
+            raise StorageShortage(
+                [
+                    {
+                        "location_id": location,
+                        "name": "Model disk",
+                        "required_bytes": reserve,
+                        "available_bytes": disk["free_bytes"],
+                        "missing_bytes": reserve - disk["free_bytes"],
+                    }
+                ],
+                [model_id],
+            )
 
     async def launch_check(self, request):
         state = await self.inventory(fresh=True)
         locations = {p["id"]: p for p in state["locations"]}
-        candidates = [a for a in state["assets"] if a.get("model_id") == request.model_id
-                      and (not request.cluster_id or a["cluster_id"] == request.cluster_id)]
+        candidates = [
+            a
+            for a in state["assets"]
+            if a.get("model_id") == request.model_id
+            and (not request.cluster_id or a["cluster_id"] == request.cluster_id)
+        ]
         if not candidates:
             return  # Existing launch admission explains missing weights/runtime compatibility.
         # Startup creates small metadata/cache files even when all weights are already present.

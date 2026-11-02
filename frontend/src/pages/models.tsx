@@ -308,13 +308,28 @@ function ModelDetails({
           >
             Check fit
           </Button>
-          {fit && !fit.storage_fits && <Button type="button" variant="outline"
-            disabled={action.busy}
-            onClick={() => action.run(async () => {
-              await post("/api/v1/storage/preflight", JSON.parse(signature));
-              const result = await post<ModelFitPlan>("/api/v1/models/fit", JSON.parse(signature));
-              setFit(result);
-            })}>Free disk space</Button>}
+          {fit && !fit.storage_fits && (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={action.busy}
+              onClick={() =>
+                action.run(async () => {
+                  await post(
+                    "/api/v1/storage/preflight",
+                    JSON.parse(signature),
+                  );
+                  const result = await post<ModelFitPlan>(
+                    "/api/v1/models/fit",
+                    JSON.parse(signature),
+                  );
+                  setFit(result);
+                })
+              }
+            >
+              Free disk space
+            </Button>
+          )}
           <Button disabled={action.busy || !fit?.download_fits}>
             {reusableCopy
               ? "Copy from controller"

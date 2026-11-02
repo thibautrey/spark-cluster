@@ -2,9 +2,9 @@
 
 import asyncio
 import contextlib
+import errno
 import hashlib
 import json
-import errno
 import re
 import shutil
 from datetime import UTC, datetime
@@ -205,7 +205,9 @@ class DockerEngineClient:
             response = await client.request(method, path, json=payload, params=params)
         if allow and response.status_code in allow:
             return response
-        if response.is_error and re.search(r"ENOSPC|no space left|insufficient disk", response.text, re.I):
+        if response.is_error and re.search(
+            r"ENOSPC|no space left|insufficient disk", response.text, re.I
+        ):
             raise OSError(errno.ENOSPC, "Docker host has no free disk space")
         response.raise_for_status()
         return response
@@ -280,7 +282,9 @@ class DockerEngineClient:
                             continue
                         event = json.loads(line)
                         if event.get("error") or event.get("errorDetail"):
-                            if re.search(r"ENOSPC|no space left|insufficient disk", json.dumps(event), re.I):
+                            if re.search(
+                                r"ENOSPC|no space left|insufficient disk", json.dumps(event), re.I
+                            ):
                                 raise OSError(errno.ENOSPC, "Docker host has no free disk space")
                             raise ValueError("Docker failed to pull the verified runtime image")
             value = await inspect()
