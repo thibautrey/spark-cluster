@@ -557,3 +557,10 @@ Authentication provides account-based request quotas and may reduce throttling.
 It does not guarantee higher transfer throughput: bandwidth, Hub/CDN conditions,
 Xet reconstruction and destination storage still matter. See the
 [Hugging Face rate-limit reference](https://huggingface.co/docs/hub/rate-limits).
+
+MCP `get_token_usage` exposes persisted token totals and time buckets. Pass
+`{"model_id":"your/model","hours":168}` for the past week, or omit `model_id`
+for overall usage and model discovery in `entities`. Input, output and cached
+counts include known-observation counts; missing usage remains null. Responses
+include retention, coverage and persistence health. Boundary buckets are included
+whole, and requests bypassing the controller are outside this history.

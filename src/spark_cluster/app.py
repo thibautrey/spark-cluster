@@ -699,6 +699,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.model_pool = model_pool
     app.state.pool_node = pool_node
     mcp_server = SparkClusterMCP(
+        inference_tracker=inference_tracker,
         browser=browser,
         runtime=runtime,
         model_manager=model_manager,

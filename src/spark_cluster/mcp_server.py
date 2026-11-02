@@ -1,5 +1,6 @@
 """Stateless MCP Streamable HTTP tools for the Spark Cluster control plane."""
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -26,6 +27,23 @@ def _schema(properties: dict, required: list[str] | None = None) -> dict:
 
 
 READ_TOOLS = [
+    {
+        "name": "get_token_usage",
+        "title": "Token usage by model and period",
+        "description": (
+            "Read persisted input, output and cached token totals and time buckets for a model "
+            "over the last hours (default 24). Omit model_id for overall totals and model entity "
+            "discovery, then query each model_id. Unknown usage stays null; known counts, "
+            "retention, bucket boundaries and persistence health describe coverage. "
+            "Only routed requests are counted; boundary buckets are included whole."
+        ),
+        "inputSchema": _schema({
+            "model_id": {"type": "string", "minLength": 1, "maxLength": 1024},
+            "hours": {"type": "integer", "minimum": 1, "maximum": 17520, "default": 24},
+        }),
+        "outputSchema": {"type": "object", "additionalProperties": True},
+        "annotations": {"readOnlyHint": True, "openWorldHint": False},
+    },
     {
         "name": "get_performance_plan",
         "title": "Plan a model runtime",
@@ -311,7 +329,9 @@ class SparkClusterMCP:
         performance_plan: Callable[[PerformancePlanRequest], Awaitable[Any]],
         download_model: Callable[[ModelDownloadRequest, str], Awaitable[Any]],
         cluster_registry: Any = None,
+        inference_tracker: Any = None,
     ) -> None:
+        self.inference_tracker = inference_tracker
         self.browser = browser
         self.runtime = runtime
         self.model_manager = model_manager
@@ -341,6 +361,26 @@ class SparkClusterMCP:
                 "This tool requires the controller model administration bearer token."
             )
         try:
+            if name == "get_token_usage":
+                if set(arguments) - {"model_id", "hours"}:
+                    raise ValueError("Unknown token usage argument")
+                hours = arguments.get("hours", 24)
+                model = arguments.get("model_id")
+                if type(hours) is not int or not 1 <= hours <= 17520:
+                    raise ValueError("hours must be an integer between 1 and 17520")
+                if model is not None and (not isinstance(model, str) or not 1 <= len(model) <= 1024):
+                    raise ValueError("model_id must be a nonempty string up to 1024 characters")
+                tracker = self.inference_tracker
+                result = await asyncio.to_thread(
+                    tracker.journal.performance_summary,
+                    "model" if model else "overall", model or "all", hours,
+                )
+                result["persistence"] = dict(
+                    healthy=not tracker.persistence_error,
+                    pending=len(tracker.pending) + len(tracker.runtime_pending),
+                    dropped=tracker.dropped,
+                )
+                return self._result(result)
             if name == "get_performance_plan":
                 result = await self.performance_plan(PerformancePlanRequest(**arguments))
                 return self._result(result.model_dump(mode="json"))

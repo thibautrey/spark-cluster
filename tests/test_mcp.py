@@ -184,3 +184,31 @@ def test_mcp_prompt_and_cluster_read_tools(tmp_path):
             json=rpc("tools/call", {"name": "get_cluster_status", "arguments": {}}),
         ).json()["result"]["structuredContent"]
         assert status["snapshot_available"] is False
+
+
+def test_mcp_token_usage_period_and_validation(tmp_path):
+    app = mcp_client(tmp_path)
+    calls = []
+
+    def summary(scope, entity, hours):
+        calls.append((scope, entity, hours))
+        return {"summary": {"input_tokens": 123, "output_tokens": None}, "history": []}
+
+    app.state.mcp_server.inference_tracker.journal.performance_summary = summary
+    with TestClient(app) as client:
+        def query(arguments):
+            return client.post("/mcp", json=rpc("tools/call", {
+                "name": "get_token_usage", "arguments": arguments,
+            })).json()["result"]
+
+        result = query({"model_id": "acme/model", "hours": 48})
+        assert result["structuredContent"]["summary"] == {
+            "input_tokens": 123, "output_tokens": None,
+        }
+        assert "persistence" in result["structuredContent"]
+        assert calls == [("model", "acme/model", 48)]
+        query({})
+        assert calls[-1] == ("overall", "all", 24)
+        for arguments in ({"hours": 0}, {"hours": True}, {"hours": 17521},
+                          {"model_id": ""}, {"model_id": 12}, {"extra": 1}):
+            assert query(arguments)["isError"]
