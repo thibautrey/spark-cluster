@@ -1,18 +1,18 @@
 # Popular-model recipe catalog
 
-The offline snapshot captured on **2026-11-02** adds **1,179 distinct serving templates**
+The offline snapshot captured on **2026-11-02** adds **1,073 distinct serving templates**
 (one per Hugging Face repository), alongside the two previously reviewed recipes.
 It also includes **160 explicitly non-executable workload references**. References
 are not counted toward the 1,000-template minimum.
 
 | Workload | Generated serving templates |
 | --- | ---: |
-| Text generation, code, reasoning and multilingual models | 645 |
+| Text generation, code, reasoning and multilingual models | 546 |
 | Vision-language models | 200 |
 | Embeddings and retrieval | 220 |
 | Classification, including ranking checkpoints | 80 |
-| Whisper speech recognition | 34 |
-| **Total** | **1,179** |
+| Whisper speech recognition | 27 |
+| **Total** | **1,073** |
 
 Image generation (60), image editing (30), video generation (30) and speech synthesis
 (40) appear under separate workload filters as references. They link to exact model
@@ -21,9 +21,11 @@ A diffusion checkpoint is not a chat model, and a reference link is not an execu
 
 ## What the entries mean
 
-The generated recipes are **not 1,179 independently published or hardware-tested Spark
+The generated recipes are **not 1,073 independently published or hardware-tested Spark
 recipes**. They combine actual public checkpoint metadata with architectures listed in
 [vLLM v0.32.0's pinned registry](https://github.com/vllm-project/vllm/blob/5df63a7203cdb9328d824a27b682e77c7b9928be/vllm/model_executor/models/registry.py).
+Eligible weights must use a supported Transformers/Sentence Transformers/vLLM library and include full safetensors weights. MLX, GGUF, EXL, adapter-only and unrelated library formats are excluded even when architecture names match.
+
 Their status is `generated-template`, visibly distinct from `source-reviewed` and
 `hardware-verified`. A supported architecture does not prove a checkpoint's tokenizer,
 quantization, multimodal processors, kernels or memory behavior work on GB10.
@@ -132,3 +134,12 @@ The root publisher index remains the original two independently reviewed JSON fi
 The larger bundled snapshot has its own versioned bulk-catalog format; it is not
 silently fed through GitHub discovery's 40-file publisher limit. Docker and wheel
 packaging include the nested catalog automatically through the existing recipes directory.
+
+## Withdrawn format mismatches
+
+The initial catalog smoke deployment exposed 178 checkpoints whose architecture names
+matched but whose library or weight format did not. Their exact release hashes are
+withdrawn from browsing and new installation. Persisted release records remain
+addressable for audit and existing installation snapshots are untouched. Withdrawal
+does not delete files, unload a runtime or rewrite release contents. The corrected
+active snapshot contains 1,073 format-checked templates and the two reviewed starters.

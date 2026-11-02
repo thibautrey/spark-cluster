@@ -45,6 +45,17 @@ class ReferenceSnapshot(StrictModel):
     upstream_libraries: list[dict]
 
 
+class RecipeWithdrawal(StrictModel):
+    hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    model_id: str
+    reason: str
+
+
+class WithdrawalSnapshot(StrictModel):
+    schema_version: Literal["spark-cluster.recipe-withdrawals/v1"]
+    releases: list[RecipeWithdrawal]
+
+
 def read_snapshot(path, model):
     if path.stat().st_size > 32 * 1024 * 1024:
         raise ValueError("Bundled catalog exceeds 32 MiB")
@@ -65,6 +76,23 @@ def reference_snapshots() -> tuple[ReferenceSnapshot, ...]:
         read_snapshot(p, ReferenceSnapshot)
         for p in sorted((recipe_directory() / "popular").glob("*.references.json"))
     )
+
+
+@lru_cache(maxsize=1)
+def withdrawals():
+    return {
+        item.hash: item
+        for path in sorted((recipe_directory() / "popular").glob("*.withdrawn.json"))
+        for item in read_snapshot(path, WithdrawalSnapshot).releases
+    }
+
+
+def withdrawal_reason(recipe):
+    values = withdrawals()
+    if any(item.model_id == recipe.model.repository for item in values.values()):
+        withdrawal = values.get(recipe.content_hash)
+        return withdrawal.reason if withdrawal else None
+    return None
 
 
 def bundled_catalog():

@@ -181,7 +181,7 @@ class RecipeCatalog:
         await asyncio.to_thread(self.store.save_runtime_object, "recipe", value)
         return value
 
-    async def entries(self) -> list[dict]:
+    async def entries(self, *, include_withdrawn=False) -> list[dict]:
         if not self.bundled_loaded:
             async with self.release_lock:
                 if not self.bundled_loaded:
@@ -211,6 +211,11 @@ class RecipeCatalog:
                     await asyncio.to_thread(self.store.save_runtime_objects, "recipe", batch)
                     self.bundled_loaded = True
         entries = await asyncio.to_thread(self.store.runtime_objects, "recipe")
+        if not include_withdrawn:
+            from .popular_recipes import withdrawals
+
+            excluded = withdrawals()
+            entries = [e for e in entries if e["id"] not in excluded]
         return sorted(
             entries,
             key=lambda e: (e["recipe"]["id"], version_tuple(e["recipe"]["version"])),
@@ -218,7 +223,10 @@ class RecipeCatalog:
         )
 
     async def get(self, digest: str) -> dict:
-        value = next((item for item in await self.entries() if item["id"] == digest), None)
+        value = next(
+            (item for item in await self.entries(include_withdrawn=True) if item["id"] == digest),
+            None,
+        )
         if not value:
             raise KeyError("Recipe release not found")
         return value
@@ -353,6 +361,11 @@ class RecipeCatalog:
 
     async def compatible(self, recipe: SparkRecipe, target) -> list[str]:
         blockers = []
+        from .popular_recipes import withdrawal_reason
+
+        withdrawn = withdrawal_reason(recipe)
+        if withdrawn:
+            blockers.append(withdrawn)
         if version_tuple(__version__) < version_tuple(recipe.controller_min_version):
             blockers.append(f"Requires Spark Cluster {recipe.controller_min_version} or newer")
         if not target:

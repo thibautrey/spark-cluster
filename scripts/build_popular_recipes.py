@@ -172,6 +172,19 @@ def category(model, groups):
     return None
 
 
+def supported_weight_format(model):
+    if model.get("library_name") not in {"transformers", "sentence-transformers", "vllm"}:
+        return False
+    if any(
+        marker in model["id"].casefold() for marker in ("-mlx", "mlx-", "-gguf", "exl2", "exl3")
+    ):
+        return False
+    return any(
+        name.endswith(".safetensors") and "adapter_model" not in name
+        for name in model.get("siblings", [])
+    )
+
+
 def make_recipe(model, kind, version):
     repo, sha = model["id"], model["sha"]
     stable = re.sub(r"[^a-z0-9-]", "-", repo.casefold()).strip("-")[:85]
@@ -295,6 +308,8 @@ def main():
             continue
         if not (model.get("cardData") or {}).get("license"):
             continue
+        if not supported_weight_format(model):
+            continue
         kind = category(model, groups)
         if kind:
             by_category[kind].append(model)
@@ -314,6 +329,8 @@ def main():
         origin = {
             "kind": "generated",
             "category": kind,
+            "library": model["library_name"],
+            "weight_format": "safetensors",
             "task": model.get("pipeline_tag"),
             "captured_at": captured,
             "downloads": model.get("downloads", 0),

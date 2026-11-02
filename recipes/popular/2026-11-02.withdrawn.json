@@ -1,0 +1,895 @@
+{
+  "schema_version": "spark-cluster.recipe-withdrawals/v1",
+  "releases": [
+    {
+      "hash": "41aae2ff962146f5081b13138c6b0b7d6df8d614cc886e5b09b09a7674457f7e",
+      "model_id": "nvidia/DeepSeek-V4.1-Flash-1017-NVFP4",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "ef24a6a91ac464143bf15e3e1d4475b2f4d9fde3832b4714a08be34bc351c39c",
+      "model_id": "dealignai/GLM-5.3-CYBERSECURITY-FP8",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "c00d9d645f03c9f3a819d0096711305cae7e12d4ec4c9b44eb0a4c37f9a22d50",
+      "model_id": "c41/deepopen-banking77-sam13-v1",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "8089d86031401453775dda0c5f46ff8c84ead8fe1715ca7a59fbf05ddf417048",
+      "model_id": "lmstudio-community/Qwen3.8-27B-MLX-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "96b2a9a49dbc2ba0c50c7a62efd3ef556bf8c728cdc9e6d9020f3f283c8a3015",
+      "model_id": "inclusionAI/Ling-3.1-flash-1019",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "fd2fc6f4a8875d2110d7ac4253fd3459f1218e8d354c90cb702d5aec869442b0",
+      "model_id": "nvidia/Qwen3.8-Flash-Next-NVFP4",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "2f50c079262c5ddc32f1dba09107f65003a1cc710638231ba9ffa36405f70f1c",
+      "model_id": "lmstudio-community/Qwen3.8-27B-MLX-8bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "bd88e4160c109f1eaa8923f65164e3f8406acdda3e516ee91116609c502f3a46",
+      "model_id": "lmstudio-community/Qwen3.8-27B-MLX-6bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "68fe0f4c9591f225324ea28397cddb5e25ebef3f7e4236d96e0ce23ce6cc33a2",
+      "model_id": "lmstudio-community/Qwen3.8-27B-MLX-5bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "bd65758b8e5e91bceeef8f05c311cb41d13f06310d6f29aa37ad7cbd0cf7e2fa",
+      "model_id": "gugujiji/novel-humanize-4b",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "5751a58b2b86634d2dd3496759150914ebea1a97f0c79d82da6220d3a1e40733",
+      "model_id": "nvidia/Qwen3.8-Flash-Next-FP4-Local",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "22749bfebb896bd42bb4d2bdb49ce99b57671d6a63daa205e285406452edbde2",
+      "model_id": "cl-nagoya/ruri-large",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "8a7f99d4add75106f3ba14cbf7d03f253f6bd868cc23de3d6ec3beb96579d434",
+      "model_id": "cl-nagoya/ruri-v3-310m",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "cb5414a195aa0b702b270ce15c1cac2acdbcb0cb2652d18a69fcd8b9e488efbb",
+      "model_id": "bkai-foundation-models/vietnamese-bi-encoder",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "195e4ffd783e7b2eb1825961ca98360ec1e03fd610b6ce4a0cf62c829de58b10",
+      "model_id": "ytu-ce-cosmos/turkish-e5-large",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "6d73d7698b595599b28fd840854e1db8a708cdb6d7640440cc18e569eedcb0a7",
+      "model_id": "dealignai/GLM-5.3-UNCENSORED-FP8",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "66702e79f607e192b8ed9ad1232e3d8e4a11abb5150ddd3ac55ea21c7afda597",
+      "model_id": "nlpai-lab/KURE-v2",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "f09ee0c3268adc7eace2ca935c79d5ab5bbd69aa33df9bda8398a65a28a60fad",
+      "model_id": "orcarouter/Qwen3.8-27B-Uncensored-MLX",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "09edcec5448929aa679dd10361c1031d0b60e14f2746b9f2e4fb320e32fe4e0d",
+      "model_id": "nvidia/Cosmos-Reason2-2B",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "ea878a867725b4d5a93be4956d9f42d6d952a96d99c3adf2be01cc5073e69a41",
+      "model_id": "inclusionAI/Ling-3.0-flash-Sante",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "0b1ee2ec3495822de293f5a672061301e12c896c1ccd57445d08fbbf8810d363",
+      "model_id": "RadixArk/Qwen3.8-27B-NVFP4",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "b7ea8ce606897143c9f00376bd016f45daef5f632fadc927093777e9ea60b381",
+      "model_id": "VAGOsolutions/SauerkrautLM-Reason-Multi-ColBERT-15m",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "81528e640d9f1f3da098a6c8c0cfa86efd89a17f090b351f26ece8447a74c8f0",
+      "model_id": "mlx-community/embeddinggemma-300m-bf16",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "fa9d0604756f68df535b804bf02b93d2f56097a28e9b033d0f9228871d19901a",
+      "model_id": "furiosa-ai/Qwen3-Embedding-8B",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "83738d491eb0e67345742cc077119e5bbf4b4d00a7bd6b2daf4d8deb495545b5",
+      "model_id": "inclusionAI/LBS-27B",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "33e463d54f3375bad24b1bb448c950b2f33ca50132e09c239e6cbcc06a906776",
+      "model_id": "PaddlePaddle/PaddleOCR-VL-1.6",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "8a491da948992f81b24e419aa29ae08ba2c6f8e839aecb5c0152a1b0f4304f2f",
+      "model_id": "freds0/distil-whisper-large-v3-ptbr",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "d9a2f4bac0c83b09824e55338fd93c2a8db38054b8fe42dfe829127f7db6416b",
+      "model_id": "jaspai/modernbert-ai-text-detector",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "f0648295f772144582f49272ed95b3bb99a029d456e622ab5f8eaeeb5680079f",
+      "model_id": "lightonai/mLateOn",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "e08a0bfae801ee7770079bee5084bae310cd74bed208e1bb1545cec5a237a96a",
+      "model_id": "nvidia/GLM-5.3-Flash-FP4-Local",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "3d440aa98767ecbc3243d198ba8adcad4103192b3c9a24b8e75ed13b9e56cec9",
+      "model_id": "inclusionAI/Ling-3.1-flash-base",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "0cde80a35487dc64ae99248a66cf2aff2284c787ed5776bf1c998adda8a4dc6b",
+      "model_id": "agufsamudra/indo-sentiment-analysis",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "68e1d9eca4ab7b345889e102d044b6ceeb52fa05c18cb443223aa8e69ce7dec4",
+      "model_id": "inclusionAI/Ling-3.0-tiny",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "bfb564f26ce087879744f70df955b7ab6e7ff985b73af33906da778ff1676464",
+      "model_id": "Infatoshi/GLM-5.3-UNCENSORED-EXL3-3.0bpw",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "7e8efa0a371c9ff38844eefb818fbce23ef3e6061a368cc26e8fce5c2959d6fb",
+      "model_id": "hale03/multilingual-e5-small-f16",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "380964484e66562bed715352e51e4266c63c30369d5b2dd11c65f101a84673e2",
+      "model_id": "dots-studio/dots.mocr",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "63e4dc1fe4f6eef5aed5f5b046018b9d7126a698d9cd866a1784404d9fa0ef06",
+      "model_id": "cl-nagoya/ruri-v3-30m",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "74df8bdd9ec0eff04972646c97f468c2a659b8ec8ba797de600671e64a756171",
+      "model_id": "mlx-community/Qwen3.8-27B-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "58d48123eb0571b5f3bfeb2afd9ac58504fd2ccc275d0862addbb07c779aeb32",
+      "model_id": "nativ-community/embeddinggemma-2-bf16",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "756b38ea50c86b697ec8a9b9311e6b398bd2e269e9ed10404d2c445440bcd2db",
+      "model_id": "mlx-community/embeddinggemma-2-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "3ce6749f17457a970650a6346a9b8bab20cfd361be7ff12c0dcb2a2aefea14ba",
+      "model_id": "lmstudio-community/Qwen3.5-9B-MLX-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "95ce6476ec137a96e05636e62affd8328d84ce7a5f5d28e9f726acea0d1d4d1d",
+      "model_id": "Jundot/embeddinggemma-2-oQ8e",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "2b0dcd0c53805620c0c0c84dbc08320b360cb998c168bbd2654c17071f55b211",
+      "model_id": "lmstudio-community/Qwen3.5-9B-MLX-8bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "57d47a64310f04838462abe5d621a982c9f3fa7f1091fcff020d6a2b5d1a9ae2",
+      "model_id": "cl-nagoya/ruri-v3-130m",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "a9a88702f142fadca352fe1c1a781b142f9bac91c1d30535b84b6fa0de20e542",
+      "model_id": "nvidia/GLM-5.3-Flash-NVFP4",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "dfcd6c11e0ae279ebb5a4c860ef1aebe2b9189764567df76a30821ce2e0a234c",
+      "model_id": "agentlans/multilingual-e5-small-aligned-sentiment",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "222f1cf895da6258e043ac6154d73c63717fd555a8fc4a923d0b838bda4c1317",
+      "model_id": "RadixArk/Qwen3.8-Flash-Next-NVFP4",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "858666f56c149af9e6917e7b493a9812becb992915417b6a90c3ad2622f19631",
+      "model_id": "agentlans/multilingual-e5-small-pii-detector",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "880e066f63e439bb6595b16d1f0c71d4767650ac87871d7f73aa8625e688129e",
+      "model_id": "Jundot/Qwen3.8-Flash-Next-oQ4e-mtp",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "f4a205e15fe71599fba5588ab604736f69b3c52c0b6be45b3fb4072360b65a58",
+      "model_id": "ARTPARK-IISc/whisper-large-v3-vaani-hindi",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "32032f07c863345110f3bfd091e1e181563c9dbb95e8062d281582a159557913",
+      "model_id": "MediaTek-Research/Breeze-ASR-25",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "bfb4b772adfe73929a683b917b16e485c2fc31ad28e380febdcb2e39a2503d6b",
+      "model_id": "dots-studio/dots.ocr",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "623af340b04736063dc7d1c6e7bc88871e1f168e697432044ee2aeed1d225021",
+      "model_id": "pedronettotrue/bertimbau-legal-tjsc",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "305cba81f77928bf32a8c6ba6868deac3056b6400e6b7a05d80b5bbbababc452",
+      "model_id": "TheStageAI/thewhisper-large-v3-turbo",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "67746eaa2430c90c2339288fa7302c942af428d17906e0f05a3688e10fc49d78",
+      "model_id": "OvozifyLabs/whisper-small-uz-v1",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "1eedc9ecca81e42cd76e2d1b6be9b244e801800c5620332e3fbdf19b9658c914",
+      "model_id": "loudersyoakim/absa-indobert-acd",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "2806259fa4aa9be726f3260872a0543133b58588e65a30d719cbd51c9a303855",
+      "model_id": "lightonai/Reason-ModernColBERT",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "cc3dfd955bf48fb2bd350e58ad2fb3aa224f7c5bbbfce651c4fb1fa1bbff8136",
+      "model_id": "lmstudio-community/gemma-4-26B-A4B-it-QAT-MLX-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "dbe6799efd50fd526b2227f08dce9c1d27708308238ff2ade53a4b51b21ab700",
+      "model_id": "beamster/DeepSeek-V4.1-Flash-1017-Sushi-STQ-1.75bpw",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "4c82169a24cc4229acade5e830146ad10e9bfda6f1dda54a47e71710e9ce0c80",
+      "model_id": "openbmb/MiniCPM5-2B-MLX",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "41aa6df374ff89d1b38594b404f5153af703c267b59c377587e6087a13688e08",
+      "model_id": "dealignai/Gemma-4-31B-JANG_4M-CRACK",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "a74110aa9a87778079e40e6568a70359db175230847075c6eed77d4202cc507c",
+      "model_id": "lmstudio-community/Qwen3.6-27B-MLX-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "ac60c15fe4910b94bb27951ed91fc2dadb1c2ce9653f7acb5f37e803b385b565",
+      "model_id": "Bencode92/tradepulse-finbert-sentiment",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "438c040c37c5aade0d5b9aead45977009f08466df81e9dbbaaf6f884499e8a19",
+      "model_id": "s-zaizen/DeepSeek-V4.1-Flash-Abliterated",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "df791100aa721515af1e2895fde51301168cda8fc7c82462fb3ee6aa58189757",
+      "model_id": "inclusionAI/Ling-3.1-flash",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "0bb87980b80a7649920d352b8e77fea8ba6bf7008ec05fb899364c9aaaf25021",
+      "model_id": "lmstudio-community/Qwen3.6-27B-MLX-8bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "a31865665b9e8fa7680e6d7ef7bc0d25c8dc29ebae1b92049437143c06813907",
+      "model_id": "lmstudio-community/Qwen3.6-27B-MLX-5bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "0fdf16fed38350f528c163bde069387768ea1e611e56ab418415195421db4c6b",
+      "model_id": "rapid-mlx/Ling-3.0-tiny-MLX-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "990e8757104320280f18c9ed07391e40e27580180dd2acf82d14deae1d026a53",
+      "model_id": "classla/multilingual-IPTC-news-topic-classifier",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "28f450267e9ace3f6e4e97ed35eb17c19b232e049758c73017ce9bf38ac19b05",
+      "model_id": "lmstudio-community/Qwen3.6-27B-MLX-6bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "b6c384a02a35158a150b678aad69d0683439c3a625866d285bcdcdf6ed0abf01",
+      "model_id": "Mia-AiLab/GLM-5.3-Flash-EXL3-4bpw-TensorFold-Ablit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "920e2d501e3654fc07956c688c31c8c1a8355ff1a56d868f60f39c209d9e051f",
+      "model_id": "Mia-AiLab/DeepSeek-V4.1-Flash-1017-EXL3-EAQ-v1-2.9-bpw",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "05bfd8cae56c189a88759a4e5f1a4fa7118ea4c70f0b928d8b75d2bd70b40e97",
+      "model_id": "Axiveri/NaijaVox-2.0",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "cd009a614404e00e9551adc901d3fe79e08da5d1424ad5fe02b2a1c29ef6c806",
+      "model_id": "lightonai/GTE-ModernColBERT-v1",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "674bce45d9c507b9aff3c531818b826c7ff8660d4a145710286c8177af849874",
+      "model_id": "cl-nagoya/ruri-v3-70m",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "71ac8de8227ac7e4355e8b5f70a6ab3a4e0e6af775efdcb0f25c4153528c2bb1",
+      "model_id": "lmstudio-community/Qwen3.6-35B-A3B-MLX-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "962fd1a35c8149045b956f8021072704426b7474d229cbc0179ef576ee2064ba",
+      "model_id": "Qwen/Qwen2.5-14B",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "04ea202c01cbc1d3f967117401acc0bb52f06f522af9f297acaa50683b5ab5f2",
+      "model_id": "peculiar-ragdoll/Cyber-Tiel-Coder-35B-A3B-MLX-oQ4e-MTP",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "9b9b393e02fcd697dc895ec33a95d28b703c64043e1d2bc6ed68aff1eac9f44d",
+      "model_id": "lightonai/LateOn",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "9ef270fed659099d582eba7d9bc5bf7c323f19cd6fc9a7c069725cecbd56d8c5",
+      "model_id": "RedHatAI/Llama-3.2-3B-Instruct-FP8-dynamic",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "965f9fb1464df8757bc84c80972bbf644ff4e323d6eb99d2f250111d0fbb3749",
+      "model_id": "lmstudio-community/Qwen3.6-35B-A3B-MLX-8bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "9dfd796e0a1c9eda05dcf4eb24564732669904dabe7594c9afbd6195a0fc268b",
+      "model_id": "lmstudio-community/Qwen3.6-35B-A3B-MLX-6bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "bab60020df0ec4db8dd8a9e99d8e8079539b853a741708d1565ca2e7b779eb8d",
+      "model_id": "Trelis/tara",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "19bc8271e74930b8379a6c5044b5b33c88eca8048d09fbd452dadfd1d47cb182",
+      "model_id": "ShantanuT01/vanguard-ai-text-detector",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "b5140e4a340b00902cfc7feb41d181beccb4de69464c2ef14412506b67c613c6",
+      "model_id": "Jundot/Qwen3.8-27B-oQ4e-mtp",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "e973ae85684b7fc009dbaf5a23a69901c0310485daa5455463453a57cecf93c0",
+      "model_id": "mixedbread-ai/mxbai-edge-colbert-v0-32m",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "70791e09778ced59e36c283e2bb3343ff252c27c781a51df2e3d3ca290c0551e",
+      "model_id": "orcarouter/GLM-5.3-Flash-Uncensored-MLX",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "6ccc43f2467e669d999f0c3591f06944ce869dbbc839424073542af0f9796d5b",
+      "model_id": "0xSero/deepseek-v4-flash-0731-spark",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "f9ab6edb9fca6c6f20fd25c6ecfdb086be108adda85b0af66d6707409f944ea8",
+      "model_id": "mixedbread-ai/mxbai-edge-colbert-v0-17m",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "d8b6e0fdf60832ef0373bcbfeac136f70c0a22871e5cf0d302068b064440a743",
+      "model_id": "lightonai/ColBERT-Zero",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "f50e3d751d03ac73d41e929c33fdd949ecda302c8a6f90b4850f286f56d93a1c",
+      "model_id": "FaustDerLegende/RAGVERIFIER",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "b24e006aa972b70f1cffd78aa343611097bd33dc17866d8cd9ad4722e377ac03",
+      "model_id": "pratikgx/Nanbeige4.3-33B-MLX-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "3561c1803cf3d3ebaab80cf555eb76a0a0f513fcaf9c37bc63d8fe6ab2630d93",
+      "model_id": "lightonai/LateOn-Code-edge",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "5509a5f91e4b834a5ecc8f95e82e9f38b0a15e9a3b52611ce994aabea588d716",
+      "model_id": "mlx-community/all-MiniLM-L6-v2-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "384f9c56ee0567a1141dba834c418dc60ff6966c4c83c0bbb4bb40d1d0f0d5fb",
+      "model_id": "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "d330f1c5e9ed1da16539fea104775077e1a5fef4d16b719b11c113bde613f37c",
+      "model_id": "nvidia/Kimi-K2-Thinking-NVFP4",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "d3a6dc123bf903dc354b21562127a970cb6af594e4bbfef8b3928e72b6fa3cf3",
+      "model_id": "vysri/Qwen-0.6B-ConvFill",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "c7d0dfa311c3713aa2fca713692e3938380218035135051cd0891c47553bf8c7",
+      "model_id": "OpenLLM-France/Luciole-1B-Instruct-1.1",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "7c5369ad078737107c345521782c2a4e967119af78f03f29e996b042e2debd30",
+      "model_id": "OpenLLM-France/Luciole-8B-Instruct-1.1",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "e6ba340917b98190874ab9c14bdb8ffaa5bf17d9373640e1fb67801a615dbd59",
+      "model_id": "OpenLLM-France/Luciole-23B-Instruct-1.1",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "2740f8336f84344daf931a360c719234bd49c48f653b5b4603575b48180c5cba",
+      "model_id": "mlx-community/Qwen3-4B-Instruct-2507-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "f99d3482cc4607ed99c426f873ebaf8fd201581296dffa8bf2d53749c602d9c7",
+      "model_id": "NexVeridian/Qwen3-Coder-Next-8bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "14eee769bb7775d747c52353e515a47b09cc1d48d216bd51d16079aedae6869c",
+      "model_id": "unsloth/Llama-3.1-8B-Instruct",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "5d691f57ac352fa5c8cc24169bfc9da229a76de2bd298a8ec1129462adea737a",
+      "model_id": "desert-ant-labs/title",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "257aeaa177ace7df1612da1397f5876bebf7fcf5204bce83f679fe605168eb1a",
+      "model_id": "lmstudio-community/DeepSeek-R1-0528-Qwen3-8B-MLX-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "50cc1168656584fbd00ff529854e5484ebd630724876c585ccf042329820b06a",
+      "model_id": "RedHatAI/Qwen3-32B-NVFP4",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "957abc11dffdf12d7e0f2770adc8a39b7058cd6687acbb09d8c5b812826fa6ca",
+      "model_id": "lmstudio-community/DeepSeek-R1-0528-Qwen3-8B-MLX-8bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "517c880d93a36ab78f973059cf0e1cd3b2bb5d29f5878a0e8bef1a197001b6c3",
+      "model_id": "OpenLLM-France/Luciole-23B-Base",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "8504557548f22e5eb0bb95b82bd6854e0d8214aaf20a24e4fc3a15138df070a6",
+      "model_id": "cjvt/GaMS3-12B-Instruct",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "8bf026897d5a684d66863e3f9a0a352ae5b8c34a1d912708dcecf93fee2f9716",
+      "model_id": "mlx-community/gpt-oss-20b-MXFP4-Q8",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "8a622c68520f50772932ab4a9d5c3a42de8a6b76c81c4341b8c2f505c0ddd619",
+      "model_id": "Edge0/Edge0-8B-A1B-preview",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "e2378dc542fed677c8663f5191a0b35ddac6cc8b9ce7c5b9e59682bae26e64de",
+      "model_id": "lmstudio-community/GLM-4.7-Flash-MLX-8bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "2780fff643cf57e6450c025930633b3fd5e7476f9caba4d62454cdceedb2c198",
+      "model_id": "nota-ai/Nemotron-3.5-Lightning-30B-A3B-Nota-Ternary-MLX-1014",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "66e9cdcfaf6bcbdc17256ec6baaf8c793ce331172a1a5f3eb36dad108b88f5c8",
+      "model_id": "Qwen/Qwen2.5-3B",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "d2725a59b0e24d7cb2c1395ecb00e013e41cbfa52a7013aaae1a96c3c6e129d5",
+      "model_id": "lmstudio-community/GLM-4.7-Flash-MLX-6bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "b2b246b9818f5d0b450ac42450af0d4d8e5728a449f4eb9d850caf59a19abea9",
+      "model_id": "nvidia/GLM-5.3-NVFP4",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "609a4cff99d91029277635f8de461b5f9530bff9e39d9ecd42aee7e126387800",
+      "model_id": "deep-principle/Hydrogen-1.0",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "4f1db9961c9b656a6dd9f51f500ff6690f579f67f522ed4d4c0a73a076ca5f0b",
+      "model_id": "lmstudio-community/LFM2-24B-A2B-MLX-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "df903cd72bcc61690c8985102213d1717c7e849aa9bf269fb26bfbdcdde10789",
+      "model_id": "lmstudio-community/LFM2-24B-A2B-MLX-5bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "2635b51b40dd1e1bc01623993a7ead53698463e72c00a5360e0959eaa24ac8b0",
+      "model_id": "lmstudio-community/LFM2-24B-A2B-MLX-8bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "d8f668fece7d5567194f46fecb0171704ae76919b164eb6a2cbb28b49eb1e8bb",
+      "model_id": "lmstudio-community/LFM2-24B-A2B-MLX-6bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "3147d1eb37a6efb4df3a3f5c417cd382f17f5c0408170b2755755e249ddae908",
+      "model_id": "s-emanuilov/LLMBG-Llama-3.1-8B-BG-Reasoning-v0.1",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "18749f3400ff4b370e3bde39f467d22343313d59560cd184ed2b7cd980fb0afd",
+      "model_id": "yukiyounai/Jailbreak-R1",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "2a885ab47b511f5a72b75d8f36c23c0d45ccedf43e0549bdb2160305c97191c2",
+      "model_id": "emissary-ai/Python-Tab-Completion-CodeLlama-70b",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "463f26cfcb4927c9948fd978f278fc1635bc87c0d45f5ad616b46299f4114ecb",
+      "model_id": "nvidia/Qwen3-8B-NVFP4",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "5793e40e98248960aca8cc471a28855072b949a58696d9d41fb4879f6d57c4ad",
+      "model_id": "OpenLLM-France/Luciole-8B-Base",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "3440f9e189fc480e43aa1184a142b881e204b270878fdbe01f7b28e6fb8c21ec",
+      "model_id": "OpenLLM-France/Luciole-1B-Base",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "29e6b70dba9913f4d253344c02267283301e261c81e986fe4860ffbfa0c3c0d0",
+      "model_id": "RedHatAI/Mistral-Small-24B-Instruct-2501-FP8-dynamic",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "90249defd5650ffdd8e6fd545070d0e9856656f35f4541ad7701b8fa5862bfb3",
+      "model_id": "nvidia/GLM-5.2-NVFP4",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "97c97113e017df142ba4dc2b77327fcb5763d65571839142abaf997be671e294",
+      "model_id": "lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "5ac030481414e5524cbf3f66298d136b0042d000d09bf763fe077bf43f53a399",
+      "model_id": "RedHatAI/Llama-3.3-70B-Instruct-FP8-dynamic",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "f1bb29d5e4aa2d4b0524de969062d3d9e32be52c92ffc850c7a3ed1ee4133c72",
+      "model_id": "llmat/Qwen3-4B-Instruct-2507-NVFP4",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "726699c3506b22e6812cf6da665aba486cd0506a8a4b3f06572c8a81a27f5f63",
+      "model_id": "lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-5bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "e0247cb2e0cbf1d665eeeba09c3e74083ff889f1926d4c28fb0eb6a4fa3350be",
+      "model_id": "lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-8bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "07b653df359ae07a86ddf589aa14ba8957c413266a3b53d8ee3a4b596b7c12d3",
+      "model_id": "lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-MLX-6bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "400dc5a234f6afce5ac91ac9d2e7d03135c29c2d8a79e99970b2c43945a1d65f",
+      "model_id": "lmstudio-community/Qwen2.5-Coder-14B-Instruct-MLX-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "1b51a749b8afaf9138f63cafe0775625d54fe2325963e382faacaf33d162c896",
+      "model_id": "terrycraddock/TinyLlama_V1.1_Tree_of_thoughts",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "d63b20dd2d3123a5c01c43b75de8a7280af0856893118f7d925ccc858d74c2ab",
+      "model_id": "llamafactory/tiny-random-qwen3",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "b89a10034d4b6efd6e8b6202933a04c6b84aacb4f49af168066dc25c41ce4afe",
+      "model_id": "elte-nlp/Racka-4B",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "1d48a2bb0a0526d2eafa4338f7d696448c7209741834acb886cf1daa79e0fad2",
+      "model_id": "microsoft/UserLM-8b",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "8e86c50b9b7eead88d0340aa76b08ff795035a925dcd39ea97f2b9835a4f31d6",
+      "model_id": "1Covenant/Covenant-72B",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "71dbceea2b7ecde02417c6c64fef2f7dfffcd0e7a46ca8dbcd9bee1df6c7490d",
+      "model_id": "NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "7cb4c6ee6d6f6f7cf96ed8cc0314b3b08c3aa372675242394035fb87e6c118db",
+      "model_id": "ogulcanaydogan/Turkish-LLM-32B-Instruct",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "66fd012882c1a5eb907dadb5879da68882e3b4ceba8d4b3721fabf92c1378d99",
+      "model_id": "divinetribe/Llama-3.3-70B-Instruct-abliterated-8bit-mlx",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "e91cde7f3f39114d4bd3d2d2162a21154d3af1c0837f5485861498f769e1a8d1",
+      "model_id": "lmstudio-community/LFM2.5-1.2B-Instruct-MLX-8bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "954fb2a6dcd7e8fda29e02cbe9950636d7ca5710ba2a6a6a744d775e63d504a9",
+      "model_id": "lmstudio-community/Qwen2.5-Coder-14B-Instruct-MLX-8bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "b5cb48e6118487331a7127003ad4cd3e6173439fb353a0ebc45de03ab25af8af",
+      "model_id": "lmstudio-community/LFM2.5-1.2B-Instruct-MLX-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "1a64feee1b0cb5a75738292b3c94341bb2d31f1ed77e16a7b92129c8a0d9ea33",
+      "model_id": "lmstudio-community/LFM2.5-1.2B-Instruct-MLX-6bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "5a79f8fcb5d0b0820902ee16698e28fa9682d62c730db8a8a64e3c78aea3e289",
+      "model_id": "AGmind/agmind-rag-splitter-ru",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "85e54c7c23bc2f0b73265bb2c5c49ad40c424788b8ec326e33f6f95fada2435b",
+      "model_id": "mlx-community/DeepSeek-V4-Flash-0731-2.4bit-mixed",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "00d8194379dec67436dbdc232847c67ea316a96dc3ee26bf99f1bf217d869714",
+      "model_id": "mlx-community/Qwen3-0.6B-8bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "e698a17b4a6ece24ed9fdf5e0a7b5b0a8249281caa9c4e1eebfbe2a24147e667",
+      "model_id": "OliviaRossi/TripleTrouble-V3",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "712844c3136fc100864c961843da7cdb5c8dcdfc48719045ec2e18c831ca3219",
+      "model_id": "MikeRoz/MiMo-V2.6-Pro-MOPD-2.53bpw-h6-exl3",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "61e3a279b03aed6b40ba9761c2bb7f51036c6a6acf694b63c53b03c32aadd1ae",
+      "model_id": "mlx-community/Qwen2.5-0.5B-Instruct-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "3960194321bf0e25f5f4d96ae8a57802dd73b647d5cd484927c3bdc83d359e63",
+      "model_id": "internlm/internlm3-8b-instruct",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "2102d05d61f5b672150e4eddfdcc1a74a8306ff99148cfc11a682a7e767fe00e",
+      "model_id": "mlx-community/Qwen3-0.6B-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "1ca3e5533a4c0480e6c8c0bd1a2ae4b1b84779a58bec31ae9ce555d1530990cd",
+      "model_id": "OpenLLM-France/Luciole-8B-KD-Math-Base",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "c70b63f7a89b6075723a26fad3efae357586e9f011d37aef6ac7a270874f91f9",
+      "model_id": "nvidia/Qwen3-235B-A22B-NVFP4",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "8207bc332436a1219f6fc042fdcc9198146953b589b5cd365ed110abf149daaa",
+      "model_id": "lmstudio-community/Qwen2.5-Coder-32B-Instruct-MLX-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "2a25d0f90509f2ac3e4aa8dee9a0efe9a22d1195aee600454aa054be73ceba92",
+      "model_id": "lmstudio-community/Qwen3-14B-MLX-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "e87aa0b053894eef8e4ef6a29275959193e6295f5861ef0f6ea94cff31275a3d",
+      "model_id": "Nurymanau/Nanbeige4.3-33B-MLX-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "6d5b2f0213cd672912c612066da37e43c50ee0896650e41069d3f647bf69501b",
+      "model_id": "inclusionAI/Ling-3.0-flash-Sante-fp8",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "cd0a9ec6941823fd9154ac0fa22d6f888be1a38b697b5c764b5e57aac9332b8d",
+      "model_id": "SonGT1/Qwen2.5-1.5B-Instruct-abliterated",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "6310d5310e98b276b736ef33dd9b7f2999bbe201704998c736caadc9d5d9fde9",
+      "model_id": "Featherless-Chat-Models/llama2-13b-chat-hf",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "6cd517f869502e548c7b0796d5d845aadbfb707fb94468f3207cf76890daeeb0",
+      "model_id": "nvidia/DeepSeek-V4-Pro-NVFP4",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "afb3a16b2d44dd50b1664d6e0ab97f976da13226811a9a08b3eacb5523301402",
+      "model_id": "lmstudio-community/Qwen2.5-Coder-32B-Instruct-MLX-8bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "5f895b4ac751f6dd258f6a656e9092869e31b22ad36de23a99dc96cff46c2662",
+      "model_id": "deep-principle/Hydrogen-1.0-MXFP4",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "1b0ef3718d79f3cab99252d2149234d2713631ce61e18b94444854c022c4df4d",
+      "model_id": "KISTI-KONI/KONI-Llama3.1-8B-Instruct-20241024",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "3ee39cfe12f5a97cb6e9e1adfd2a8d9710cf6df48149465583230aacc65a5aed",
+      "model_id": "mlx-community/Qwen3-8B-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "eb13aa910c6f13ebedfc14390f56c8b3933c490f9d75c51eaa1018fb4f054202",
+      "model_id": "openbmb/MiniCPM5-1B-MLX",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "69263e7d7b8c448e39337047565fb3f793c10b9b0c9fa27a776f3b5e83d303a4",
+      "model_id": "lmstudio-community/Qwen3-14B-MLX-8bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "513f302adf6f5c332dfe2bf64e031db662a285739aff87131e7ed6017c895986",
+      "model_id": "mlx-community/Llama-3.2-3B-Instruct-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "fcdd84374e49b61240e17f88933153523db77d9ab7276ebe9b430358d7cc14f6",
+      "model_id": "lmstudio-community/Qwen3-4B-Instruct-2507-MLX-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "d1789142294b69dc37eafd62171c7a2bb0f0d38162d01a61b38a9553c11027b2",
+      "model_id": "mlx-community/Qwen3-Embedding-0.6B-4bit-DWQ",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "37fa58628cea91c048209706a6b63379879fc241d813c5543747831f24ae4ffd",
+      "model_id": "mlx-community/Llama-3.2-1B-Instruct-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "26b9ee073650e498582fcf1fc4364bb32850fb9888061717c04e93cdf802b956",
+      "model_id": "mlx-community/Mistral-7B-Instruct-v0.2-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "997b8d8f16d6c2c2692bc2d3ddf5fc2d90994fdf4215ba64dc6500f19556fc0f",
+      "model_id": "lmstudio-community/Qwen3-4B-Instruct-2507-MLX-8bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    },
+    {
+      "hash": "f90cba517b9c52744f1f1353d1d7b202866643bdf51a48edc495709c54c77ebb",
+      "model_id": "mlx-community/Meta-Llama-3-8B-Instruct-4bit",
+      "reason": "Withdrawn: checkpoint library or weight format is not supported by this vLLM template."
+    }
+  ]
+}

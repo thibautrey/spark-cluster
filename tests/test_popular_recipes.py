@@ -26,6 +26,12 @@ def test_catalog_has_over_one_thousand_distinct_pinned_serving_templates():
         assert r.validation == "generated-template"
         assert len(r.model.revision) == 40
         assert "@sha256:" in r.runtime.image
+        assert entry.origin["library"] in {"transformers", "sentence-transformers", "vllm"}
+        assert entry.origin["weight_format"] == "safetensors"
+        assert not any(
+            marker in r.model.repository.casefold()
+            for marker in ["-mlx", "mlx-", "-gguf", "exl2", "exl3"]
+        )
         assert entry.origin["architectures"]
         assert entry.origin["query_ranks"]
         assert entry.origin["safetensors"]["parameters"]
@@ -145,3 +151,19 @@ async def test_probe_rejects_empty_embeddings_instead_of_claiming_success():
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         with pytest.raises(ValueError, match="embedding"):
             await probe_recipe(client, entry.recipe, {})
+
+
+@pytest.mark.asyncio
+async def test_withdrawn_release_remains_addressable_but_cannot_be_installed(catalog, monkeypatch):
+    from spark_cluster import popular_recipes
+
+    entries = await catalog.entries()
+    entry = entries[0]
+    recipe = SparkRecipe.model_validate(entry["recipe"])
+    withdrawal = popular_recipes.RecipeWithdrawal(
+        hash=entry["id"], model_id=recipe.model.repository, reason="Withdrawn incompatible format"
+    )
+    monkeypatch.setattr(popular_recipes, "withdrawals", lambda: {entry["id"]: withdrawal})
+    assert not any(e["id"] == entry["id"] for e in await catalog.entries())
+    assert (await catalog.get(entry["id"]))["recipe"] == entry["recipe"]
+    assert "Withdrawn incompatible format" in await catalog.compatible(recipe, None)
