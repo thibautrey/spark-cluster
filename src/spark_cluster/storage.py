@@ -104,6 +104,7 @@ class StorageService:
         self.on_change = None
         self.scan_future = None
         self.scan_state = None
+        self.scan_partial = None
         self.scan_at = 0
 
     def _scan(self):
@@ -133,6 +134,11 @@ class StorageService:
                 },
             )
             location["paths"].append(str(base))
+            self.scan_partial = {
+                "locations": copy.deepcopy(list(locations.values())),
+                "assets": [],
+                "model_location_id": model_location or location_id,
+            }
             if kind == "models":
                 model_location = location_id
                 candidates = []
@@ -271,12 +277,31 @@ class StorageService:
             self.scan_state = state
             scanning = False
         except TimeoutError:
-            state = self.scan_state or await asyncio.to_thread(self._quick_disk_state)
+            root = self.settings.model_cache_path.absolute()
+            pending_id = "disk-pending-" + token(str(root))[:16]
+            state = (
+                self.scan_state
+                or self.scan_partial
+                or {
+                    "locations": [
+                        {
+                            "id": pending_id,
+                            "name": "Model disk",
+                            "paths": [str(root)],
+                            "free_bytes": None,
+                            "total_bytes": None,
+                            "kind": "filesystem",
+                            "scope": "node",
+                        }
+                    ],
+                    "assets": [],
+                    "model_location_id": pending_id,
+                }
+            )
             scanning = True
         result = copy.deepcopy(state)
         for location in result["locations"]:
-            usage = await asyncio.to_thread(shutil.disk_usage, location["paths"][0])
-            location.update(free_bytes=usage.free, total_bytes=usage.total, scanning=scanning)
+            location["scanning"] = scanning
         result["scanning"] = scanning
         return result
 
@@ -590,6 +615,11 @@ class StorageService:
                 self.scan_state["assets"] = [
                     a for a in self.scan_state["assets"] if a["id"] not in deleted
                 ]
+                affected = {a["location_id"] for a in selected if a["id"] in deleted}
+                for location in self.scan_state["locations"]:
+                    if location["id"] in affected:
+                        usage = await asyncio.to_thread(shutil.disk_usage, location["paths"][0])
+                        location["free_bytes"] = usage.free
             self.node.demand.profiles[:] = [
                 p
                 for p in self.node.demand.profiles
@@ -649,6 +679,9 @@ class StorageService:
             location = next((p for p in state["locations"] if p["id"] == location_id), None)
             if not location or location["free_bytes"] is None:
                 raise ValueError("Storage capacity unavailable; refresh the selected node")
+            if location["kind"] == "filesystem":
+                usage = await asyncio.to_thread(shutil.disk_usage, location["paths"][0])
+                location["free_bytes"] = usage.free
             if needed > location["free_bytes"]:
                 shortages.append(
                     {

@@ -405,7 +405,7 @@ async def test_slow_disk_scan_returns_pending_without_blocking_inventory(setup):
         pending = await asyncio.wait_for(setup.local(fresh=True), timeout=1)
         assert pending["scanning"] is True
         assert pending["assets"] == []
-        assert pending["locations"][0]["free_bytes"] > 0
+        assert pending["locations"][0]["scanning"] is True
     finally:
         release.set()
     await asyncio.to_thread(setup.scan_future.result, 2)

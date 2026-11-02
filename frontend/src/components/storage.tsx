@@ -164,7 +164,9 @@ export function StoragePanel() {
           )}
           <p>
             {location.free_bytes === null
-              ? "Docker free capacity is not reported"
+              ? location.kind === "docker"
+                ? "Docker free capacity is not reported"
+                : "Disk capacity is being checked"
               : `${bytes(location.free_bytes)} free of ${bytes(location.total_bytes || 0)}`}
             {location.scope === "shared" && " · Shared across nodes"}
           </p>
