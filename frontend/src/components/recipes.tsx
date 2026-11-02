@@ -754,7 +754,7 @@ export function Recipes() {
           <Meter value={job.progress} label="Recipe installation" />
           <Message error={job.error} />
           {job.status === "failed" &&
-            (job.storage || /space|disk|storage/i.test(job.error || "")) && (
+            (job.storage || /ENOSPC|no space left|not enough (disk|storage)|disk.*(full|space|capacity)|insufficient (disk|storage)/i.test(job.error || "")) && (
               <Button
                 variant="outline"
                 disabled={action.busy || busy}
