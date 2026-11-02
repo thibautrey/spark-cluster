@@ -12,7 +12,17 @@
   <img alt="DGX Spark / GB10" src="https://img.shields.io/badge/platform-DGX%20Spark%20%2F%20GB10-f6c766">
 </p>
 
-![Spark Cluster overview with active inference traffic](docs/screenshots/overview-2026.jpg)
+<p align="center">
+  <a href="#product-tour">Product tour</a> ·
+  <a href="#run-the-dashboard">Quick start</a> ·
+  <a href="docs/cluster-setup.md">Cluster setup</a> ·
+  <a href="docs/recipes.md">Recipes</a> ·
+  <a href="#mcp-server-for-ai-clients">MCP tools</a>
+</p>
+
+![Spark Cluster model launcher showing GPU memory budgets and resident models](docs/screenshots/model-launcher-2026-11.jpg)
+
+<p align="center"><sub>From available GPU memory to running models, in one workspace.</sub></p>
 
 Spark Cluster manages NVIDIA DGX Spark fleets and local Docker GPU hosts from one dashboard.
 It discovers public Hugging Face models, checks whether they fit each pool, prepares compatible
@@ -73,26 +83,57 @@ See [storage inventory, deletion safeguards, and space recovery](docs/storage.md
 
 ## Product tour
 
-The screens below use representative demo telemetry and model activity; no production cluster,
-request content, or credentials are shown.
+Connect a compute pool, discover a model, and launch it with a clear view of available
+memory. Follow runtime activity from the same dashboard.
+
+These screenshots were captured on November 2, 2026. Model listings, hardware usage,
+and runtime status reflect that snapshot and vary with your environment.
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/compute-pools-2026.jpg" alt="Compute pool manager with a DGX Spark cluster and a local GPU host"><br><strong>Compute pools</strong><br>Connect remote Spark clusters and local Docker GPUs, switch the active pool, and keep each target's hardware capacity visible.</td>
-    <td width="50%"><img src="docs/screenshots/inference-api-2026.jpg" alt="OpenAI-compatible inference and MCP endpoints"><br><strong>One endpoint for applications and agents</strong><br>Route models across every available pool through OpenAI-compatible APIs, with a separate MCP endpoint for model and cluster tools.</td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="docs/screenshots/model-library-2026.jpg" alt="Live Hugging Face model discovery ranked for DGX Spark"><br><strong>Model discovery</strong><br>Search current Hugging Face repositories, inspect evidence and licenses, compare Spark-focused recipes, and check capacity before downloading.</td>
-    <td width="50%"><img src="docs/screenshots/model-launcher-2026.jpg" alt="Multi-model launcher with automatic GPU placement"><br><strong>Multi-model launcher</strong><br>See GPU budgets, resident models, compatible runtimes, and automatic concurrency before loading or unloading a model.</td>
-  </tr>
-  <tr>
-    <td colspan="2"><img src="docs/screenshots/runtime-readiness-2026.jpg" alt="Runtime readiness across four DGX Spark targets"><br><strong><a href="docs/runtime-library.md">Runtime readiness</a></strong><br>Verify vLLM, SGLang, llama.cpp, and specialized engines across every target. Launch-ready paths stay distinct from packages that need preparation or a validated recipe.</td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="docs/screenshots/topology-2026.jpg" alt="Four-node DGX Spark pool topology"><br><strong>Live topology</strong><br>Follow node roles, links, GPU activity, memory, output rate, temperature, and health from the same pool context.</td>
-    <td width="50%"><img src="docs/screenshots/kv-cache-2026.jpg" alt="Tiered KV cache usage and latency"><br><strong>Tiered KV cache</strong><br>Compare capacity, hit rate, and read latency across GPU KV, unified memory, local NVMe, and shared cache.</td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/compute-pools-2026-11.jpg"><img src="docs/screenshots/compute-pools-2026-11.jpg" alt="Compute pools screen with a local dual RTX 3060 Ti host and a connected Spark pool"></a>
+      <br><strong>Connect your compute</strong><br>
+      Bring local Docker GPUs and remote Spark pools into one workspace, then select the pool for your next workload.
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/model-library-2026-11.jpg"><img src="docs/screenshots/model-library-2026-11.jpg" alt="Model library with Hugging Face repository cards, task labels, and documented Spark recipes"></a>
+      <br><strong>Find your next model</strong><br>
+      Browse Hugging Face repositories, filter by task, and identify documented Spark recipes before checking runtime support and capacity.
+    </td>
   </tr>
 </table>
+
+### Launch with capacity in view
+
+The launcher above brings GPU memory, model status, retention, and automatic concurrency
+together. Search resident and available models, review their estimated VRAM, and load or
+unload workloads from the same view.
+
+### Follow the runtime
+
+![Runtime logs with instance and severity filters, timestamps, and streaming output](docs/screenshots/runtime-logs-2026-11.jpg)
+
+Filter streaming logs by instance and level, pause the feed to inspect an event, or clear
+the current view. Request activity and engine output stay alongside the controls used to
+operate your models.
+
+<details>
+<summary>Explore more dashboard views</summary>
+
+| Inference API | Runtime readiness |
+| --- | --- |
+| ![OpenAI-compatible inference and MCP endpoints](docs/screenshots/inference-api-2026.jpg) | ![Runtime readiness across DGX Spark targets](docs/screenshots/runtime-readiness-2026.jpg) |
+| Connect applications and agents through shared endpoints. | [Check engine versions and preparation requirements](docs/runtime-library.md) before launching. |
+
+| Pool topology | Tiered KV cache |
+| --- | --- |
+| ![DGX Spark pool topology](docs/screenshots/topology-2026.jpg) | ![Tiered KV cache usage and latency](docs/screenshots/kv-cache-2026.jpg) |
+| Inspect node roles, links, GPU activity, memory, and health. | Compare capacity, hit rate, and read latency across cache tiers. |
+
+These additional views use representative demo telemetry.
+
+</details>
 
 ## How it works
 
