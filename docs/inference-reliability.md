@@ -91,3 +91,12 @@ completions to the existing live `cce-compression` model. All six returned HTTP
 200 and backend-reported token usage; all five streams included `[DONE]`.
 This validates forwarding against a real model. The new recovery supervisor has
 automated fault coverage and still requires deployment for live recovery evidence.
+# Machine-scoped inference admission
+
+The 64-request inference limit is enforced by the executing `PoolNode`, not by
+the routing controller. All models on one machine share its allowance, including
+requests forwarded by different controllers. Remote machines have independent
+allowances: slow embeddings on Unraid cannot consume a Spark's inference slots.
+Running and queued requests count until completion, failure or cancellation;
+rejected requests return HTTP 503 with `Retry-After: 1` and
+`Machine inference queue is full`.

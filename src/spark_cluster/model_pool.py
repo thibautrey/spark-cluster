@@ -151,6 +151,7 @@ class PoolNode:
         self._metadata_checked = {key: time.monotonic() for key in self.runtime_metadata}
         self.tracker = None
         self.storage_lock = asyncio.Lock()
+        self.pending_requests = 0
         self.native_lock = asyncio.Lock()
         self.native_requests = 0
         self.native_changed = asyncio.Event()
@@ -211,10 +212,24 @@ class PoolNode:
         if self.tracker:
 
             async def handler(scope, receive, send):
-                await self._infer_local(model_id, path, scope, receive, send)
+                await self._infer_queued(model_id, path, scope, receive, send)
 
             return await self.tracker.track(handler, model_id, path, scope, receive, send)
-        return await self._infer_local(model_id, path, scope, receive, send)
+        return await self._infer_queued(model_id, path, scope, receive, send)
+
+    async def _infer_queued(self, model_id, path, scope, receive, send):
+        # Admission belongs to the executing machine, shared by all its models
+        # and all controllers forwarding requests to this node.
+        if self.pending_requests >= 64:
+            await inference_error("Machine inference queue is full", retry_after=1)(
+                scope, receive, send
+            )
+            return
+        self.pending_requests += 1
+        try:
+            await self._infer_local(model_id, path, scope, receive, send)
+        finally:
+            self.pending_requests -= 1
 
     async def _infer_local(self, model_id, path, scope, receive, send):
         cluster = self.local_cluster()
@@ -928,7 +943,6 @@ class ModelPool:
         self.scheduling = asyncio.Lock()
         self.cache = None
         self.cache_time = 0.0
-        self.pending_requests = 0
         self._routing_cursor = {}
         self._inventory_task = None
         self.tracker = None
@@ -1557,22 +1571,10 @@ class ModelPool:
         if self.tracker:
 
             async def handler(scope, receive, send):
-                await self._infer_queued(model_id, path, scope, receive, send)
+                await self._infer(model_id, path, scope, receive, send)
 
             return await self.tracker.track(handler, model_id, path, scope, receive, send)
-        return await self._infer_queued(model_id, path, scope, receive, send)
-
-    async def _infer_queued(self, model_id, path, scope, receive, send):
-        if self.pending_requests >= 64:
-            await inference_error("Pool inference queue is full", retry_after=1)(
-                scope, receive, send
-            )
-            return
-        self.pending_requests += 1
-        try:
-            await self._infer(model_id, path, scope, receive, send)
-        finally:
-            self.pending_requests -= 1
+        return await self._infer(model_id, path, scope, receive, send)
 
     async def _infer(self, model_id, path, scope, receive, send):
         state = await self.inventory()

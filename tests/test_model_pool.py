@@ -92,6 +92,96 @@ async def eventually(predicate):
 
 
 @pytest.mark.asyncio
+async def test_machine_queue_is_shared_by_models_but_not_other_machines():
+    gate = asyncio.Event()
+    calls = []
+
+    def machine():
+        node = object.__new__(PoolNode)
+        node.pending_requests = 0
+        node.tracker = None
+
+        async def infer(model_id, path, scope, receive, send):
+            calls.append(model_id)
+            await gate.wait()
+
+        node._infer_local = infer
+        return node
+
+    unraid, spark = machine(), machine()
+    messages = []
+
+    async def send(message):
+        messages.append(message)
+
+    tasks = [
+        asyncio.create_task(unraid.infer(f"model-{i % 2}", "v1/embeddings", {}, None, send))
+        for i in range(64)
+    ]
+    try:
+        await eventually(lambda: unraid.pending_requests == 64)
+        await unraid.infer("another-model", "v1/chat/completions", {"type": "http"}, None, send)
+        assert messages[0]["status"] == 503
+        assert b"Machine inference queue is full" in messages[1]["body"]
+        assert "another-model" not in calls
+
+        tasks.append(
+            asyncio.create_task(spark.infer("qwen3.8", "v1/chat/completions", {}, None, send))
+        )
+        await eventually(lambda: spark.pending_requests == 1)
+        assert "qwen3.8" in calls
+
+        tasks[0].cancel()
+        await asyncio.gather(tasks[0], return_exceptions=True)
+        assert unraid.pending_requests == 63
+        tasks.append(
+            asyncio.create_task(unraid.infer("another-model", "v1/embeddings", {}, None, send))
+        )
+        await eventually(lambda: "another-model" in calls)
+    finally:
+        gate.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    assert unraid.pending_requests == spark.pending_requests == 0
+
+
+@pytest.mark.asyncio
+async def test_controller_does_not_apply_a_global_inference_limit(tmp_path):
+    pool = FakePool(tmp_path)
+    gate = asyncio.Event()
+    admitted = []
+
+    async def route(model_id, *args):
+        admitted.append(model_id)
+        await gate.wait()
+
+    pool._infer = route
+    tasks = [
+        asyncio.create_task(pool.infer(f"model-{i}", "v1/chat/completions", {}, None, None))
+        for i in range(65)
+    ]
+    try:
+        await eventually(lambda: len(admitted) == 65)
+    finally:
+        gate.set()
+        await asyncio.gather(*tasks)
+
+
+@pytest.mark.asyncio
+async def test_machine_queue_releases_slot_after_failure():
+    node = object.__new__(PoolNode)
+    node.pending_requests = 0
+    node.tracker = None
+
+    async def fail(*args):
+        raise RuntimeError("upstream failed")
+
+    node._infer_local = fail
+    with pytest.raises(RuntimeError, match="upstream failed"):
+        await node.infer("model", "v1/embeddings", {}, None, None)
+    assert node.pending_requests == 0
+
+
+@pytest.mark.asyncio
 async def test_automatic_pool_avoids_retained_model_and_keeps_ui_selection(tmp_path):
     pool = FakePool(tmp_path)
     pool.nodes["first"].update(active_model="other/model", keep_loaded=True)
