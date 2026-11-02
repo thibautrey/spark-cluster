@@ -277,6 +277,8 @@ export function Recipes() {
       });
       await refresh();
     });
+  const installed = (digest: string) => jobs.some((job) =>
+    job.recipe_hash === digest && job.status === "completed" && job.artifacts_present);
   const installLabel = (recipe: Recipe) =>
     recipe.validation === "generated-template"
       ? "Install template"
@@ -503,8 +505,11 @@ export function Recipes() {
                     }
                     onClick={() => install(entry)}
                   >
-                    {running ? "Installing…" : installLabel(r)}
+                    {running ? "Installing…" : installed(entry.id) ? "Reinstall release" : installLabel(r)}
                   </Button>
+                  {installed(entry.id) && (
+                    <Button disabled={action.busy || busy || !!entry.blockers.length} onClick={() => install(entry, true)}>Launch release</Button>
+                  )}
                 </footer>
               </div>
             </article>
@@ -703,8 +708,11 @@ export function Recipes() {
               }
               onClick={() => install(detailEntry)}
             >
-              {installLabel(detailRecipe)}
+              {installed(detailEntry.id) ? "Reinstall release" : installLabel(detailRecipe)}
             </Button>
+            {installed(detailEntry.id) && (
+              <Button disabled={action.busy || busy || !!detailEntry.blockers.length} onClick={() => install(detailEntry, true)}>Launch release</Button>
+            )}
           </>
         )}
       </Sheet>

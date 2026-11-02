@@ -637,11 +637,11 @@ class StorageService:
                 self.on_change()
             return {"deleted": deleted, "errors": errors}
 
-    async def _mark_recipe_files_removed(self, asset):
+    async def _mark_recipe_files_removed(self, asset, cluster_id=None):
         for job in await asyncio.to_thread(self.store.runtime_objects, "recipe-install"):
             recipe = job["recipe"]
             local = self.node.local_cluster()
-            if job.get("cluster_id") != (local.id if local else "controller"):
+            if job.get("cluster_id") != (cluster_id or (local.id if local else "controller")):
                 continue
             if any(
                 r["id"] == recipe["id"] and r["version"] == recipe["version"]
@@ -665,7 +665,11 @@ class StorageService:
                     done = await self.delete_local(values)
                 else:
                     cluster = self.registry.get(cluster_id)
+                    inventory = await self._remote(cluster, "GET", "")
                     done = await self._remote(cluster, "POST", "/delete", {"asset_ids": values})
+                    for asset in inventory["assets"]:
+                        if asset["id"] in done["deleted"]:
+                            await self._mark_recipe_files_removed(asset, cluster_id)
                 result["deleted"].extend(cluster_id + ":" + value for value in done["deleted"])
                 result["errors"].extend(done.get("errors", []))
             except (httpx.HTTPError, ValueError, KeyError) as error:

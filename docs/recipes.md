@@ -150,3 +150,22 @@ For full multi-Spark DeepSeek, these sources are concrete starting points for a 
 - [HiTechAI-VN dual-Spark recipe](https://github.com/HiTechAI-VN/deepseek-v4-flash-dual-spark-recipe/tree/d4acc420f9c44495bcc29702f752dbad7a0863f3).
 
 These are documented as research rather than mislabeled as executable single-Spark recipes.
+
+
+### Remote Spark installation
+
+The controller delegates recipe preparation to the selected node bridge using signed requests
+and the `spark-cluster.remote-recipes/v1` protocol. Update both components together. Older
+bridges remain unavailable until updated; hardware and memory must be measured by the node.
+A single GB10 advertises its measured unified system RAM without claiming per-process GPU accounting.
+
+**Install recipe** prepares the pinned weights and immutable runtime image on the node disk.
+It does not start or unload a model. **Launch release** explicitly requests loading and inference
+verification, and refuses a placement that would evict another model. Memory admission still applies.
+Generated templates remain untested until verified against their real runtime and workload.
+
+Remote jobs retain the release hash, exact weights revision, image digest and node job identifier.
+Controller restarts reconnect to node-owned jobs using an idempotency key. Node restarts mark
+interrupted local jobs as failed so they can be retried explicitly. Removing referenced files from
+Storage clears the installation's artifact-presence indicator. A failed or interrupted launch may
+leave prepared weights and images on disk; Storage lists these separately for explicit deletion.
