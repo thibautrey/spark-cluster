@@ -561,3 +561,14 @@ def test_pooling_native_dimensions_override_cannot_advertise_truncation(tmp_path
 
     config = json.loads(payload["Cmd"][payload["Cmd"].index("--hf-overrides") + 1])
     assert config["matryoshka_dimensions"] == [4096]
+
+
+def test_imported_docker_all_gpus_accepts_null_device_ids():
+    p = profile("imported").model_copy(update={"resources": None, "container": {
+        "Cmd": ["--gpu-memory-utilization=0.8"],
+        "HostConfig": {"DeviceRequests": [{"DeviceIDs": None, "Count": -1}]},
+    }})
+    resources = imported_resources(p, [gpu()])
+    assert resources.gpu_ids == ["gpu-0"]
+    assert resources.memory_fraction == 0.8
+    assert resources.mode == "fixed"

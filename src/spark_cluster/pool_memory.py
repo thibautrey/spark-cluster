@@ -70,7 +70,7 @@ def imported_resources(profile, gpus: list[dict]) -> RuntimeResources:
     """Imported recipes keep their device bindings and engine memory limits."""
     host = profile.container.get("HostConfig", {})
     requests = host.get("DeviceRequests") or []
-    devices = [str(d) for r in requests for d in r.get("DeviceIDs", [])]
+    devices = [str(d) for r in requests for d in (r.get("DeviceIDs") or [])]
     env = dict(item.split("=", 1) for item in profile.container.get("Env", []) if "=" in item)
     visible = env.get("NVIDIA_VISIBLE_DEVICES") or env.get("CUDA_VISIBLE_DEVICES")
     if not devices and visible:
