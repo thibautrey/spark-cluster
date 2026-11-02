@@ -9,6 +9,7 @@ import {
   Meter,
   Panel,
   Select,
+  Input,
 } from "@/components/common";
 
 type Recipe = {
@@ -32,7 +33,18 @@ type Entry = {
   id: string;
   recipe: Recipe;
   blockers: string[];
-  origin: { kind: string; repository?: string; commit?: string };
+  origin: {
+    kind: string;
+    repository?: string;
+    commit?: string;
+    category?: string;
+    task?: string;
+    downloads?: number;
+    likes?: number;
+    trending_score?: number;
+    captured_at?: string;
+    model_card?: string;
+  };
 };
 type Job = {
   id: string;
@@ -48,6 +60,27 @@ type Job = {
 };
 type State = {
   recipes: Entry[];
+  references?: {
+    id: string;
+    model_id: string;
+    revision: string;
+    task: string;
+    library: string;
+    license: string;
+    downloads: number;
+    likes: number;
+    model_card: string;
+    blocker: string;
+  }[];
+  total?: number;
+  catalog_total?: number;
+  generated_total?: number;
+  has_more?: boolean;
+  catalog?: {
+    reference_count: number;
+    snapshots: { captured_at: string; ranking: string }[];
+    upstream_libraries: { repository: string; commit: string; url: string }[];
+  };
   jobs: Job[];
   discovery: { checked_at: number | null; errors: string[]; stale?: boolean };
 };
@@ -58,11 +91,27 @@ export function Recipes() {
   const target = clusters?.clusters.find(
     (c) => c.id === clusters.active_cluster_id,
   );
+  const [filters, setFilters] = useState({
+    q: "",
+    category: "all",
+    sort: "popular",
+    offset: 0,
+    installable: false,
+  });
+  const updateFilters = (next: Partial<typeof filters>) =>
+    setFilters((old) => ({ ...old, ...next, offset: 0 }));
+  const params = new URLSearchParams({
+    ...(target ? { cluster_id: target.id } : {}),
+    q: filters.q,
+    category: filters.category,
+    sort: filters.sort,
+    offset: String(filters.offset),
+    limit: "24",
+    installable: String(filters.installable),
+  });
   const state = useApi<State>(
-    clusters
-      ? `/api/v1/recipes${target ? `?cluster_id=${encodeURIComponent(target.id)}` : ""}`
-      : null,
-    5000,
+    clusters ? `/api/v1/recipes?${params}` : null,
+    30000,
   );
   const action = useAction();
   const file = useRef<HTMLInputElement>(null);
@@ -132,6 +181,74 @@ export function Recipes() {
         Choose a release, then install and launch. Downloads and compilation may
         take time.
       </p>
+      {state.data?.catalog_total !== undefined && (
+        <p className="note">
+          {state.data.catalog_total.toLocaleString()} recipes ·{" "}
+          {state.data.generated_total?.toLocaleString()} generated templates ·{" "}
+          {state.data.catalog?.reference_count.toLocaleString()} reference
+          workloads.
+          {state.data.catalog?.snapshots[0] && (
+            <>
+              {" "}
+              Popularity snapshot{" "}
+              {new Date(
+                state.data.catalog.snapshots[0].captured_at,
+              ).toLocaleDateString()}
+              .
+            </>
+          )}{" "}
+          Generated templates are untested; architecture support does not prove
+          Spark compatibility.
+        </p>
+      )}
+      <div className="actions">
+        <Input
+          aria-label="Search recipes"
+          placeholder="Search model or recipe…"
+          value={filters.q}
+          onChange={(e) => updateFilters({ q: e.target.value })}
+        />
+        <Select
+          aria-label="Recipe workload"
+          value={filters.category}
+          onChange={(e) => updateFilters({ category: e.target.value })}
+        >
+          <option value="all">All serving recipes</option>
+          <option value="curated">Reviewed recipes</option>
+          <option value="text">Text, code & reasoning</option>
+          <option value="vision">Vision & multimodal</option>
+          <option value="embeddings">Embeddings & retrieval</option>
+          <option value="classification">Classification & ranking</option>
+          <option value="speech">Speech recognition</option>
+          <option value="text-to-image">Image generation · references</option>
+          <option value="image-to-image">Image editing · references</option>
+          <option value="text-to-video">Video generation · references</option>
+          <option value="text-to-speech">Speech synthesis · references</option>
+        </Select>
+        <Select
+          aria-label="Sort recipes"
+          value={filters.sort}
+          onChange={(e) => updateFilters({ sort: e.target.value })}
+        >
+          <option value="popular">Popularity across tasks</option>
+          <option value="trending">Trending now</option>
+          <option value="downloads">Most downloaded</option>
+          <option value="name">Name</option>
+        </Select>
+        <label className="note">
+          <input
+            type="checkbox"
+            checked={filters.installable}
+            onChange={(e) => updateFilters({ installable: e.target.checked })}
+          />{" "}
+          Compatible with selected pool
+        </label>
+      </div>
+      <p className="note" aria-live="polite">
+        {state.isFetching
+          ? "Loading recipes…"
+          : `${state.data?.total ?? groups.size} matching recipes`}
+      </p>
       <Message error={state.error || action.error} />
       {state.data?.discovery.errors.map((error) => (
         <Message key={error}>{error}</Message>
@@ -160,7 +277,9 @@ export function Recipes() {
                 <Badge>
                   {r.validation === "hardware-verified"
                     ? "Publisher hardware verified"
-                    : "Source reviewed · untested on this pool"}
+                    : r.validation === "generated-template"
+                      ? "Generated template · untested"
+                      : "Source reviewed · untested on this pool"}
                 </Badge>
                 <Badge>{entry.origin.kind}</Badge>
                 {installed && (
@@ -170,6 +289,13 @@ export function Recipes() {
                   <Badge>Another release available</Badge>
                 )}
               </div>
+              {entry.origin.task && (
+                <p className="note">
+                  {entry.origin.task} ·{" "}
+                  {entry.origin.downloads?.toLocaleString()} downloads / 30 days
+                  · {entry.origin.likes?.toLocaleString()} likes
+                </p>
+              )}
               <p className="note">
                 {r.requirements.nodes} Spark ·{" "}
                 {r.requirements.memory_gib_per_node} GiB memory ·{" "}
@@ -193,6 +319,15 @@ export function Recipes() {
                 <p>
                   {r.model.repository} · revision {r.model.revision}
                 </p>
+                {entry.origin.model_card && (
+                  <a
+                    href={entry.origin.model_card}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Pinned model card ↗
+                  </a>
+                )}
                 <p className="note">{r.runtime.image}</p>
                 <p>
                   Recipe: {r.license} · Model: {r.model.license}
@@ -233,12 +368,82 @@ export function Recipes() {
                   })
                 }
               >
-                {running ? "Installing…" : "Install & launch"}
+                {running
+                  ? "Installing…"
+                  : r.validation === "generated-template"
+                    ? "Install template & launch"
+                    : "Install & launch"}
               </Button>
             </article>
           );
         })}
+        {state.data?.references?.map((reference) => (
+          <article className="model-card" key={reference.id}>
+            <h3>{reference.model_id}</h3>
+            <Badge>Reference only · adapter required</Badge>
+            <p>
+              {reference.task} · {reference.library}
+            </p>
+            <p className="note">
+              {reference.downloads.toLocaleString()} downloads / 30 days ·{" "}
+              {reference.likes.toLocaleString()} likes
+            </p>
+            <p>{reference.blocker}</p>
+            <details>
+              <summary>Pinned source and license</summary>
+              <p>Weights revision: {reference.revision}</p>
+              <p>Model license: {reference.license}</p>
+              <a href={reference.model_card} target="_blank" rel="noreferrer">
+                Pinned model instructions ↗
+              </a>
+            </details>
+            <Button disabled>Runtime adapter required</Button>
+          </article>
+        ))}
       </div>
+      <div className="actions">
+        <Button
+          variant="outline"
+          disabled={filters.offset === 0 || state.isFetching}
+          onClick={() =>
+            setFilters((old) => ({
+              ...old,
+              offset: Math.max(0, old.offset - 24),
+            }))
+          }
+        >
+          Previous recipes
+        </Button>
+        <span className="note">Page {Math.floor(filters.offset / 24) + 1}</span>
+        <Button
+          variant="outline"
+          disabled={!state.data?.has_more || state.isFetching}
+          onClick={() =>
+            setFilters((old) => ({ ...old, offset: old.offset + 24 }))
+          }
+        >
+          Next recipes
+        </Button>
+      </div>
+      {state.data?.catalog && (
+        <details>
+          <summary>Catalog sources and ranking</summary>
+          <p className="note">{state.data.catalog.snapshots[0]?.ranking}</p>
+          <p className="note">
+            Templates are generated from pinned model metadata and the runtime
+            architecture registry. References are not counted as executable
+            serving templates.
+          </p>
+          {state.data.catalog.upstream_libraries.map((source) => (
+            <p key={source.repository}>
+              <a href={source.url} target="_blank" rel="noreferrer">
+                {source.repository} ↗
+              </a>{" "}
+              · {source.commit.slice(0, 12)}
+            </p>
+          ))}
+        </details>
+      )}
       {jobs.slice(0, 5).map((job) => (
         <div key={job.id} className="download-card">
           <strong>

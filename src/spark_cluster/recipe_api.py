@@ -1,6 +1,8 @@
 """Recipe catalog, version history, discovery, file import, and install jobs."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .recipes import SparkRecipe
@@ -24,15 +26,31 @@ def register_recipes(app, catalog, installer, registry, require_token, settings)
         return SparkRecipe.model_json_schema()
 
     @router.get("")
-    async def state(cluster_id: str | None = None):
+    async def state(
+        cluster_id: str | None = None,
+        q: str = Query(default="", max_length=200),
+        category: str = Query(default="all", max_length=80),
+        sort: Literal["popular", "downloads", "trending", "name"] = "popular",
+        offset: int = Query(default=0, ge=0),
+        limit: int = Query(default=24, ge=1, le=100),
+        installable: bool = False,
+    ):
+        from .popular_recipes import catalog_page
+
         catalog.start()
         discovery = await catalog.discovery_state()
         target = registry.get(cluster_id) if cluster_id else registry.active()
-        entries = []
-        for entry in await catalog.entries():
-            blockers = await catalog.compatible(SparkRecipe.model_validate(entry["recipe"]), target)
-            entries.append({**entry, "blockers": blockers})
-        return {"recipes": entries, "discovery": discovery, "jobs": await installer.jobs()}
+        page = await catalog_page(
+            catalog,
+            target,
+            q=q,
+            category=category,
+            sort=sort,
+            offset=offset,
+            limit=limit,
+            installable=installable,
+        )
+        return {**page, "discovery": discovery, "jobs": await installer.jobs()}
 
     @router.post("/discover", dependencies=[Depends(mutation)])
     async def discover():

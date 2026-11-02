@@ -73,7 +73,9 @@ class SparkRecipe(StrictModel):
     requirements: RecipeHardware
     runtime: RecipeRuntime
     launch: RecipeLaunch
-    validation: Literal["source-reviewed", "hardware-verified"] = "source-reviewed"
+    validation: Literal["source-reviewed", "hardware-verified", "generated-template"] = (
+        "source-reviewed"
+    )
     notes: list[str] = Field(default_factory=list, max_length=30)
 
     @model_validator(mode="after")
@@ -118,6 +120,11 @@ def bundled_recipes() -> list[SparkRecipe]:
     if not path.exists():
         path = Path(__file__).resolve().parents[2] / "recipes"
     return [read_recipe(p.read_bytes()) for p in sorted(path.glob("*.spark-recipe.json"))]
+
+
+def recipe_directory() -> Path:
+    packaged = Path(__file__).parent / "recipes"
+    return packaged if packaged.exists() else Path(__file__).resolve().parents[2] / "recipes"
 
 
 class RecipeCatalog:
@@ -176,9 +183,33 @@ class RecipeCatalog:
 
     async def entries(self) -> list[dict]:
         if not self.bundled_loaded:
-            for recipe in bundled_recipes():
-                await self.remember(recipe, {"kind": "bundled"})
-            self.bundled_loaded = True
+            async with self.release_lock:
+                if not self.bundled_loaded:
+                    from .popular_recipes import bundled_catalog
+
+                    releases = await asyncio.to_thread(self.store.runtime_objects, "recipe")
+                    known = {(e["recipe"]["id"], e["recipe"]["version"]): e for e in releases}
+                    incoming = await asyncio.to_thread(bundled_catalog)
+                    batch = []
+                    for recipe, origin in incoming:
+                        identity = recipe.id, recipe.version
+                        old = known.get(identity)
+                        digest = recipe.content_hash
+                        if old and old["id"] != digest:
+                            raise ValueError(
+                                f"Immutable recipe {recipe.id}@{recipe.version} changed content"
+                            )
+                        value = {
+                            "id": digest,
+                            "recipe": recipe.model_dump(mode="json"),
+                            "origin": origin,
+                            "discovered_at": time.time(),
+                        }
+                        if not old or old.get("origin") != origin:
+                            batch.append(value)
+                        known[identity] = value
+                    await asyncio.to_thread(self.store.save_runtime_objects, "recipe", batch)
+                    self.bundled_loaded = True
         entries = await asyncio.to_thread(self.store.runtime_objects, "recipe")
         return sorted(
             entries,

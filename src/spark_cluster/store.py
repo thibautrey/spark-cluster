@@ -76,6 +76,15 @@ class SnapshotStore:
             )
             self._connection.commit()
 
+    def save_runtime_objects(self, kind: str, values: list[dict]) -> None:
+        """Publish a catalog batch atomically, without one fsync per release."""
+        rows = [(kind, value["id"], json.dumps(value)) for value in values]
+        with self._lock, self._connection:
+            self._connection.executemany(
+                "INSERT OR REPLACE INTO runtime_library_objects(kind,id,payload) VALUES (?,?,?)",
+                rows,
+            )
+
     def runtime_objects(self, kind: str) -> list[dict]:
         with self._lock:
             rows = self._connection.execute(

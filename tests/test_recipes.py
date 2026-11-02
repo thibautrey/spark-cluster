@@ -203,6 +203,7 @@ def test_recipe_flags_reach_real_docker_payload_as_literal_argv(env):
         recipe_revision=recipe.model.revision,
     )
     assert payload["Entrypoint"] == ["vllm", "serve"]
+    assert payload["Labels"]["spark-cluster.preserve-launch-settings"] == "true"
     assert payload["Cmd"][-1] == "$(touch /tmp/no)"
     assert payload["Cmd"][payload["Cmd"].index("--revision") + 1] == recipe.model.revision
     assert payload["HostConfig"]["SecurityOpt"] == ["seccomp=unconfined", "apparmor=unconfined"]

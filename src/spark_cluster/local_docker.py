@@ -611,6 +611,7 @@ class DockerEngineClient:
             },
         }
         if recipe_runtime:
+            payload["Labels"]["spark-cluster.preserve-launch-settings"] = "true"
             if engine_id != "vllm":
                 raise ValueError("Recipe format v1 requires vLLM")
             payload["Image"] = recipe_runtime.image

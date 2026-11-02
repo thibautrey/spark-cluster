@@ -529,18 +529,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://recipe-check", timeout=120
         ) as client:
-            response = await client.post(
-                "/api/v1/pool/node/inference/v1/chat/completions",
-                params={"model_id": recipe.model.repository}, headers=headers,
-                json={"model": recipe.launch.served_model_name,
-                      "messages": [{"role": "user", "content": "Reply with OK."}],
-                      "max_tokens": 128, "temperature": 0,
-                      "chat_template_kwargs": {"thinking": False}},
-            )
-            response.raise_for_status()
-            choices = response.json().get("choices", [])
-            if not choices or not choices[0].get("message", {}).get("content"):
-                raise ValueError("Recipe endpoint returned no generated text")
+            from .recipe_probe import probe_recipe
+
+            entry = await recipe_catalog.get(recipe.content_hash)
+            await probe_recipe(client, recipe, headers, task=entry["origin"].get("task"))
         current = on_demand.profile_for(recipe.model.repository)
         if not current or current.launch_settings != expected:
             raise ValueError("Runtime changed during recipe verification")

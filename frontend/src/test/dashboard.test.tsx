@@ -252,6 +252,120 @@ describe("React dashboard parity", () => {
     );
   });
 
+  it("pages a large recipe catalog and forwards search and workload filters", async () => {
+    const user = userEvent.setup();
+    override = (path) => {
+      if (!path.startsWith("/api/v1/recipes")) return undefined;
+      const params = new URL(path, "http://test").searchParams;
+      const offset = Number(params.get("offset") || 0);
+      const refs = params.get("category") === "text-to-image";
+      return {
+        recipes: refs
+          ? []
+          : Array.from({ length: 24 }, (_, index) => ({
+              id: `hash-${offset + index}`,
+              origin: {
+                kind: "generated",
+                task: "text-generation",
+                downloads: 1000,
+                likes: 5,
+              },
+              blockers: ["Requires Spark"],
+              recipe: {
+                id: `popular-models/model-${offset + index}`,
+                version: "1.0.0",
+                title: `Serving model ${offset + index}`,
+                description: "Pinned template",
+                validation: "generated-template",
+                license: "Apache-2.0",
+                notes: [],
+                source: {
+                  repository: "vllm-project/vllm",
+                  commit: "a".repeat(40),
+                  path: "registry.py",
+                },
+                model: {
+                  repository: `models/model-${offset + index}`,
+                  revision: "b".repeat(40),
+                  license: "mit",
+                },
+                runtime: {
+                  image: "docker.io/vllm/vllm-openai@sha256:" + "c".repeat(64),
+                  unconfined: false,
+                },
+                requirements: {
+                  nodes: 1,
+                  memory_gib_per_node: 20,
+                  disk_gib_per_node: 40,
+                },
+              },
+            })),
+        references: refs
+          ? [
+              {
+                id: "ref",
+                model_id: "images/Flux",
+                revision: "d".repeat(40),
+                task: "text-to-image",
+                library: "diffusers",
+                license: "apache-2.0",
+                downloads: 50000,
+                likes: 100,
+                model_card: "https://huggingface.co/images/Flux",
+                blocker: "Dedicated runtime adapter required",
+              },
+            ]
+          : [],
+        total: refs ? 1 : 1179,
+        catalog_total: 1181,
+        generated_total: 1179,
+        has_more: !refs,
+        catalog: {
+          reference_count: 160,
+          snapshots: [
+            {
+              captured_at: "2026-11-02T08:00:00Z",
+              ranking: "Popularity snapshot",
+            },
+          ],
+          upstream_libraries: [],
+        },
+        jobs: [],
+        discovery: { checked_at: null, errors: [] },
+      };
+    };
+    mount("models");
+    await screen.findByRole("heading", { name: "Serving model 0" });
+    expect(screen.getAllByText("Generated template · untested")).toHaveLength(
+      24,
+    );
+    expect(
+      screen.queryByRole("heading", { name: "Serving model 24" }),
+    ).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Next recipes" }));
+    await screen.findByRole("heading", { name: "Serving model 24" });
+    expect(requests.some((r) => r.path.includes("offset=24"))).toBe(true);
+    await user.type(screen.getByLabelText("Search recipes"), "Qwen");
+    await waitFor(() =>
+      expect(
+        requests.some(
+          (r) => r.path.includes("q=Qwen") && r.path.includes("offset=0"),
+        ),
+      ).toBe(true),
+    );
+    await user.selectOptions(
+      screen.getByLabelText("Recipe workload"),
+      "text-to-image",
+    );
+    await screen.findByRole("heading", { name: "images/Flux" });
+    expect(
+      screen.getByRole("button", { name: "Runtime adapter required" }),
+    ).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Install template & launch" }),
+    ).toBeNull();
+  });
+
   it.each(Object.keys(routes) as Route[])(
     "renders the %s route without a page crash",
     async (route) => {

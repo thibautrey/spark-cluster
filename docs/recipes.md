@@ -3,7 +3,9 @@
 **[Authoring and publishing skill](../skills/spark-cluster-recipes/SKILL.md)** ·
 [Starter files](../recipes) · [JSON Schema](../recipes/schema-v1.json)
 
-Models → **Recipes** lists bundled, imported, and GitHub-discovered releases. Pick a version
+Models → **Recipes** lists bundled, imported, and GitHub-discovered releases.
+The [popular-model catalog](popular-recipes.md) adds over 1,000 explicitly generated,
+version-pinned serving templates, workload references, search and pagination. Pick a version
 and choose **Install & launch**. The controller validates hardware and the immutable ARM64
 image, runs model memory/storage admission, downloads the pinned weights, installs the image,
 launches through the existing compute-pool scheduler, and checks for a real generated response.
@@ -43,7 +45,7 @@ Unknown fields are rejected throughout the document, including launch settings.
 | `requirements` | DGX Spark, Linux ARM64, node count, memory/storage budget per node, `single` or `ray` topology. |
 | `runtime` | Image pinned by digest; literal extra vLLM arguments; environment; explicit `unconfined` boolean. |
 | `launch` | Existing Spark Cluster typed launch settings: exact model ID, explicit `vllm`, context, parallelism, memory and concurrency. |
-| `validation` | `source-reviewed` or publisher-asserted `hardware-verified`. It is not automatic local proof. |
+| `validation` | `generated-template`, `source-reviewed` or publisher-asserted `hardware-verified`. None is automatic local proof. |
 | `notes` | Caveats, prerequisites, original measured setup, and verification evidence. |
 
 The controller owns model/path, host/port, weights and code revisions, served name, context,
