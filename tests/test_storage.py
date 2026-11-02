@@ -386,3 +386,29 @@ async def test_recipe_space_rejection_does_not_create_installation_job(setup):
     assert setup.store.runtime_objects("recipe-install") == []
     assert not installer.tasks
     download.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_slow_disk_scan_returns_pending_without_blocking_inventory(setup):
+    import threading
+
+    weights(setup)
+    release = threading.Event()
+    original = setup._scan
+
+    def slow_scan():
+        release.wait(3)
+        return original()
+
+    setup._scan = slow_scan
+    try:
+        pending = await asyncio.wait_for(setup.local(fresh=True), timeout=1)
+        assert pending["scanning"] is True
+        assert pending["assets"] == []
+        assert pending["locations"][0]["free_bytes"] > 0
+    finally:
+        release.set()
+    await asyncio.to_thread(setup.scan_future.result, 2)
+    ready = await setup.local(fresh=True)
+    assert ready["scanning"] is False
+    assert len(ready["assets"]) == 1
