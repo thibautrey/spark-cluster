@@ -485,7 +485,8 @@
       "default": "source-reviewed",
       "enum": [
         "source-reviewed",
-        "hardware-verified"
+        "hardware-verified",
+        "generated-template"
       ],
       "title": "Validation",
       "type": "string"

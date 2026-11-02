@@ -359,8 +359,12 @@ describe("React dashboard parity", () => {
     );
     await screen.findByRole("heading", { name: "images/Flux" });
     expect(
-      screen.getByRole("button", { name: "Runtime adapter required" }),
-    ).toBeDisabled();
+      (
+        screen.getByRole("button", {
+          name: "Runtime adapter required",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
     expect(
       screen.queryByRole("button", { name: "Install template & launch" }),
     ).toBeNull();
