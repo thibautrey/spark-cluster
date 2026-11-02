@@ -13,6 +13,7 @@ RUN chmod 1777 /tmp \
     && apt-get install -y --no-install-recommends openssh-client skopeo \
     && rm -rf /var/lib/apt/lists/*
 COPY pyproject.toml README.md LICENSE ./
+COPY recipes ./recipes
 COPY src ./src
 COPY --from=frontend /src/spark_cluster/static ./src/spark_cluster/static
 RUN pip install --no-cache-dir '.[agent]'
