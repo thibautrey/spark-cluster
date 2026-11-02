@@ -7,8 +7,8 @@ Docker 29 manifest-based image identities are verified alongside classic config-
 
 ## Deployment
 
-- Unraid controller: `spark-cluster:remote-recipes-09c39d0`, healthy.
-- Image ID: `sha256:cc228e415bc6a25672093f646b85ea7f14e2cdd6a6a392b5690e812e5ba8203e`.
+- Unraid controller: `spark-cluster:remote-recipes-9f664e1` (final UI over the validated bridge wheel).
+- Image ID: `sha256:de74b865972ed121f1cb0fc870886e1242363fc30c7788edd9ab101b718c000f`.
 - Spark bridge: updated wheel, `spark-cluster.remote-recipes/v1`, one GB10, 121.63 GiB.
 - Wheel SHA256: `c34d65c53bf3b2f2ec90087825ebe044204e8013d82b1f10cd01fc3aad340fd8`.
 - Controller rollback container: `spark-cluster-controller-before-20261102T110540Z`.
@@ -51,3 +51,5 @@ No existing weights were deleted and no unrelated containers were restarted.
 - 42 frontend tests passed; TypeScript and production build passed.
 - Ruff passed.
 - Source integrated into local main; no push.
+
+The final UI also distinguishes memory-admission failures from disk-shortage cleanup actions.
