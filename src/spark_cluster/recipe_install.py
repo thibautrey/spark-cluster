@@ -28,7 +28,9 @@ class RecipeInstaller:
     async def start(self):
         for job in await self.jobs():
             if job["status"] in {"queued", "running"}:
-                await self.save(job, status="failed", error="Controller restarted; retry the saved release")
+                await self.save(
+                    job, status="failed", error="Controller restarted; retry the saved release"
+                )
 
     async def stop(self):
         tasks = list(self.tasks.values())
@@ -48,10 +50,20 @@ class RecipeInstaller:
                     if job["recipe_hash"] == digest:
                         return job
                     raise ValueError("Another recipe installation is running on this Spark")
-            job = {"id": uuid4().hex, "recipe_hash": digest, "cluster_id": cluster_id,
-                   "recipe": entry["recipe"], "origin": entry["origin"], "status": "queued",
-                   "stage": "preflight", "progress": 0, "created_at": time.time(),
-                   "error": None, "download_job_id": None, "launch_job_id": None}
+            job = {
+                "id": uuid4().hex,
+                "recipe_hash": digest,
+                "cluster_id": cluster_id,
+                "recipe": entry["recipe"],
+                "origin": entry["origin"],
+                "status": "queued",
+                "stage": "preflight",
+                "progress": 0,
+                "created_at": time.time(),
+                "error": None,
+                "download_job_id": None,
+                "launch_job_id": None,
+            }
             await self.save(job)
             self.tasks[job["id"]] = asyncio.create_task(self.run(job))
             return job
@@ -83,14 +95,21 @@ class RecipeInstaller:
                 raise ValueError("Unload running models on this Spark before installing a recipe")
             # Resolve and check architecture before starting multi-GB downloads.
             metadata = await self.library.remote.resolve_image(
-                "vllm", recipe.runtime.image, recipe.requirements.platform)
+                "vllm", recipe.runtime.image, recipe.requirements.platform
+            )
             # Model service runs storage and memory preflight before any transfer.
             launch = recipe.launch_request()
-            download = await self.download(ModelDownloadRequest(
-                repo_id=recipe.model.repository, revision=recipe.model.revision,
-                bits_per_weight=launch.bits_per_weight, context_length=launch.context_length,
-                concurrent_sequences=launch.max_num_seqs, kv_cache_dtype=launch.kv_cache_dtype,
-            ), target.id)
+            download = await self.download(
+                ModelDownloadRequest(
+                    repo_id=recipe.model.repository,
+                    revision=recipe.model.revision,
+                    bits_per_weight=launch.bits_per_weight,
+                    context_length=launch.context_length,
+                    concurrent_sequences=launch.max_num_seqs,
+                    kv_cache_dtype=launch.kv_cache_dtype,
+                ),
+                target.id,
+            )
             await self.save(job, stage="download-model", progress=10, download_job_id=download.id)
             deadline = time.monotonic() + 86400
             while time.monotonic() < deadline:
@@ -112,12 +131,16 @@ class RecipeInstaller:
                     queued = await self.library.download_resolved(metadata)
                     done = await self._wait_library(queued["id"])
                     cached = await self.library.get_artifact(done["artifact_id"])
-                queued = await self.library.install(RuntimeImportRequest(
-                    artifact_id=cached["id"], cluster_id=target.id))
+                queued = await self.library.install(
+                    RuntimeImportRequest(artifact_id=cached["id"], cluster_id=target.id)
+                )
                 await self._wait_library(queued["id"])
             await self.save(job, stage="launch", progress=80)
-            queued = await self.pool.enqueue(PoolLoadRequest(
-                model_id=recipe.model.repository, settings=launch, cluster_id=target.id))
+            queued = await self.pool.enqueue(
+                PoolLoadRequest(
+                    model_id=recipe.model.repository, settings=launch, cluster_id=target.id
+                )
+            )
             await self.save(job, launch_job_id=queued["id"])
             deadline = time.monotonic() + 1800
             while time.monotonic() < deadline:
@@ -135,7 +158,9 @@ class RecipeInstaller:
             # Old releases and deployments stay available for explicit rollback/reinstall.
             await self.save(job, status="completed", stage="ready", progress=100)
         except asyncio.CancelledError:
-            await self.save(job, status="failed", error="Installation interrupted; retry this release")
+            await self.save(
+                job, status="failed", error="Installation interrupted; retry this release"
+            )
             raise
         except Exception as error:
             await self.save(job, status="failed", error=self.safe_error(error))

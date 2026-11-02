@@ -308,7 +308,9 @@ class RecipeRuntime(BaseModel):
     """Immutable container and literal argv; never evaluated by a host shell."""
 
     model_config = ConfigDict(extra="forbid")
-    image: str = Field(pattern=r"^(docker\.io|ghcr\.io|nvcr\.io)/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$")
+    image: str = Field(
+        pattern=r"^(docker\.io|ghcr\.io|nvcr\.io)/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$"
+    )
     arguments: list[str] = Field(default_factory=list, max_length=150)
     environment: dict[str, str] = Field(default_factory=dict, max_length=80)
     unconfined: bool = False
@@ -316,11 +318,26 @@ class RecipeRuntime(BaseModel):
     @field_validator("arguments")
     @classmethod
     def literal_arguments(cls, values):
-        reserved = {"--model", "--model-path", "--host", "--port", "--served-model-name",
-                    "--tensor-parallel-size", "--pipeline-parallel-size", "--tp",
-                    "--distributed-executor-backend", "--revision", "--code-revision",
-                    "--max-model-len", "--max-num-seqs", "--gpu-memory-utilization",
-                    "--max-num-batched-tokens", "--nnodes", "--node-rank", "--master-addr"}
+        reserved = {
+            "--model",
+            "--model-path",
+            "--host",
+            "--port",
+            "--served-model-name",
+            "--tensor-parallel-size",
+            "--pipeline-parallel-size",
+            "--tp",
+            "--distributed-executor-backend",
+            "--revision",
+            "--code-revision",
+            "--max-model-len",
+            "--max-num-seqs",
+            "--gpu-memory-utilization",
+            "--max-num-batched-tokens",
+            "--nnodes",
+            "--node-rank",
+            "--master-addr",
+        }
         for value in values:
             if len(value) > 4096 or "\x00" in value or value.split("=", 1)[0] in reserved:
                 raise ValueError("Invalid or controller-owned recipe argument")

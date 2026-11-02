@@ -99,9 +99,12 @@ class SparkRecipe(StrictModel):
         return hashlib.sha256(payload.encode()).hexdigest()
 
     def launch_request(self) -> ModelLaunchRequest:
-        return self.launch.model_copy(update={
-            "recipe_runtime": self.runtime, "recipe_revision": self.model.revision,
-        })
+        return self.launch.model_copy(
+            update={
+                "recipe_runtime": self.runtime,
+                "recipe_revision": self.model.revision,
+            }
+        )
 
 
 def read_recipe(content: bytes | str) -> SparkRecipe:
@@ -158,10 +161,16 @@ class RecipeCatalog:
             old = item["recipe"]
             if old["id"] == recipe.id and old["version"] == recipe.version:
                 if item["id"] != recipe.content_hash:
-                    raise ValueError(f"Immutable recipe {recipe.id}@{recipe.version} changed content")
+                    raise ValueError(
+                        f"Immutable recipe {recipe.id}@{recipe.version} changed content"
+                    )
                 return item
-        value = {"id": recipe.content_hash, "recipe": recipe.model_dump(mode="json"),
-                 "origin": origin, "discovered_at": time.time()}
+        value = {
+            "id": recipe.content_hash,
+            "recipe": recipe.model_dump(mode="json"),
+            "origin": origin,
+            "discovered_at": time.time(),
+        }
         await asyncio.to_thread(self.store.save_runtime_object, "recipe", value)
         return value
 
@@ -171,8 +180,11 @@ class RecipeCatalog:
                 await self.remember(recipe, {"kind": "bundled"})
             self.bundled_loaded = True
         entries = await asyncio.to_thread(self.store.runtime_objects, "recipe")
-        return sorted(entries, key=lambda e: (e["recipe"]["id"],
-                      version_tuple(e["recipe"]["version"])), reverse=True)
+        return sorted(
+            entries,
+            key=lambda e: (e["recipe"]["id"], version_tuple(e["recipe"]["version"])),
+            reverse=True,
+        )
 
     async def get(self, digest: str) -> dict:
         value = next((item for item in await self.entries() if item["id"] == digest), None)
@@ -182,8 +194,14 @@ class RecipeCatalog:
 
     async def _cached_get(self, client, path: str, *, force=False):
         key = hashlib.sha256(path.encode()).hexdigest()
-        cached = next((v for v in await asyncio.to_thread(self.store.runtime_objects, "recipe-http")
-                       if v["id"] == key), None)
+        cached = next(
+            (
+                v
+                for v in await asyncio.to_thread(self.store.runtime_objects, "recipe-http")
+                if v["id"] == key
+            ),
+            None,
+        )
         if cached and not force and time.time() - cached["checked_at"] < 3600:
             return cached["body"]
         headers = {"If-None-Match": cached["etag"]} if cached and cached.get("etag") else {}
@@ -194,8 +212,12 @@ class RecipeCatalog:
             response.raise_for_status()
             if len(response.content) > 4 * 1024 * 1024:
                 raise ValueError("GitHub response exceeds discovery limit")
-            value = {"id": key, "body": response.json(), "etag": response.headers.get("etag"),
-                     "checked_at": time.time()}
+            value = {
+                "id": key,
+                "body": response.json(),
+                "etag": response.headers.get("etag"),
+                "checked_at": time.time(),
+            }
         await asyncio.to_thread(self.store.save_runtime_object, "recipe-http", value)
         return value["body"]
 
@@ -204,20 +226,29 @@ class RecipeCatalog:
             prior = await asyncio.to_thread(self.store.runtime_objects, "recipe-discovery")
             if prior and not force and time.time() - prior[0]["checked_at"] < 3600:
                 return prior[0]
-            result = {"id": "github", "checked_at": time.time(), "errors": [], "found": 0,
-                      "topic": "spark-cluster-recipes", "stale": False}
+            result = {
+                "id": "github",
+                "checked_at": time.time(),
+                "errors": [],
+                "found": 0,
+                "topic": "spark-cluster-recipes",
+                "stale": False,
+            }
             headers = {"Accept": "application/vnd.github+json", "User-Agent": "spark-cluster"}
             if self.settings.recipes_github_token:
                 headers["Authorization"] = f"Bearer {self.settings.recipes_github_token}"
-            async with httpx.AsyncClient(transport=self.transport, timeout=20,
-                                         headers=headers, follow_redirects=False) as client:
+            async with httpx.AsyncClient(
+                transport=self.transport, timeout=20, headers=headers, follow_redirects=False
+            ) as client:
                 try:
                     # Bounded pagination. Publishers need no central registry registration.
                     repos = []
                     for page in range(1, 4):
-                        body = await self._cached_get(client,
+                        body = await self._cached_get(
+                            client,
                             f"/search/repositories?q=topic:spark-cluster-recipes&per_page=30&page={page}",
-                            force=force)
+                            force=force,
+                        )
                         repos.extend(body.get("items", []))
                         if len(body.get("items", [])) < 30:
                             break
@@ -226,14 +257,16 @@ class RecipeCatalog:
                         if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", name):
                             continue
                         try:
-                            ref = await self._cached_get(client, f"/repos/{name}/commits/HEAD",
-                                                         force=force)
+                            ref = await self._cached_get(
+                                client, f"/repos/{name}/commits/HEAD", force=force
+                            )
                             sha = ref["sha"]
                             if not re.fullmatch(COMMIT, sha):
                                 raise ValueError("Invalid repository commit")
                             # Read a small explicit index rather than executing/cloning a repo.
-                            index = await self._content(client, name, sha,
-                                                        "spark-cluster-recipes.json")
+                            index = await self._content(
+                                client, name, sha, "spark-cluster-recipes.json"
+                            )
                             if index.get("schema_version") != "spark-cluster.recipe-index/v1":
                                 raise ValueError("Unsupported recipe index version")
                             paths = index.get("recipes", [])
@@ -241,16 +274,26 @@ class RecipeCatalog:
                                 raise ValueError("Recipe index must contain at most 40 paths")
                             for path in paths:
                                 recipe = SparkRecipe.model_validate(
-                                    await self._content(client, name, sha, path))
+                                    await self._content(client, name, sha, path)
+                                )
                                 if recipe.id.split("/")[0] != name.split("/")[0].lower():
                                     raise ValueError("Recipe namespace must match its GitHub owner")
-                                await self.remember(recipe, {"kind": "github", "repository": name,
-                                                           "commit": sha, "path": path})
+                                await self.remember(
+                                    recipe,
+                                    {
+                                        "kind": "github",
+                                        "repository": name,
+                                        "commit": sha,
+                                        "path": path,
+                                    },
+                                )
                                 result["found"] += 1
                         except (httpx.HTTPError, ValueError, KeyError, TypeError):
                             result["errors"].append(f"Could not validate recipes in {name}")
                 except (httpx.HTTPError, ValueError, KeyError, TypeError):
-                    result["errors"].append("GitHub unavailable or rate limited; cached recipes retained")
+                    result["errors"].append(
+                        "GitHub unavailable or rate limited; cached recipes retained"
+                    )
                     result["stale"] = True
             await asyncio.to_thread(self.store.save_runtime_object, "recipe-discovery", result)
             return result
@@ -259,11 +302,17 @@ class RecipeCatalog:
         import base64
         from urllib.parse import quote
 
-        if (not isinstance(path, str) or not path.endswith(".json") or len(path) > 300
-                or path.startswith("/") or ".." in PurePosixPath(path).parts):
+        if (
+            not isinstance(path, str)
+            or not path.endswith(".json")
+            or len(path) > 300
+            or path.startswith("/")
+            or ".." in PurePosixPath(path).parts
+        ):
             raise ValueError("Invalid recipe path")
-        body = await self._cached_get(client,
-            f"/repos/{repository}/contents/{quote(path, safe='/')}?ref={sha}")
+        body = await self._cached_get(
+            client, f"/repos/{repository}/contents/{quote(path, safe='/')}?ref={sha}"
+        )
         if body.get("type") != "file" or body.get("size", 0) > MAX_FILE_BYTES:
             raise ValueError("Invalid recipe file")
         content = base64.b64decode(body["content"])

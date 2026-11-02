@@ -95,26 +95,62 @@ describe("React dashboard parity", () => {
   it("installs the selected immutable recipe release on the selected pool", async () => {
     const user = userEvent.setup();
     const release = (version: string, hash: string) => ({
-      id: hash, origin: { kind: "bundled" }, blockers: [],
+      id: hash,
+      origin: { kind: "bundled" },
+      blockers: [],
       recipe: {
-        id: "publisher/qwen", version, title: "Qwen recipe", description: "Pinned setup",
-        license: "Apache-2.0", validation: "source-reviewed", notes: [],
-        source: { repository: "publisher/recipes", commit: "a".repeat(40), path: "recipe.json" },
-        model: { repository: "nvidia/Qwen", revision: "b".repeat(40), license: "model-license" },
-        runtime: { image: "docker.io/test/image@sha256:" + "c".repeat(64), unconfined: false },
-        requirements: { nodes: 1, memory_gib_per_node: 115, disk_gib_per_node: 250 },
+        id: "publisher/qwen",
+        version,
+        title: "Qwen recipe",
+        description: "Pinned setup",
+        license: "Apache-2.0",
+        validation: "source-reviewed",
+        notes: [],
+        source: {
+          repository: "publisher/recipes",
+          commit: "a".repeat(40),
+          path: "recipe.json",
+        },
+        model: {
+          repository: "nvidia/Qwen",
+          revision: "b".repeat(40),
+          license: "model-license",
+        },
+        runtime: {
+          image: "docker.io/test/image@sha256:" + "c".repeat(64),
+          unconfined: false,
+        },
+        requirements: {
+          nodes: 1,
+          memory_gib_per_node: 115,
+          disk_gib_per_node: 250,
+        },
       },
     });
-    override = (path) => path.startsWith("/api/v1/recipes")
-      ? { recipes: [release("1.10.0", "a".repeat(64)), release("1.9.0", "b".repeat(64))],
-          jobs: [], discovery: { checked_at: null, errors: [] } }
-      : undefined;
+    override = (path) =>
+      path.startsWith("/api/v1/recipes")
+        ? {
+            recipes: [
+              release("1.10.0", "a".repeat(64)),
+              release("1.9.0", "b".repeat(64)),
+            ],
+            jobs: [],
+            discovery: { checked_at: null, errors: [] },
+          }
+        : undefined;
     mount("models");
     const select = await screen.findByLabelText("Version for Qwen recipe");
     await user.selectOptions(select, "b".repeat(64));
+    expect(
+      (screen.getByLabelText("Version for Qwen recipe") as HTMLSelectElement)
+        .value,
+    ).toBe("b".repeat(64));
     await user.click(screen.getByRole("button", { name: "Install & launch" }));
-    await waitFor(() => expect(requests.find(r => r.path === "/api/v1/recipes/install")?.body)
-      .toEqual({ recipe_hash: "b".repeat(64), cluster_id: cluster.id }));
+    await waitFor(() =>
+      expect(
+        requests.find((r) => r.path === "/api/v1/recipes/install")?.body,
+      ).toEqual({ recipe_hash: "b".repeat(64), cluster_id: cluster.id }),
+    );
   });
 
   it.each(Object.keys(routes) as Route[])(

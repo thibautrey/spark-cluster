@@ -127,6 +127,9 @@ from .performance_history import RUNTIME_FIELDS
 from .performance_history import scopes as performance_scopes
 from .prefix_warmup import PrefixWarmup
 from .prometheus import render_metrics
+from .recipe_api import register_recipes
+from .recipe_install import RecipeInstaller
+from .recipes import RecipeCatalog
 from .remote_cluster import (
     RemoteClusterConnector,
     RemoteClusterProxyMiddleware,
@@ -138,9 +141,6 @@ from .runtime_library import RuntimeHostRequest, RuntimeLibrary
 from .runtime_library_api import register_runtime_library
 from .runtime_prerequisites import RuntimePrerequisiteService
 from .runtime_workflows import RuntimeWorkflowService
-from .recipes import RecipeCatalog
-from .recipe_install import RecipeInstaller
-from .recipe_api import register_recipes
 from .setup_models import (
     BootstrapConfirmRequest,
     BootstrapCreateRequest,
@@ -474,7 +474,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ValueError("Select the recipe target before starting its download")
         local = await model_manager.managed_model(request.repo_id)
         if local and local.revision != request.revision:
-            raise ValueError("Remove the previous downloaded revision before changing model weights")
+            raise ValueError(
+                "Remove the previous downloaded revision before changing model weights"
+            )
         fit_plan = await model_fit_plan(request)
         active = cluster_registry.active()
         if not active or active.id != cluster_id:

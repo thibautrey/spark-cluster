@@ -468,9 +468,7 @@ class RuntimeRegistry:
     ) -> dict:
         runtime = runtime_entry(runtime_id)
         if repository:
-            if not re.fullmatch(
-                r"(?:docker\.io|ghcr\.io|nvcr\.io)/[a-z0-9._/-]+", repository
-            ):
+            if not re.fullmatch(r"(?:docker\.io|ghcr\.io|nvcr\.io)/[a-z0-9._/-]+", repository):
                 raise RegistryError("Unsupported recipe registry")
             runtime = replace(runtime, repository=repository)
         if not re.fullmatch(DIGEST if repository else TAG, version):
@@ -527,8 +525,11 @@ class RuntimeRegistry:
                     "platform": platform,
                     "repository": runtime.repository,
                     "digest": digest,
-                    "image": (f"{runtime.repository}@{digest}" if repository
-                              else f"{runtime.repository}:{version}"),
+                    "image": (
+                        f"{runtime.repository}@{digest}"
+                        if repository
+                        else f"{runtime.repository}:{version}"
+                    ),
                     "config_digest": config_digest,
                     "size_bytes": sum(item.get("size", 0) for item in body.get("layers", [])),
                 }

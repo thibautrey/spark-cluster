@@ -605,29 +605,44 @@ class DockerEngineClient:
                 raise ValueError("Recipe format v1 requires vLLM")
             payload["Image"] = recipe_runtime.image
             payload["Cmd"] = [
-                runtime_model, "--served-model-name", served_model_name,
-                "--host", "0.0.0.0", "--port", str(cluster.runtime_port),
-                "--tensor-parallel-size", str(tensor_parallel),
-                "--pipeline-parallel-size", str(pipeline_parallel),
-                "--max-model-len", str(context_length), "--max-num-seqs", str(max_num_seqs),
-                "--max-num-batched-tokens", str(max_num_batched_tokens),
-                "--gpu-memory-utilization", str(gpu_memory_utilization),
-                *(["--revision", recipe_revision, "--code-revision", recipe_revision]
-                  if recipe_revision else []),
+                runtime_model,
+                "--served-model-name",
+                served_model_name,
+                "--host",
+                "0.0.0.0",
+                "--port",
+                str(cluster.runtime_port),
+                "--tensor-parallel-size",
+                str(tensor_parallel),
+                "--pipeline-parallel-size",
+                str(pipeline_parallel),
+                "--max-model-len",
+                str(context_length),
+                "--max-num-seqs",
+                str(max_num_seqs),
+                "--max-num-batched-tokens",
+                str(max_num_batched_tokens),
+                "--gpu-memory-utilization",
+                str(gpu_memory_utilization),
+                *(
+                    ["--revision", recipe_revision, "--code-revision", recipe_revision]
+                    if recipe_revision
+                    else []
+                ),
                 *recipe_runtime.arguments,
             ]
             payload["Env"].extend(f"{k}={v}" for k, v in recipe_runtime.environment.items())
             # Isolated persistent compilation/PLE cache; model files remain read-only.
-            volume = "spark-recipe-" + hashlib.sha256(recipe_runtime.image.encode()).hexdigest()[:16]
+            volume = (
+                "spark-recipe-" + hashlib.sha256(recipe_runtime.image.encode()).hexdigest()[:16]
+            )
             payload["HostConfig"]["Binds"].append(f"{volume}:/root/.cache")
             payload["HostConfig"]["Ulimits"] = [
                 {"Name": "memlock", "Soft": -1, "Hard": -1},
                 {"Name": "stack", "Soft": 67108864, "Hard": 67108864},
             ]
             if recipe_runtime.unconfined:
-                payload["HostConfig"]["SecurityOpt"] = [
-                    "seccomp=unconfined", "apparmor=unconfined"
-                ]
+                payload["HostConfig"]["SecurityOpt"] = ["seccomp=unconfined", "apparmor=unconfined"]
         return payload
 
     async def launch(

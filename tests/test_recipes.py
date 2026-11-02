@@ -22,8 +22,12 @@ from spark_cluster.store import SnapshotStore
 
 @pytest.fixture
 def env(tmp_path):
-    settings = Settings(database_path=tmp_path / "state.db", setup_state_path=tmp_path / "setup",
-                        model_cache_path=tmp_path / "models", model_admin_token="test-admin")
+    settings = Settings(
+        database_path=tmp_path / "state.db",
+        setup_state_path=tmp_path / "setup",
+        model_cache_path=tmp_path / "models",
+        model_admin_token="test-admin",
+    )
     store = SnapshotStore(settings.database_path)
     return settings, store, RecipeCatalog(settings, store)
 
@@ -33,9 +37,16 @@ def starter():
 
 
 def target():
-    return ClusterTarget(id="spark", name="Spark", kind="local-docker", hardware="dgx-spark",
-                         host_address="127.0.0.1", gpu_count=1, gpu_memory_gib=120,
-                         gpus=[GPUDevice(index=0, name="GB10", uuid="GPU-one", memory_gib=120)])
+    return ClusterTarget(
+        id="spark",
+        name="Spark",
+        kind="local-docker",
+        hardware="dgx-spark",
+        host_address="127.0.0.1",
+        gpu_count=1,
+        gpu_memory_gib=120,
+        gpus=[GPUDevice(index=0, name="GB10", uuid="GPU-one", memory_gib=120)],
+    )
 
 
 def test_shipped_recipes_have_real_pins_and_strict_contract():
@@ -106,8 +117,12 @@ async def test_github_discovery_pins_commit_caches_etags_and_survives_outage(env
             body = {"sha": sha}
         elif path.endswith("/spark-cluster-recipes.json"):
             assert request.url.params["ref"] == sha
-            body = content({"schema_version": "spark-cluster.recipe-index/v1",
-                            "recipes": ["recipes/qwen.spark-recipe.json"]})
+            body = content(
+                {
+                    "schema_version": "spark-cluster.recipe-index/v1",
+                    "recipes": ["recipes/qwen.spark-recipe.json"],
+                }
+            )
         else:
             assert request.url.params["ref"] == sha
             body = content(recipe.model_dump(mode="json"))
@@ -138,28 +153,32 @@ async def test_discovery_rejects_publisher_impersonation(env):
             return httpx.Response(200, json={"items": [{"full_name": "attacker/recipes"}]})
         if request.url.path.endswith("/commits/HEAD"):
             return httpx.Response(200, json={"sha": "a" * 40})
-        payload = ({"schema_version": "spark-cluster.recipe-index/v1",
-                    "recipes": ["qwen.spark-recipe.json"]}
-                   if request.url.path.endswith("/spark-cluster-recipes.json") else recipe)
+        payload = (
+            {
+                "schema_version": "spark-cluster.recipe-index/v1",
+                "recipes": ["qwen.spark-recipe.json"],
+            }
+            if request.url.path.endswith("/spark-cluster-recipes.json")
+            else recipe
+        )
         raw = json.dumps(payload).encode()
-        return httpx.Response(200, json={"type": "file", "size": len(raw),
-                                        "content": base64.b64encode(raw).decode()})
+        return httpx.Response(
+            200, json={"type": "file", "size": len(raw), "content": base64.b64encode(raw).decode()}
+        )
 
     catalog = RecipeCatalog(settings, store, transport=httpx.MockTransport(handler))
     result = await catalog.discover()
     assert result["found"] == 0 and result["errors"]
-    assert not await asyncio_recipes(store)
-
-
-async def asyncio_recipes(store):
-    return store.runtime_objects("recipe")
+    assert not store.runtime_objects("recipe")
 
 
 def test_recipe_flags_reach_real_docker_payload_as_literal_argv(env):
     settings, _, _ = env
     recipe = starter()
     # A metacharacter-containing value remains a single argv item, never shell source.
-    runtime = recipe.runtime.model_copy(update={"arguments": ["--chat-template", "$(touch /tmp/no)"]})
+    runtime = recipe.runtime.model_copy(
+        update={"arguments": ["--chat-template", "$(touch /tmp/no)"]}
+    )
     path = settings.model_cache_path / "qwen"
     path.mkdir(parents=True)
     docker = DockerEngineClient(settings)
@@ -167,11 +186,21 @@ def test_recipe_flags_reach_real_docker_payload_as_literal_argv(env):
     plan = build_execution_plan(launch, str(path), settings, cluster_kind="local-docker")
     assert plan.image == recipe.runtime.image
     payload = docker.runtime_payload(
-        cluster=target(), image=plan.image, model_path=str(path), served_model_name="qwen",
-        context_length=32768, tensor_parallel=1, pipeline_parallel=1,
-        gpu_memory_utilization=.8, kv_cache_dtype="fp8_e4m3", max_num_seqs=1,
-        max_num_batched_tokens=4096, expert_parallel=False, chunked_prefill=True,
-        recipe_runtime=runtime, recipe_revision=recipe.model.revision,
+        cluster=target(),
+        image=plan.image,
+        model_path=str(path),
+        served_model_name="qwen",
+        context_length=32768,
+        tensor_parallel=1,
+        pipeline_parallel=1,
+        gpu_memory_utilization=0.8,
+        kv_cache_dtype="fp8_e4m3",
+        max_num_seqs=1,
+        max_num_batched_tokens=4096,
+        expert_parallel=False,
+        chunked_prefill=True,
+        recipe_runtime=runtime,
+        recipe_revision=recipe.model.revision,
     )
     assert payload["Entrypoint"] == ["vllm", "serve"]
     assert payload["Cmd"][-1] == "$(touch /tmp/no)"
@@ -212,8 +241,10 @@ async def test_install_runs_exact_release_and_requires_generated_response(env):
         enqueue=AsyncMock(return_value={"id": "load"}),
     )
     registry = SimpleNamespace(get=lambda _: target())
-    library = SimpleNamespace(remote=SimpleNamespace(resolve_image=AsyncMock(return_value={})),
-                              ensure_local_image=AsyncMock())
+    library = SimpleNamespace(
+        remote=SimpleNamespace(resolve_image=AsyncMock(return_value={})),
+        ensure_local_image=AsyncMock(),
+    )
     download = AsyncMock(return_value=SimpleNamespace(id="weights"))
     store.get_download = lambda _: SimpleNamespace(status="completed", progress=100)
     verify = AsyncMock()
@@ -242,11 +273,26 @@ async def test_install_runs_exact_release_and_requires_generated_response(env):
 async def test_install_blocks_running_models_and_marks_interrupted_jobs(env):
     _, store, catalog = env
     await catalog.entries()
-    pool = SimpleNamespace(inventory=AsyncMock(return_value={"clusters": [
-        {"id": "spark", "available": True, "resident_models": [{"model_id": "other"}]}]}))
+    pool = SimpleNamespace(
+        inventory=AsyncMock(
+            return_value={
+                "clusters": [
+                    {"id": "spark", "available": True, "resident_models": [{"model_id": "other"}]}
+                ]
+            }
+        )
+    )
     library = SimpleNamespace(remote=SimpleNamespace(resolve_image=AsyncMock()))
-    installer = RecipeInstaller(catalog, SimpleNamespace(get=lambda _: target()), store,
-                                library, pool, AsyncMock(), AsyncMock(), str)
+    installer = RecipeInstaller(
+        catalog,
+        SimpleNamespace(get=lambda _: target()),
+        store,
+        library,
+        pool,
+        AsyncMock(),
+        AsyncMock(),
+        str,
+    )
     job = await installer.create(starter().content_hash, "spark")
     await installer.tasks[job["id"]]
     assert (await installer.jobs())[0]["status"] == "failed"
@@ -261,21 +307,31 @@ async def test_recipe_api_auth_import_schema_and_incompatible_target(env):
     settings, _, _ = env
     app = create_app(settings)
     app.state.recipe_catalog.start = lambda: None  # isolate API contract from internet
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
-        assert (await client.post("/api/v1/recipes/import", json=starter().model_dump(mode="json"))).status_code == 401
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app), base_url="http://test"
+    ) as client:
+        assert (
+            await client.post("/api/v1/recipes/import", json=starter().model_dump(mode="json"))
+        ).status_code == 401
         headers = {"Authorization": "Bearer test-admin"}
         response = await client.get("/api/v1/recipes/schema", headers=headers)
         assert response.status_code == 200
         assert response.json()["properties"]["schema_version"]["const"] == "spark-cluster.recipe/v1"
-        response = await client.post("/api/v1/recipes/import", headers=headers,
-                                     json=starter().model_dump(mode="json"))
+        response = await client.post(
+            "/api/v1/recipes/import", headers=headers, json=starter().model_dump(mode="json")
+        )
         assert response.status_code == 200
         value = copy.deepcopy(starter().model_dump(mode="json"))
         value["description"] = "Changed published release"
-        assert (await client.post("/api/v1/recipes/import", headers=headers, json=value)).status_code == 409
-        response = await client.post("/api/v1/recipes/install", headers=headers,
-                                     json={"recipe_hash": starter().content_hash, "cluster_id": "missing"})
-        assert response.status_code == 409
+        assert (
+            await client.post("/api/v1/recipes/import", headers=headers, json=value)
+        ).status_code == 409
+        response = await client.post(
+            "/api/v1/recipes/install",
+            headers=headers,
+            json={"recipe_hash": starter().content_hash, "cluster_id": "missing"},
+        )
+        assert response.status_code == 404
         listing = (await client.get("/api/v1/recipes", headers=headers)).json()
         assert len(listing["recipes"]) >= 2
         assert all(entry["blockers"] for entry in listing["recipes"])

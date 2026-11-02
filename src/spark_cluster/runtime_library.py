@@ -372,8 +372,10 @@ class RuntimeLibrary:
         if not shutil.which("skopeo"):
             raise ValueError("Install skopeo on the controller (included in the Spark image)")
         return await self._enqueue(
-            "download", {"image": metadata["image"], "platform": metadata["platform"]},
-            self._download, resolved_metadata=metadata,
+            "download",
+            {"image": metadata["image"], "platform": metadata["platform"]},
+            self._download,
+            resolved_metadata=metadata,
         )
 
     async def ensure_local_image(self, metadata: dict) -> dict:

@@ -251,7 +251,10 @@ def build_execution_plan(
     cluster_kind: str | None = None,
 ) -> RuntimeExecutionPlan:
     if request.recipe_runtime:
-        image_overrides = {**(image_overrides or {}), request.engine_id: request.recipe_runtime.image}
+        image_overrides = {
+            **(image_overrides or {}),
+            request.engine_id: request.recipe_runtime.image,
+        }
     matrix = capabilities(settings, image_overrides)
     engine_id = request.engine_id
     warnings: list[str] = []
@@ -558,7 +561,7 @@ def container_launch_script(engine_id: str) -> str:
             'ray start --head --node-ip-address="$NODE_IP" --port=6379 --dashboard-host=0.0.0.0',
             'if test -n "${SPARK_RECIPE_ARGUMENTS:-}"; then',
             recipe_launch_script(),
-            'fi',
+            "fi",
             'set -- --model "$MODEL_ID" --served-model-name "$SERVED_MODEL_NAME" '
             "--distributed-executor-backend ray "
             '--tensor-parallel-size "$TENSOR_PARALLEL_SIZE" '

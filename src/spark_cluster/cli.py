@@ -67,6 +67,7 @@ def main() -> None:
     args = build_parser().parse_args()
     if args.command == "recipe":
         from pathlib import Path
+
         from .recipes import SparkRecipe, read_recipe
 
         if args.recipe_command == "schema":

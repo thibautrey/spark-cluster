@@ -1,0 +1,517 @@
+{
+  "$defs": {
+    "RecipeHardware": {
+      "additionalProperties": false,
+      "properties": {
+        "hardware": {
+          "const": "dgx-spark",
+          "default": "dgx-spark",
+          "title": "Hardware",
+          "type": "string"
+        },
+        "platform": {
+          "const": "linux/arm64",
+          "default": "linux/arm64",
+          "title": "Platform",
+          "type": "string"
+        },
+        "nodes": {
+          "maximum": 64,
+          "minimum": 1,
+          "title": "Nodes",
+          "type": "integer"
+        },
+        "memory_gib_per_node": {
+          "exclusiveMinimum": 0,
+          "maximum": 1024,
+          "title": "Memory Gib Per Node",
+          "type": "number"
+        },
+        "disk_gib_per_node": {
+          "exclusiveMinimum": 0,
+          "maximum": 16384,
+          "title": "Disk Gib Per Node",
+          "type": "number"
+        },
+        "topology": {
+          "default": "single",
+          "enum": [
+            "single",
+            "ray"
+          ],
+          "title": "Topology",
+          "type": "string"
+        }
+      },
+      "required": [
+        "nodes",
+        "memory_gib_per_node",
+        "disk_gib_per_node"
+      ],
+      "title": "RecipeHardware",
+      "type": "object"
+    },
+    "RecipeLaunch": {
+      "additionalProperties": false,
+      "properties": {
+        "recipe_runtime": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecipeRuntime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "recipe_revision": {
+          "anyOf": [
+            {
+              "pattern": "^[a-f0-9]{40}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Recipe Revision"
+        },
+        "model_id": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Model Id",
+          "type": "string"
+        },
+        "served_model_name": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Served Model Name",
+          "type": "string"
+        },
+        "bits_per_weight": {
+          "default": 4,
+          "exclusiveMinimum": 0,
+          "maximum": 32,
+          "title": "Bits Per Weight",
+          "type": "number"
+        },
+        "context_length": {
+          "default": 131072,
+          "exclusiveMinimum": 0,
+          "maximum": 1048576,
+          "title": "Context Length",
+          "type": "integer"
+        },
+        "concurrent_sequences": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "maximum": 1024,
+          "title": "Concurrent Sequences",
+          "type": "integer"
+        },
+        "tensor_parallel": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "maximum": 64,
+          "title": "Tensor Parallel",
+          "type": "integer"
+        },
+        "pipeline_parallel": {
+          "default": 1,
+          "exclusiveMinimum": 0,
+          "maximum": 64,
+          "title": "Pipeline Parallel",
+          "type": "integer"
+        },
+        "gpu_memory_utilization": {
+          "default": 0.82,
+          "exclusiveMaximum": 1,
+          "exclusiveMinimum": 0,
+          "title": "Gpu Memory Utilization",
+          "type": "number"
+        },
+        "memory_budget_mode": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "fixed"
+          ],
+          "title": "Memory Budget Mode",
+          "type": "string"
+        },
+        "cpu_offload_gib": {
+          "default": 0,
+          "maximum": 512,
+          "minimum": 0,
+          "title": "Cpu Offload Gib",
+          "type": "number"
+        },
+        "gpu_layers": {
+          "anyOf": [
+            {
+              "maximum": 10000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Gpu Layers"
+        },
+        "optimization_profile": {
+          "default": "balanced",
+          "enum": [
+            "balanced",
+            "latency",
+            "throughput",
+            "long-context"
+          ],
+          "title": "Optimization Profile",
+          "type": "string"
+        },
+        "kv_cache_dtype": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "fp8_e4m3"
+          ],
+          "title": "Kv Cache Dtype",
+          "type": "string"
+        },
+        "max_num_seqs": {
+          "default": 4,
+          "exclusiveMinimum": 0,
+          "maximum": 1024,
+          "title": "Max Num Seqs",
+          "type": "integer"
+        },
+        "max_num_batched_tokens": {
+          "default": 8192,
+          "maximum": 1048576,
+          "minimum": 512,
+          "title": "Max Num Batched Tokens",
+          "type": "integer"
+        },
+        "engine_id": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "vllm",
+            "sglang",
+            "llama-cpp",
+            "ollama",
+            "tensorrt-llm",
+            "triton",
+            "tgi",
+            "lmdeploy",
+            "xinference",
+            "localai",
+            "tensorfold",
+            "deepinfer",
+            "strata"
+          ],
+          "title": "Engine Id",
+          "type": "string"
+        },
+        "speculative_method": {
+          "default": "auto",
+          "enum": [
+            "off",
+            "auto",
+            "mtp",
+            "dspark",
+            "eagle3",
+            "dflash"
+          ],
+          "title": "Speculative Method",
+          "type": "string"
+        },
+        "speculative_tokens": {
+          "default": 0,
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Speculative Tokens",
+          "type": "integer"
+        },
+        "draft_model": {
+          "anyOf": [
+            {
+              "maxLength": 200,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Draft Model"
+        },
+        "expert_parallel": {
+          "default": false,
+          "title": "Expert Parallel",
+          "type": "boolean"
+        },
+        "all2all_backend": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "allgather_reducescatter",
+            "deepep_low_latency",
+            "deepep_high_throughput",
+            "naive"
+          ],
+          "title": "All2All Backend",
+          "type": "string"
+        },
+        "expert_load_balancing": {
+          "default": false,
+          "title": "Expert Load Balancing",
+          "type": "boolean"
+        },
+        "redundant_experts": {
+          "default": 0,
+          "maximum": 32,
+          "minimum": 0,
+          "title": "Redundant Experts",
+          "type": "integer"
+        },
+        "cuda_graphs": {
+          "default": true,
+          "title": "Cuda Graphs",
+          "type": "boolean"
+        },
+        "chunked_prefill": {
+          "default": true,
+          "title": "Chunked Prefill",
+          "type": "boolean"
+        },
+        "cache_cpu_gib": {
+          "default": 32,
+          "maximum": 512,
+          "minimum": 0,
+          "title": "Cache Cpu Gib",
+          "type": "integer"
+        },
+        "cache_disk_gib": {
+          "default": 1536,
+          "maximum": 16384,
+          "minimum": 0,
+          "title": "Cache Disk Gib",
+          "type": "integer"
+        },
+        "rank_order": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 64,
+          "title": "Rank Order",
+          "type": "array"
+        },
+        "enforce_rank_order": {
+          "default": false,
+          "title": "Enforce Rank Order",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "model_id",
+        "served_model_name"
+      ],
+      "title": "RecipeLaunch",
+      "type": "object"
+    },
+    "RecipeModel": {
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "title": "Repository",
+          "type": "string"
+        },
+        "revision": {
+          "pattern": "^[a-f0-9]{40}$",
+          "title": "Revision",
+          "type": "string"
+        },
+        "license": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "License",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "revision",
+        "license"
+      ],
+      "title": "RecipeModel",
+      "type": "object"
+    },
+    "RecipeRuntime": {
+      "additionalProperties": false,
+      "description": "Immutable container and literal argv; never evaluated by a host shell.",
+      "properties": {
+        "image": {
+          "pattern": "^(docker\\.io|ghcr\\.io|nvcr\\.io)/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$",
+          "title": "Image",
+          "type": "string"
+        },
+        "arguments": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 150,
+          "title": "Arguments",
+          "type": "array"
+        },
+        "environment": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "maxProperties": 80,
+          "title": "Environment",
+          "type": "object"
+        },
+        "unconfined": {
+          "default": false,
+          "title": "Unconfined",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "image"
+      ],
+      "title": "RecipeRuntime",
+      "type": "object"
+    },
+    "RecipeSource": {
+      "additionalProperties": false,
+      "properties": {
+        "repository": {
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+          "title": "Repository",
+          "type": "string"
+        },
+        "commit": {
+          "pattern": "^[a-f0-9]{40}$",
+          "title": "Commit",
+          "type": "string"
+        },
+        "path": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "license": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "License",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "commit",
+        "path",
+        "license"
+      ],
+      "title": "RecipeSource",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "spark-cluster.recipe/v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "id": {
+      "pattern": "^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9-]*$",
+      "title": "Id",
+      "type": "string"
+    },
+    "version": {
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "title": "Version",
+      "type": "string"
+    },
+    "controller_min_version": {
+      "default": "0.1.0",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$",
+      "title": "Controller Min Version",
+      "type": "string"
+    },
+    "title": {
+      "maxLength": 150,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "description": {
+      "maxLength": 2000,
+      "minLength": 1,
+      "title": "Description",
+      "type": "string"
+    },
+    "license": {
+      "maxLength": 100,
+      "minLength": 1,
+      "title": "License",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/RecipeSource"
+    },
+    "model": {
+      "$ref": "#/$defs/RecipeModel"
+    },
+    "requirements": {
+      "$ref": "#/$defs/RecipeHardware"
+    },
+    "runtime": {
+      "$ref": "#/$defs/RecipeRuntime"
+    },
+    "launch": {
+      "$ref": "#/$defs/RecipeLaunch"
+    },
+    "validation": {
+      "default": "source-reviewed",
+      "enum": [
+        "source-reviewed",
+        "hardware-verified"
+      ],
+      "title": "Validation",
+      "type": "string"
+    },
+    "notes": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 30,
+      "title": "Notes",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "version",
+    "title",
+    "description",
+    "license",
+    "source",
+    "model",
+    "requirements",
+    "runtime",
+    "launch"
+  ],
+  "title": "SparkRecipe",
+  "type": "object"
+}

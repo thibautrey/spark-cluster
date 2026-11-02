@@ -218,9 +218,12 @@ export const library: Library = {
   message: "Verified packages for managed targets.",
 };
 export function baseline(path: string): unknown {
-  if (path.startsWith("/api/v1/recipes")) return {
-    recipes: [], jobs: [], discovery: { checked_at: null, errors: [] }
-  };
+  if (path.startsWith("/api/v1/recipes"))
+    return {
+      recipes: [],
+      jobs: [],
+      discovery: { checked_at: null, errors: [] },
+    };
   const url = new URL(path, "http://localhost");
   switch (url.pathname) {
     case "/api/v1/clusters":
