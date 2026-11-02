@@ -368,7 +368,9 @@ class SparkClusterMCP:
                 model = arguments.get("model_id")
                 if type(hours) is not int or not 1 <= hours <= 17520:
                     raise ValueError("hours must be an integer between 1 and 17520")
-                if model is not None and (not isinstance(model, str) or not 1 <= len(model) <= 1024):
+                if model is not None and (
+                    not isinstance(model, str) or not 1 <= len(model) <= 1024
+                ):
                     raise ValueError("model_id must be a nonempty string up to 1024 characters")
                 tracker = self.inference_tracker
                 result = await asyncio.to_thread(
