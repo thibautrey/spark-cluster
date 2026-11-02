@@ -3,7 +3,9 @@
 **[Authoring and publishing skill](../skills/spark-cluster-recipes/SKILL.md)** ·
 [Starter files](../recipes) · [JSON Schema](../recipes/schema-v1.json)
 
-Models → **Recipes** lists bundled, imported, and GitHub-discovered releases.
+The **Recipes** tab in **Models** lists bundled, imported, and GitHub-discovered releases.
+The other tabs separate downloaded files, model discovery, and active transfers/history.
+Tabs have shareable links (for example `#models?tab=recipes`) and load their content on demand.
 The [popular-model catalog](popular-recipes.md) adds over 1,000 explicitly generated,
 version-pinned serving templates, workload references, search and pagination. Pick a version
 and choose **Install & launch**. The controller validates hardware and the immutable ARM64
