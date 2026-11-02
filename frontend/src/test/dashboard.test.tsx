@@ -92,6 +92,50 @@ beforeEach(() => {
   );
 });
 describe("React dashboard parity", () => {
+  it("lets the user choose disk files to remove and explicitly retry a rejected launch", async () => {
+    const user = userEvent.setup();
+    let deleted = false;
+    let attempts = 0;
+    const locationId = cluster.id + ":disk";
+    const assetId = cluster.id + ":old-copy";
+    override = (path, method, body) => {
+      if (path === "/api/v1/storage/delete") {
+        deleted = true;
+        return {deleted: [assetId], errors: []};
+      }
+      if (path === "/api/v1/storage") return {
+        locations: [{id: locationId, cluster_id: cluster.id, cluster_name: cluster.name,
+          name: "Model disk", paths: ["/models"], free_bytes: deleted ? 200 : 10,
+          total_bytes: 1000, scope: "node", node_ids: ["node"], node_names: ["Node"], kind: "filesystem"}],
+        assets: deleted ? [] : [{id: assetId, location_id: locationId, name: "owner/old",
+          model_id: "owner/old", path: "/models/owner/old", kind: "weights", size_bytes: 200,
+          reclaimable_bytes: 200, blockers: [], recipe_refs: [{id: "owner/recipe", version: "1.0.0"}]}],
+        errors: [],
+      };
+      if (path === "/api/v1/pool/load" && method === "POST") {
+        attempts += 1;
+        if (attempts === 1) return new Response(JSON.stringify({detail: {
+          message: "Not enough disk space", code: "insufficient_storage",
+          storage: {requirements: [{location_id: locationId, name: cluster.name,
+            required_bytes: 100, available_bytes: 10, missing_bytes: 90}], excluded_model_ids: [model.id]},
+        }}), {status: 507});
+        return {id: "new-load", status: "queued"};
+      }
+      return undefined;
+    };
+    mount("launch");
+    await user.click(await screen.findByRole("button", {name: /^Launch model$/}));
+    await screen.findByRole("heading", {name: "Free disk space to continue"});
+    expect(attempts).toBe(1);
+    await user.click(await screen.findByRole("checkbox", {name: `Delete owner/old from ${cluster.name}`}));
+    await user.click(screen.getByRole("button", {name: "Delete selected files permanently"}));
+    await screen.findByText("Selected files removed. Storage has been refreshed.");
+    expect(requests.find(r => r.path === "/api/v1/storage/delete")?.body).toEqual({asset_ids: [assetId]});
+    expect(attempts).toBe(1);
+    await user.click(screen.getByRole("button", {name: "Retry operation"}));
+    await waitFor(() => expect(attempts).toBe(2));
+  });
+
   it("installs the selected immutable recipe release on the selected pool", async () => {
     const user = userEvent.setup();
     const release = (version: string, hash: string) => ({

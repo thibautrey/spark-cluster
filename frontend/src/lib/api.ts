@@ -1,6 +1,12 @@
 import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { errorMessage } from "./utils";
+import type { SpaceRequest } from "@/components/storage";
+let storagePrompt: ((space: SpaceRequest) => Promise<boolean>) | null = null;
+export function installStoragePrompt(handler: typeof storagePrompt) {
+  storagePrompt = handler;
+  return () => { storagePrompt = null; };
+}
 const tokenKey = "spark-cluster.admin-token";
 let prompt: ((message: string) => Promise<string>) | null = null;
 let sessionToken = "";
@@ -78,6 +84,10 @@ export async function api<T>(
     }
     if (!response.ok) {
       const detail = (data as { detail?: unknown }).detail;
+      if (interactive && storagePrompt && detail && typeof detail === "object" &&
+          "storage" in detail && detail.storage) {
+        if (await storagePrompt(detail.storage as SpaceRequest)) continue;
+      }
       const message =
         typeof detail === "string"
           ? detail

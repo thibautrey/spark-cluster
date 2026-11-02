@@ -150,6 +150,8 @@ from .setup_models import (
 )
 from .simulator import ClusterSimulator
 from .store import SnapshotStore
+from .storage import StorageService, StorageShortage
+from .storage_api import register_storage
 from .telemetry import InferenceTelemetryService
 
 
@@ -451,6 +453,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> DownloadJob:
         fit_plan = await model_fit_plan(request)
         target = cluster_registry.active()
+        await storage_service.download_check(request, fit_plan, target)
         destination = "cluster" if target and target.kind == "remote-bridge" else "local"
         controller_url = (
             model_relay.controller_url(request_base_url) if destination == "cluster" else None
@@ -464,6 +467,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             target_cluster_name=target.name if target else None,
             target_cluster_url=target.endpoint if target else None,
         )
+
+    storage_service = StorageService(settings, runtime.store, cluster_registry, pool_node, runtime_library)
+
+    storage_service.on_change = lambda: setattr(model_pool, "cache", None)
+
+    async def storage_download_preflight(request):
+        plan = await model_fit_plan(request)
+        await storage_service.download_check(request, plan, cluster_registry.active())
+
+    async def recipe_storage_preflight(recipe, cluster_id):
+        active = cluster_registry.active()
+        if not active or active.id != cluster_id:
+            raise ValueError("Select the recipe's target Spark before installing")
+        await storage_download_preflight(ModelDownloadRequest(
+            repo_id=recipe.model.repository, revision=recipe.model.revision,
+            bits_per_weight=recipe.launch.bits_per_weight,
+            context_length=recipe.launch.context_length,
+            concurrent_sequences=recipe.launch.max_num_seqs,
+            kv_cache_dtype=recipe.launch.kv_cache_dtype,
+        ))
 
     recipe_catalog = RecipeCatalog(settings, runtime.store)
 
@@ -486,6 +509,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         active = cluster_registry.active()
         if not active or active.id != cluster_id:
             raise ValueError("Pool selection changed during preflight; retry on the intended Spark")
+        await storage_service.download_check(request, fit_plan, target)
         return await model_manager.enqueue(
             request, destination="local", fit_plan=fit_plan,
             target_cluster_id=target.id, target_cluster_name=target.name,
@@ -522,6 +546,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         recipe_catalog, cluster_registry, runtime.store, runtime_library, model_pool,
         recipe_download, verify_recipe, model_manager.safe_error,
     )
+
+    recipe_installer.preflight = recipe_storage_preflight
 
     @contextlib.asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -642,6 +668,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.runtime_prerequisites = runtime_prerequisites
     app.state.runtime_library = runtime_library
     app.state.runtime_workflows = runtime_workflows
+    app.state.storage = storage_service
     app.state.recipe_catalog = recipe_catalog
     app.state.recipe_installer = recipe_installer
     app.state.telemetry_service = telemetry_service
@@ -706,6 +733,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         raise HTTPException(status_code=401, detail="Invalid model administration token")
 
     register_runtime_library(app, runtime_library, require_model_token, settings)
+    register_storage(app, storage_service, require_model_token, settings, storage_download_preflight)
+
+    @app.exception_handler(StorageShortage)
+    async def insufficient_storage(_, error):
+        return JSONResponse(status_code=507, content={"detail": error.detail()})
     register_recipes(app, recipe_catalog, recipe_installer, cluster_registry,
                      require_model_token, settings)
 
@@ -1248,6 +1280,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return await enqueue_model_download(request, str(http_request.base_url).rstrip("/"))
         except RemoteClusterUnavailable:
             raise
+        except StorageShortage:
+            raise
         except ModelDoesNotFit as error:
             raise HTTPException(
                 status_code=409,
@@ -1458,6 +1492,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/v1/pool/load", status_code=202, dependencies=[Depends(require_model_token)])
     async def pool_load(request: PoolLoadRequest):
+        await storage_service.launch_check(request)
         try:
             return await model_pool.enqueue(request)
         except ValueError as error:
@@ -1733,10 +1768,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dependencies=[Depends(require_model_token)],
     )
     async def launch_model(request: ModelLaunchRequest) -> ModelLaunchJob:
+        await storage_service.launch_check(PoolLoadRequest(
+            model_id=request.model_id, settings=request,
+            cluster_id=cluster_registry.active().id if cluster_registry.active() else None,
+        ))
         try:
             return await deployment_service.launch(request)
         except ModelNotManaged as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+        except StorageShortage:
+            raise
         except ModelDoesNotFit as error:
             raise HTTPException(
                 status_code=409,

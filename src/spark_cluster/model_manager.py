@@ -1339,7 +1339,14 @@ class ModelManager:
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             return None
 
-    async def enqueue(
+    async def enqueue(self, request: ModelDownloadRequest, **kwargs) -> DownloadJob:
+        lock = getattr(self, "storage_lock", None)
+        if lock is None:
+            return await self._enqueue_stored(request, **kwargs)
+        async with lock:
+            return await self._enqueue_stored(request, **kwargs)
+
+    async def _enqueue_stored(
         self,
         request: ModelDownloadRequest,
         *,

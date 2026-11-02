@@ -50,6 +50,13 @@ verification. Read the **[format, versioning, discovery, and publishing guide](d
 and [JSON Schema](recipes/schema-v1.json). Publish a public JSON index with the GitHub topic
 `spark-cluster-recipes` to make your recipes discoverable without central registration.
 
+## Node storage and space recovery
+
+**Models → Stored on disk** lists model weights and recipe artifacts on each accessible node or
+shared disk. Delete a specific copy to make space while preserving copies elsewhere. When a model
+or recipe needs more disk space, choose which other stored files to remove and explicitly retry.
+See [storage inventory, deletion safeguards, and space recovery](docs/storage.md).
+
 ## Why Spark Cluster
 
 | Capability | What it changes for the operator |

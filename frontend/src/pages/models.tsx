@@ -1,3 +1,4 @@
+import { StoragePanel } from "@/components/storage";
 import {
   createContext,
   useContext,
@@ -307,6 +308,13 @@ function ModelDetails({
           >
             Check fit
           </Button>
+          {fit && !fit.storage_fits && <Button type="button" variant="outline"
+            disabled={action.busy}
+            onClick={() => action.run(async () => {
+              await post("/api/v1/storage/preflight", JSON.parse(signature));
+              const result = await post<ModelFitPlan>("/api/v1/models/fit", JSON.parse(signature));
+              setFit(result);
+            })}>Free disk space</Button>}
           <Button disabled={action.busy || !fit?.download_fits}>
             {reusableCopy
               ? "Copy from controller"
@@ -540,8 +548,8 @@ export function Models() {
   return (
     <>
       <Downloads />
+      <StoragePanel />
       <Recipes />
-      <Inventory />
       <Panel
         title="Discover models"
         actions={
@@ -763,91 +771,6 @@ export function Models() {
         </div>
       </Sheet>
     </>
-  );
-}
-function Inventory() {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const models = useApi<LocalModel[]>(open ? "/api/v1/models" : null, 10000);
-  const inspect = useModelDetails();
-  const [deleting, setDeleting] = useState<string | null>(null);
-  const action = useAction();
-  return (
-    <Panel>
-      <details open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
-        <summary>
-          Downloaded models {models.data ? `· ${models.data.length}` : ""}
-        </summary>
-        <Input
-          type="search"
-          aria-label="Search downloaded models"
-          placeholder="Search downloaded models…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <Message error={models.error} />
-        {models.data
-          ?.filter((m) => m.id.toLowerCase().includes(query.toLowerCase()))
-          .map((m) => (
-            <article className="list-row" key={m.id}>
-              <div>
-                <Button
-                  variant="link"
-                  onClick={() => inspect(m.id, m.revision || undefined)}
-                >
-                  {m.id}
-                </Button>
-                <small>
-                  {bytes(m.size_bytes)} · {m.revision} ·{" "}
-                  {m.loaded ? "loaded" : "downloaded"}
-                </small>
-              </div>
-              <div className="actions">
-                <a href="#launch">Launch ↗</a>
-                <Button variant="outline" onClick={() => setDeleting(m.id)}>
-                  Delete
-                </Button>
-              </div>
-            </article>
-          ))}
-        {models.data?.length === 0 && <Empty>No downloaded models.</Empty>}
-      </details>
-      <Sheet
-        open={!!deleting}
-        onOpenChange={(v) => {
-          if (!v) setDeleting(null);
-        }}
-        title="Delete this model everywhere?"
-        description="Controller model files and every managed cluster copy will be deleted. Stop the model first if it is running."
-      >
-        <p>{deleting}</p>
-        <Message error={action.error} />
-        <div className="actions">
-          <Button
-            variant="outline"
-            disabled={action.busy}
-            onClick={() => setDeleting(null)}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="destructive"
-            disabled={action.busy}
-            onClick={() =>
-              void action.run(async () => {
-                await api(
-                  `/api/v1/model-management/models/${repoPath(deleting!)}`,
-                  { method: "DELETE", interactive: true },
-                );
-                setDeleting(null);
-              })
-            }
-          >
-            Delete model everywhere
-          </Button>
-        </div>
-      </Sheet>
-    </Panel>
   );
 }
 function Downloads() {

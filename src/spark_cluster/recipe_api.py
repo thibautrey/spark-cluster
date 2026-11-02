@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from .recipes import SparkRecipe
+from .storage import StorageShortage
 
 
 class RecipeInstallRequest(BaseModel):
@@ -41,6 +42,8 @@ def register_recipes(app, catalog, installer, registry, require_token, settings)
     async def import_recipe(recipe: SparkRecipe):
         try:
             return await catalog.remember(recipe, {"kind": "imported"})
+        except StorageShortage:
+            raise
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
 
@@ -50,6 +53,8 @@ def register_recipes(app, catalog, installer, registry, require_token, settings)
             return await installer.create(request.recipe_hash, request.cluster_id)
         except KeyError as error:
             raise HTTPException(404, "Recipe release or compute pool not found") from error
+        except StorageShortage:
+            raise
         except ValueError as error:
             raise HTTPException(409, str(error)) from error
 

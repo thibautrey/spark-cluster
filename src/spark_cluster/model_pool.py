@@ -146,6 +146,7 @@ class PoolNode:
         )
         self._metadata_checked = {key: time.monotonic() for key in self.runtime_metadata}
         self.tracker = None
+        self.storage_lock = asyncio.Lock()
         self.native_lock = asyncio.Lock()
         self.native_requests = 0
         self.native_changed = asyncio.Event()
@@ -767,6 +768,10 @@ class PoolNode:
             return {"compatible": False, "reason": self.models.safe_error(error)}
 
     async def load(self, request: NodeLoadRequest) -> dict:
+        async with self.storage_lock:
+            return await self._load_stored(request)
+
+    async def _load_stored(self, request: NodeLoadRequest) -> dict:
         profile, launch, _, _ = await self.prepare(request)
         if profile:
             async with self.demand.profile_locks.setdefault(profile.id, asyncio.Lock()):

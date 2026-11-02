@@ -15,6 +15,7 @@ class RecipeInstaller:
         self.catalog, self.registry, self.store = catalog, registry, store
         self.library, self.pool, self.download, self.verify = library, pool, download, verify
         self.safe_error = safe_error
+        self.preflight = None
         self.tasks = {}
         self.lock = asyncio.Lock()
 
@@ -44,6 +45,8 @@ class RecipeInstaller:
         blockers = await self.catalog.compatible(recipe, self.registry.get(cluster_id))
         if blockers:
             raise ValueError("; ".join(blockers))
+        if self.preflight:
+            await self.preflight(recipe, cluster_id)
         async with self.lock:
             for job in await self.jobs():
                 if job["cluster_id"] == cluster_id and job["status"] in {"queued", "running"}:
@@ -177,6 +180,7 @@ class RecipeInstaller:
             )
             raise
         except Exception as error:
-            await self.save(job, status="failed", error=self.safe_error(error))
+            await self.save(job, status="failed", error=self.safe_error(error),
+                            storage=getattr(error, "storage", None))
         finally:
             self.tasks.pop(job["id"], None)

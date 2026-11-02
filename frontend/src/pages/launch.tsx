@@ -1,3 +1,4 @@
+import { useStorageRecovery } from "@/components/storage";
 import { useEffect, useRef, useState } from "react";
 import { api, post, useAction, useApi } from "@/lib/api";
 import { useDashboardContext } from "@/lib/context";
@@ -76,6 +77,7 @@ export function modelTask(model: PoolModel) {
           : "Chat";
 }
 export function Launch() {
+  const recoverStorage = useStorageRecovery();
   const { pool, poolError, context } = useDashboardContext();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState("all");
@@ -324,6 +326,13 @@ export function Launch() {
                   </p>
                 )}
               <footer className="actions">
+                {!job && /space|disk|storage/i.test(pool?.jobs.findLast(j => j.model_id === m.id)?.message || "") &&
+                  <Button variant="outline" disabled={action.busy} onClick={() => action.run(async () => {
+                    if (await recoverStorage({retry: true})) await post("/api/v1/pool/load", {
+                      model_id: m.id, cluster_id: context === "all" ? null : context,
+                    });
+                  })}>Free disk space and retry</Button>}
+
                 <Button
                   disabled={action.busy || !!job}
                   variant={status === "ready" ? "default" : "outline"}
@@ -699,6 +708,7 @@ export function LaunchFields({
   );
 }
 function ManualLaunch() {
+  const recoverStorage = useStorageRecovery();
   const {
     context,
     clusters,
@@ -947,6 +957,11 @@ function ManualLaunch() {
               <Meter value={j.progress} label="Launch progress" />
               <p>{j.message}</p>
               {j.error && <p className="error">{j.error}</p>}
+              {j.status === "failed" && /space|disk|storage/i.test(j.error || "") &&
+                <Button variant="outline" disabled={action.busy} onClick={() => action.run(async () => {
+                  if (await recoverStorage({retry: true})) await post(`/api/v1/launches/${j.id}/retry`);
+                })}>Free disk space and retry</Button>}
+
               {j.status === "failed" && (
                 <Button
                   variant="outline"

@@ -1,3 +1,4 @@
+import { StorageRecoveryProvider } from "./components/storage";
 import { Component, useEffect, type ReactNode, type ErrorInfo } from "react";
 import {
   Activity,
@@ -87,6 +88,7 @@ export function App() {
     memory: <Memory />,
   };
   return (
+    <StorageRecoveryProvider>
     <ModelDetailsProvider>
       <div className="shell">
         <aside className="sidebar">
@@ -173,6 +175,7 @@ export function App() {
         </main>
       </div>
     </ModelDetailsProvider>
+    </StorageRecoveryProvider>
   );
 }
 function Api() {
