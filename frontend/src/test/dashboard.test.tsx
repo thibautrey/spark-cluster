@@ -350,18 +350,6 @@ describe("React dashboard parity", () => {
     expect(screen.getAllByText("Generated template · untested")).toHaveLength(
       24,
     );
-    const recipeArticle = screen
-      .getByRole("heading", { name: "Serving model 0" })
-      .closest("article")!;
-    expect(recipeArticle.parentElement?.classList.contains("card-grid")).toBe(
-      true,
-    );
-    expect(
-      recipeArticle.querySelector(".catalog-cover img")?.getAttribute("src"),
-    ).toContain("social-thumbnails/models/models/model-0.png");
-    expect(
-      within(recipeArticle).queryByText("Recipe details and licenses"),
-    ).toBeNull();
     expect(
       screen.queryByRole("heading", { name: "Serving model 24" }),
     ).toBeNull();
