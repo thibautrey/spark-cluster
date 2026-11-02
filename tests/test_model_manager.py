@@ -712,7 +712,12 @@ async def test_local_gguf_fit_replaces_legacy_external_tables_with_bundled_files
     store.close()
 
 
-def test_nvfp4_download_is_allowed_but_launch_is_blocked_on_ampere(tmp_path):
+def test_nvfp4_download_is_allowed_but_launch_is_blocked_on_ampere(tmp_path, monkeypatch):
+    # This is a GPU-format compatibility test, independent of the host's free disk.
+    monkeypatch.setattr(
+        "spark_cluster.model_manager.shutil.disk_usage",
+        lambda _: SimpleNamespace(total=100 * GIB, used=0, free=100 * GIB),
+    )
     settings = Settings(
         model_cache_path=tmp_path,
         fallback_node_count=2,
