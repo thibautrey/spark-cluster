@@ -417,6 +417,26 @@ class OnDemandInference:
         finally:
             self.recovery_tasks.pop(profile.id, None)
 
+    async def adopt_runtime(self, profile, resident):
+        # Docker can have restarted the process before the bridge after host boot.
+        # Keep its reservation, but allow the full cold-load deadline before recovery.
+        try:
+            await self.wait_ready(profile, resident, profile.name)
+            async with self.lock:
+                if self.residents.get(profile.id) is resident:
+                    resident.status = "ready"
+                    resident.ready_since = resident.health_checked_at = time.monotonic()
+                    self.remember_loaded(profile)
+                    self.changed.set()
+        except Exception:
+            async with self.lock:
+                if self.residents.get(profile.id) is resident:
+                    resident.status = "unhealthy"
+                    self.failed_runtime(profile)
+            logger.exception("Adopted runtime failed readiness for %s", profile.id)
+        finally:
+            self.recovery_tasks.pop(profile.id, None)
+
     async def monitor_health(self):
         while True:
             await asyncio.sleep(1)
@@ -598,6 +618,11 @@ class OnDemandInference:
                 )
                 self.residents[profile.id] = resident
                 self.remember_loaded(profile)
+                resident.status = "starting"
+                self.resume_pending.add(profile.id)
+                self.recovery_tasks[profile.id] = asyncio.create_task(
+                    self.adopt_runtime(profile, resident)
+                )
             listeners = [p for p in self.profiles if p.id not in self.dynamic]
             for profile, sock in zip(listeners, self.sockets, strict=True):
                 server = ListenerServer(
@@ -839,11 +864,14 @@ class OnDemandInference:
         )
         container_id = created.json()["Id"]
         await self.docker.request("POST", f"/containers/{container_id}/start", timeout=30)
+        await self.wait_ready(profile, resident, container_id)
+
+    async def wait_ready(self, profile, resident, container_id):
         deadline = time.monotonic() + profile.startup_seconds
         async with httpx.AsyncClient(timeout=3, trust_env=False) as client:
             while time.monotonic() < deadline:
                 state = await self.docker.request("GET", f"/containers/{container_id}/json")
-                resident.engine_image = state.json().get("Image") or payload.get("Image")
+                resident.engine_image = state.json().get("Image") or profile.container.get("Image")
                 if not state.json().get("State", {}).get("Running"):
                     logs = b""
                     with contextlib.suppress(httpx.HTTPError, RuntimeError):

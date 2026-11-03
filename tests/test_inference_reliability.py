@@ -644,3 +644,78 @@ async def test_retained_model_enables_docker_boot_restart(monkeypatch):
     await manager.ensure(p, keep_loaded=True)
     update = next(call for call in manager.docker.calls if call[1].endswith("/update"))
     assert update[2]["payload"]["RestartPolicy"] == {"Name": "unless-stopped"}
+
+
+@pytest.mark.asyncio
+async def test_docker_boot_adoption_waits_for_cold_load_without_recreating(tmp_path, monkeypatch):
+    p = profile()
+    path = tmp_path / "on-demand.json"
+    docker = Docker()
+    docker.available = True
+
+    async def ping():
+        return True
+
+    docker.ping = ping
+    docker.containers[p.name] = {
+        "State": {"Running": True},
+        "Config": {
+            "Labels": {
+                "spark-cluster.on-demand": p.id,
+                "spark-cluster.reservation": json.dumps(
+                    {"gpu_ids": ["unknown"], "budget_gib": {"unknown": 0.8}}
+                ),
+            }
+        },
+    }
+    manager = OnDemandInference(docker, [p], path)
+    manager.dynamic.add(p.id)  # No public listener is needed for the node pool.
+    manager.retain(p, True)
+    entered, ready = asyncio.Event(), asyncio.Event()
+
+    async def probe(request):
+        entered.set()
+        await ready.wait()
+        return httpx.Response(200)
+
+    mock_http(monkeypatch, probe)
+    try:
+        await manager.start()
+        await asyncio.wait_for(entered.wait(), 1)
+        adoption = manager.recovery_tasks[p.id]
+        resident = manager.residents[p.id]
+        assert resident.status == "starting"
+        for _ in range(5):
+            await manager.reconcile_health()
+        assert not resident.health_failures
+        assert not any(method in {"POST", "DELETE"} for method, _, _ in docker.calls)
+        ready.set()
+        await asyncio.wait_for(adoption, 1)
+        assert resident.status == "ready" and not manager.resume_pending
+        assert manager.loaded == {p.id}
+    finally:
+        ready.set()
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_idle_unload_clears_reboot_resume_intent(tmp_path, monkeypatch):
+    p = profile(idle_seconds=1)
+    path = tmp_path / "on-demand.json"
+    manager = OnDemandInference(Docker(), [p], path)
+
+    async def start(*args):
+        pass
+
+    monkeypatch.setattr(manager, "_start_runtime", start)
+    await manager.ensure(p)
+    manager.residents[p.id].last_used = time.monotonic() - 10
+    task = asyncio.create_task(manager.reap())
+    try:
+        async with asyncio.timeout(3):
+            while manager.residents:
+                await asyncio.sleep(0.01)
+        assert not OnDemandInference(Docker(), [p], path).resume_pending
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
