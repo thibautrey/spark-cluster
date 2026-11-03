@@ -522,6 +522,8 @@ def test_engine_payload_keeps_offload_and_cpu_layer_controls(tmp_path):
     )
     docker = DockerEngineClient(settings)
     payload = docker.runtime_payload(**args, cpu_offload_gib=3, cuda_graphs=False)
+    assert "Runtime" not in payload["HostConfig"]
+    assert payload["HostConfig"]["DeviceRequests"][0]["Capabilities"] == [["gpu"]]
     assert "--enforce-eager" in payload["Cmd"]
     assert payload["Cmd"][-2:] == ["--runner", "pooling"]
     assert "CPU_OFFLOAD_GIB=3" in payload["Env"]

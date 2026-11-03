@@ -637,7 +637,6 @@ class DockerEngineClient:
             ],
             "HostConfig": {
                 "NetworkMode": "host",
-                "Runtime": "nvidia",
                 "Binds": [f"{self.settings.docker_host_model_path}:/models:ro"],
                 "DeviceRequests": [
                     {
