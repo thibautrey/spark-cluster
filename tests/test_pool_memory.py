@@ -570,7 +570,9 @@ def test_small_eager_spark_runtime_does_not_reserve_large_cuda_graph_workspace()
     settings = Settings(active_hardware="dgx-spark")
     assert PoolNode.resources_for_fit(launch, fit, settings).required_gib_per_gpu == 4.78
     launch.cuda_graphs = True
-    assert PoolNode.resources_for_fit(launch, fit, settings).required_gib_per_gpu == pytest.approx(10.78)
+    assert PoolNode.resources_for_fit(launch, fit, settings).required_gib_per_gpu == pytest.approx(
+        10.78
+    )
 
 
 def test_pooling_native_dimensions_override_cannot_advertise_truncation(tmp_path):
