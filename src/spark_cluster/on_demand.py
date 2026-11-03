@@ -326,6 +326,13 @@ class OnDemandInference:
         if changed:
             self.persist()
 
+    async def enable_boot_restart(self, profile):
+        await self.docker.request(
+            "POST",
+            f"/containers/{quote(profile.name, safe='')}/update",
+            payload={"RestartPolicy": {"Name": "unless-stopped"}},
+        )
+
     def forget_loaded(self, profile):
         self.loaded.discard(profile.id)
         self.resume_pending.discard(profile.id)
@@ -703,6 +710,10 @@ class OnDemandInference:
                                 existing.last_used = time.monotonic()
                                 if keep_loaded is not None:
                                     self.retain(profile, keep_loaded)
+                                if profile.id in self.retained and actual.get(
+                                    "HostConfig", {}
+                                ).get("RestartPolicy", {}).get("Name") != "unless-stopped":
+                                    await self.enable_boot_restart(profile)
                                 self.remember_loaded(profile)
                                 return
                             # Upgrade continuous-batching flags only after active streams drain.
@@ -757,11 +768,7 @@ class OnDemandInference:
                         raise RuntimeError("Runtime residency changed during startup")
                     # Retained models have both Docker boot supervision and node recovery.
                     if keep_loaded is True or (keep_loaded is None and profile.id in self.retained):
-                        await self.docker.request(
-                            "POST",
-                            f"/containers/{quote(profile.name, safe='')}/update",
-                            payload={"RestartPolicy": {"Name": "unless-stopped"}},
-                        )
+                        await self.enable_boot_restart(profile)
                     resident.status = "ready"
                     resident.ready_since = resident.health_checked_at = time.monotonic()
                     resident.parallelism_prepared = True
