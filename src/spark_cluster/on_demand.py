@@ -428,6 +428,11 @@ class OnDemandInference:
                     resident.ready_since = resident.health_checked_at = time.monotonic()
                     self.remember_loaded(profile)
                     self.changed.set()
+        except asyncio.CancelledError:
+            async with self.lock:
+                if self.residents.get(profile.id) is resident:
+                    resident.status = "unhealthy"
+            raise
         except Exception:
             async with self.lock:
                 if self.residents.get(profile.id) is resident:
