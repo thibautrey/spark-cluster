@@ -630,3 +630,17 @@ async def test_resume_admission_failure_keeps_intent_and_backs_off(tmp_path, mon
     assert manager.resume_pending == {p.id}
     assert manager.recovery_state(p)["retry_after_seconds"] > 0
     assert OnDemandInference(Docker(), [p], path).resume_pending == {p.id}
+
+
+@pytest.mark.asyncio
+async def test_retained_model_enables_docker_boot_restart(monkeypatch):
+    p = profile()
+    manager = OnDemandInference(Docker(), [p])
+
+    async def start(*args):
+        pass
+
+    monkeypatch.setattr(manager, "_start_runtime", start)
+    await manager.ensure(p, keep_loaded=True)
+    update = next(call for call in manager.docker.calls if call[1].endswith("/update"))
+    assert update[2]["payload"]["RestartPolicy"] == {"Name": "unless-stopped"}

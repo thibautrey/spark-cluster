@@ -755,6 +755,13 @@ class OnDemandInference:
                 async with self.lock:
                     if self.residents.get(profile.id) is not resident:
                         raise RuntimeError("Runtime residency changed during startup")
+                    # Retained models have both Docker boot supervision and node recovery.
+                    if keep_loaded is True or (keep_loaded is None and profile.id in self.retained):
+                        await self.docker.request(
+                            "POST",
+                            f"/containers/{quote(profile.name, safe='')}/update",
+                            payload={"RestartPolicy": {"Name": "unless-stopped"}},
+                        )
                     resident.status = "ready"
                     resident.ready_since = resident.health_checked_at = time.monotonic()
                     resident.parallelism_prepared = True
