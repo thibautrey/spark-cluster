@@ -710,9 +710,13 @@ class OnDemandInference:
                                 existing.last_used = time.monotonic()
                                 if keep_loaded is not None:
                                     self.retain(profile, keep_loaded)
-                                if profile.id in self.retained and actual.get(
-                                    "HostConfig", {}
-                                ).get("RestartPolicy", {}).get("Name") != "unless-stopped":
+                                if (
+                                    profile.id in self.retained
+                                    and actual.get("HostConfig", {})
+                                    .get("RestartPolicy", {})
+                                    .get("Name")
+                                    != "unless-stopped"
+                                ):
                                     await self.enable_boot_restart(profile)
                                 self.remember_loaded(profile)
                                 return
