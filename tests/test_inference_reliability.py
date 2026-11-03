@@ -510,3 +510,46 @@ def test_global_endpoint_rejects_oversized_body_before_model_resolution(tmp_path
         response = client.post("/v1/chat/completions", json={"model": "unknown"})
     assert response.status_code == 413
     assert response.json()["error"]["code"] == "request_too_large"
+
+
+@pytest.mark.asyncio
+async def test_persisted_retained_model_recovers_without_previous_failure(tmp_path, monkeypatch):
+    p = profile()
+    path = tmp_path / "on-demand.json"
+    previous = OnDemandInference(Docker(), [p], path)
+    previous.retain(p, True)
+    manager = OnDemandInference(Docker(), [p], path)
+    assert not manager.residents and not manager.recovery
+
+    async def start(p, resident):
+        pass
+
+    monkeypatch.setattr(manager, "_start_runtime", start)
+    await manager.reconcile_health()
+    await asyncio.gather(*manager.recovery_tasks.values())
+    assert manager.residents[p.id].status == "ready"
+    assert p.id in manager.retained
+
+
+@pytest.mark.asyncio
+async def test_retained_admission_failure_backs_off_without_busy_retry(monkeypatch):
+    p = profile()
+    manager = OnDemandInference(Docker(), [p])
+    manager.retain(p, True)
+    attempts = 0
+
+    async def unavailable(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("Waiting for GPU memory")
+
+    monkeypatch.setattr(manager, "ensure", unavailable)
+    await manager.reconcile_health()
+    await asyncio.gather(*manager.recovery_tasks.values())
+    assert 0 < manager.recovery_state(p)["retry_after_seconds"] <= 5
+    await manager.reconcile_health()
+    assert attempts == 1 and not manager.recovery_tasks
+    manager.recovery[p.id] = (1, 0)
+    manager.retain(p, False)
+    await manager.reconcile_health()
+    assert attempts == 1 and not manager.recovery_tasks

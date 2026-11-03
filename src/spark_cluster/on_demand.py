@@ -372,7 +372,6 @@ class OnDemandInference:
             resident = self.residents.get(profile.id)
             if (
                 profile.id in self.retained
-                and profile.id in self.recovery
                 and (resident is None or resident.status == "unhealthy")
                 and not (resident and resident.active_requests)
                 and not self.profile_locks.setdefault(profile.id, asyncio.Lock()).locked()
@@ -385,6 +384,10 @@ class OnDemandInference:
         try:
             await self.ensure(profile)
         except Exception:
+            # Admission can fail before ensure records a startup failure. Back off
+            # those failures too, including temporary host pressure after boot.
+            if not self.recovery_state(profile)["retry_after_seconds"]:
+                self.failed_runtime(profile)
             logger.exception("Retained runtime recovery failed for %s", profile.id)
         finally:
             self.recovery_tasks.pop(profile.id, None)
