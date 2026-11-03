@@ -868,6 +868,8 @@ class PoolNode:
                     or self.demand.residents[profile.id].status != "ready"
                 ):
                     raise ValueError("The model was unloaded; load it again before retaining it")
+                if retained:
+                    await self.demand.enable_boot_restart(profile)
                 self.demand.retain(profile, retained)
         async with self.native_lock:
             if self.native.get("model_id") == model_id:

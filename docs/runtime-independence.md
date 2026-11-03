@@ -93,7 +93,8 @@ Unraid autostart, and external supervisors before enabling the corresponding lis
 
 Unlike direct-runtime mode above, this mode depends on the controller for inference. Controller
 shutdown drains requests and removes its temporary runtime; crash recovery reclaims only containers
-labelled with the matching `spark-cluster.on-demand` profile. Docker runtimes have no restart policy.
+labelled with the matching `spark-cluster.on-demand` profile. Temporary Docker runtimes
+have no restart policy; retained models use `unless-stopped` for host boot recovery.
 The ordinary direct-runtime path and remote clusters are unchanged when no recipes are configured.
 
 ## Model pool and retention
