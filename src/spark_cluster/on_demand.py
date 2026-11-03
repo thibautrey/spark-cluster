@@ -173,6 +173,8 @@ class OnDemandInference:
             state_path.with_name("adaptive-concurrency.json") if state_path else None
         )
         self.retained: set[str] = set()
+        self.loaded: set[str] = set()
+        self.resume_pending: set[str] = set()
         self.changed = asyncio.Event()
         self.dynamic: set[str] = set()
         self.pool = None
@@ -182,6 +184,8 @@ class OnDemandInference:
         if state_path and state_path.exists():
             state = json.loads(state_path.read_text())
             self.retained = set(state.get("retained", []))
+            self.loaded = set(state.get("loaded", []))
+            self.resume_pending = self.loaded.copy()
             for item in state.get("profiles", []):
                 if item.get("launch_settings"):
                     item["launch_settings"].setdefault("memory_budget_mode", "fixed")
@@ -201,6 +205,7 @@ class OnDemandInference:
             json.dumps(
                 {
                     "retained": sorted(self.retained),
+                    "loaded": sorted(self.loaded),
                     "profiles": [p.model_dump() for p in self.profiles if p.id in self.dynamic],
                 }
             )
@@ -314,6 +319,18 @@ class OnDemandInference:
             recovery=self.recovery_state(resident.profile),
         )
 
+    def remember_loaded(self, profile):
+        changed = profile.id not in self.loaded
+        self.loaded.add(profile.id)
+        self.resume_pending.discard(profile.id)
+        if changed:
+            self.persist()
+
+    def forget_loaded(self, profile):
+        self.loaded.discard(profile.id)
+        self.resume_pending.discard(profile.id)
+        self.persist()
+
     def recovery_state(self, profile):
         failures, retry_at = self.recovery.get(profile.id, (0, 0))
         return {
@@ -367,11 +384,12 @@ class OnDemandInference:
                 await self.check_health(resident)
             except Exception:
                 logger.exception("Runtime health reconciliation failed for %s", resident.profile.id)
-        # Only retained models are restarted proactively. Other models recover on demand.
+        # Restore the last residency after boot independently of idle retention.
+        # Once restored, unretained models keep their ordinary idle/health policy.
         for profile in list(self.profiles):
             resident = self.residents.get(profile.id)
             if (
-                profile.id in self.retained
+                profile.id in (self.retained | self.resume_pending)
                 and (resident is None or resident.status == "unhealthy")
                 and not (resident and resident.active_requests)
                 and not self.profile_locks.setdefault(profile.id, asyncio.Lock()).locked()
@@ -388,7 +406,7 @@ class OnDemandInference:
             # those failures too, including temporary host pressure after boot.
             if not self.recovery_state(profile)["retry_after_seconds"]:
                 self.failed_runtime(profile)
-            logger.exception("Retained runtime recovery failed for %s", profile.id)
+            logger.exception("Runtime recovery failed for %s", profile.id)
         finally:
             self.recovery_tasks.pop(profile.id, None)
 
@@ -465,6 +483,7 @@ class OnDemandInference:
     async def remove(self, profile: InferenceProfile) -> None:
         async with self.lock:
             await self._remove(profile)
+            self.forget_loaded(profile)
 
     async def _remove(self, profile: InferenceProfile, force=False) -> None:
         resident = self.residents.get(profile.id)
@@ -571,6 +590,7 @@ class OnDemandInference:
                     labels.get("spark-cluster.adaptive-batching") == "true"
                 )
                 self.residents[profile.id] = resident
+                self.remember_loaded(profile)
             listeners = [p for p in self.profiles if p.id not in self.dynamic]
             for profile, sock in zip(listeners, self.sockets, strict=True):
                 server = ListenerServer(
@@ -625,6 +645,7 @@ class OnDemandInference:
                     ):
                         try:
                             await self._remove(resident.profile)
+                            self.forget_loaded(resident.profile)
                         except Exception:
                             self.last_error = "Idle runtime cleanup failed; inspect controller logs"
                             logger.exception("On-demand idle cleanup failed")
@@ -682,6 +703,7 @@ class OnDemandInference:
                                 existing.last_used = time.monotonic()
                                 if keep_loaded is not None:
                                     self.retain(profile, keep_loaded)
+                                self.remember_loaded(profile)
                                 return
                             # Upgrade continuous-batching flags only after active streams drain.
                         # A dead runtime may still have requests unwinding their leases.
@@ -699,7 +721,9 @@ class OnDemandInference:
                     plan = await self.plan(profile, gpus)
                     if plan.gpu_ids:
                         for victim in plan.evict:
-                            await self._remove(self.residents[victim].profile)
+                            victim_profile = self.residents[victim].profile
+                            await self._remove(victim_profile)
+                            self.forget_loaded(victim_profile)
                         await self._remove(profile)
                         # The reservation is visible before the slow engine startup.
                         resident = ResidentRuntime(
@@ -737,6 +761,7 @@ class OnDemandInference:
                     resident.last_used = time.monotonic()
                     if keep_loaded is not None:
                         self.retain(profile, keep_loaded)
+                    self.remember_loaded(profile)
                     self.changed.set()
             except BaseException as error:
                 if not isinstance(error, asyncio.CancelledError):

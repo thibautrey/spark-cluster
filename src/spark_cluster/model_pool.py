@@ -881,6 +881,7 @@ class PoolNode:
                 if profile.id in self.demand.residents:
                     await self.demand._remove(profile)
                 self.demand.retain(profile, False)
+                self.demand.forget_loaded(profile)
             return
         async with self.native_mutation():
             if self.native.get("model_id") == model_id:

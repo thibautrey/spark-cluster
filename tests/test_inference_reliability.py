@@ -553,3 +553,80 @@ async def test_retained_admission_failure_backs_off_without_busy_retry(monkeypat
     manager.retain(p, False)
     await manager.reconcile_health()
     assert attempts == 1 and not manager.recovery_tasks
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("clean_shutdown", [False, True])
+async def test_last_loaded_model_resumes_without_retention(tmp_path, monkeypatch, clean_shutdown):
+    p = profile()
+    path = tmp_path / "on-demand.json"
+
+    async def start(*args):
+        pass
+
+    previous = OnDemandInference(Docker(), [p], path)
+    monkeypatch.setattr(previous, "_start_runtime", start)
+    await previous.ensure(p, keep_loaded=False)
+    assert not previous.retained
+    if clean_shutdown:
+        await previous.stop()
+    manager = OnDemandInference(Docker(), [p], path)
+    monkeypatch.setattr(manager, "_start_runtime", start)
+    await manager.reconcile_health()
+    await asyncio.gather(*manager.recovery_tasks.values())
+    assert manager.residents[p.id].status == "ready"
+    assert not manager.retained and not manager.resume_pending
+    assert json.loads(path.read_text())["loaded"] == [p.id]
+
+
+@pytest.mark.asyncio
+async def test_explicit_unload_cancels_resume_even_when_container_is_missing(tmp_path):
+    from spark_cluster.model_pool import PoolNode
+
+    p = profile()
+    path = tmp_path / "on-demand.json"
+    previous = OnDemandInference(Docker(), [p], path)
+    previous.remember_loaded(p)
+    manager = OnDemandInference(Docker(), [p], path)
+    node = object.__new__(PoolNode)
+    node.demand = manager
+    await node.unload(p.model)
+    restored = OnDemandInference(Docker(), [p], path)
+    await restored.reconcile_health()
+    assert not restored.resume_pending and not restored.loaded and not restored.recovery_tasks
+
+
+@pytest.mark.asyncio
+async def test_evicted_model_is_not_resumed_after_restart(tmp_path, monkeypatch):
+    first = profile()
+    second = first.model_copy(update={"id": "second", "model": "second-model"})
+    path = tmp_path / "on-demand.json"
+    manager = OnDemandInference(Docker(), [first, second], path)
+
+    async def start(*args):
+        pass
+
+    monkeypatch.setattr(manager, "_start_runtime", start)
+    await manager.ensure(first)
+    await manager.ensure(second)
+    restored = OnDemandInference(Docker(), [first, second], path)
+    assert restored.resume_pending == {second.id}
+
+
+@pytest.mark.asyncio
+async def test_resume_admission_failure_keeps_intent_and_backs_off(tmp_path, monkeypatch):
+    p = profile()
+    path = tmp_path / "on-demand.json"
+    previous = OnDemandInference(Docker(), [p], path)
+    previous.remember_loaded(p)
+    manager = OnDemandInference(Docker(), [p], path)
+
+    async def unavailable(*args, **kwargs):
+        raise RuntimeError("Host memory temporarily unavailable")
+
+    monkeypatch.setattr(manager, "ensure", unavailable)
+    await manager.reconcile_health()
+    await asyncio.gather(*manager.recovery_tasks.values())
+    assert manager.resume_pending == {p.id}
+    assert manager.recovery_state(p)["retry_after_seconds"] > 0
+    assert OnDemandInference(Docker(), [p], path).resume_pending == {p.id}

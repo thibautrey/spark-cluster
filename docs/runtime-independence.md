@@ -108,6 +108,11 @@ parameters, or the exact imported service recipe. A first generic launch uses co
 persistent. Retained Docker runtimes survive controller restarts and are adopted again only
 when their ownership labels match. Other loads use a different compatible cluster or wait
 with a visible reason. **Unload** explicitly releases the model and clears retention.
+The node also persists successful Docker residency independently of retention. After
+a host or bridge restart it restores those models with their saved profiles and
+normal admission/backoff, even without **Keep loaded**. Explicit unload, idle
+unload and eviction clear that resume intent; controller shutdown preserves it.
+After restoration, unretained models retain their ordinary idle-unload policy.
 A saved cluster is a strict requirement for subsequent loads; **Automatic — pool** prefers
 existing residency, then idle clusters, then eviction of unretained models. Changing placement
 settings does not migrate an in-flight runtime. Independent clusters remain placement units:
