@@ -500,6 +500,18 @@ def test_gb10_uses_measured_system_memory_only(monkeypatch):
     )
     gpu = local_docker.detect_nvidia_gpus()[0]
     assert gpu.unified_memory and gpu.memory_gib == 121.63
+    nvml.nvmlDeviceGetComputeRunningProcesses = lambda _: [
+        SimpleNamespace(pid=123, usedGpuMemory=95 * 2**30)
+    ]
+    measured = local_docker.gpu_process_memory([gpu])[0]
+    assert measured["unified_memory"]
+    assert measured["used_gib"] == 100
+    assert measured["processes"] == {123: 95}
+    assert measured["accounting_complete"]
+    nvml.nvmlDeviceGetComputeRunningProcesses = lambda _: [
+        SimpleNamespace(pid=123, usedGpuMemory=2**64 - 1)
+    ]
+    assert not local_docker.gpu_process_memory([gpu])[0]["accounting_complete"]
     monkeypatch.setattr(local_docker, "unified_memory_stats", lambda: None)
     assert local_docker.detect_nvidia_gpus() == []
     nvml.nvmlDeviceGetName = lambda _: "RTX 4090"

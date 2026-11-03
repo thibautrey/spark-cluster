@@ -49,23 +49,16 @@ def gpu_process_memory(devices: list[GPUDevice]) -> list[dict]:
                 handle = pynvml.nvmlDeviceGetHandleByIndex(gpu.index)
                 if gpu.unified_memory:
                     memory = unified_memory_stats()
-                    if memory:
-                        result.append(
-                            {
-                                "id": gpu.uuid,
-                                "index": gpu.index,
-                                **memory,
-                                "processes": {},
-                                "accounting_complete": False,
-                            }
-                        )
-                    continue
-                memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    if not memory:
+                        continue
+                else:
+                    measured = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    memory = {"total_gib": measured.total / GIB, "used_gib": measured.used / GIB}
                 processes = {}
                 complete = True
                 try:
                     for process in pynvml.nvmlDeviceGetComputeRunningProcesses(handle):
-                        if 0 <= process.usedGpuMemory <= memory.total:
+                        if 0 <= process.usedGpuMemory <= memory["total_gib"] * GIB:
                             processes[process.pid] = process.usedGpuMemory / GIB
                         else:
                             complete = False
@@ -75,8 +68,8 @@ def gpu_process_memory(devices: list[GPUDevice]) -> list[dict]:
                     {
                         "id": gpu.uuid,
                         "index": gpu.index,
-                        "total_gib": memory.total / GIB,
-                        "used_gib": memory.used / GIB,
+                        **memory,
+                        "unified_memory": gpu.unified_memory,
                         "processes": processes,
                         "accounting_complete": complete,
                     }

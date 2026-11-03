@@ -317,8 +317,10 @@ class PoolNode:
             and launch.max_num_batched_tokens <= 1024
         )
         workspace = 1.5 if small_pooling else 2.0
+        small_eager = not launch.cuda_graphs and launch.max_num_batched_tokens <= 1024
         overhead = max(
-            workspace if settings.active_hardware == "nvidia-gpu" else 8.0, weights * 0.08
+            workspace if settings.active_hardware == "nvidia-gpu" or small_eager else 8.0,
+            weights * 0.08,
         )
         return RuntimeResources(
             gpu_count=ranks,

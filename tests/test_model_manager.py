@@ -684,6 +684,23 @@ async def test_local_fit_uses_recorded_metadata_without_scanning_storage(tmp_pat
 
     assert result.kv_cache_gib == pytest.approx(previous.kv_cache_gib * 2, abs=0.02)
     assert result.repository_bytes == previous.repository_bytes
+    model_path = settings.model_cache_path / "acme" / "model"
+    model_path.mkdir(parents=True, exist_ok=True)
+    (model_path / "config.json").write_text(
+        json.dumps(
+            {
+                "num_hidden_layers": 36,
+                "num_attention_heads": 16,
+                "num_key_value_heads": 2,
+                "hidden_size": 2048,
+            }
+        )
+    )
+    corrected = await manager.fit_for_local(
+        ModelFitRequest(repo_id="acme/model", context_length=8192)
+    )
+    assert corrected.kv_cache_gib == pytest.approx(0.28125, abs=0.01)
+    assert corrected.model_layers == 36
     store.close()
 
 

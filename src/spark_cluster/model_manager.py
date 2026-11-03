@@ -1265,13 +1265,16 @@ class ModelManager:
         local_config = dict(gguf_geometry)
         if layers:
             local_config["num_hidden_layers"] = layers
-        if request.cpu_offload_gib:
+        if not previous.detected_format.startswith("GGUF"):
             try:
                 local_config = await asyncio.to_thread(
                     lambda: json.loads((model_path / "config.json").read_text())
                 )
             except (OSError, ValueError):
                 pass
+            local_kv, known = _kv_bytes_per_token(local_config)
+            if known:
+                kv_bytes_per_token = local_kv
         local_gguf_files = (
             tuple(
                 (str(file.relative_to(model_path)), file.stat().st_size)

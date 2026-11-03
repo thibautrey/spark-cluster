@@ -110,6 +110,17 @@ def gpu_availability(gpus, residents, usable_fraction, exclude=()):
         )
         usable = gpu["total_gib"] * usable_fraction
         free = max(0.0, usable - external - reserved)
+        if gpu.get("unified_memory"):
+            # System usage already includes managed CUDA allocations. Keep the
+            # model partition and physical RAM envelope separate, reserving both
+            # unallocated runtime budgets and OS headroom before admitting work.
+            outstanding = sum(
+                max(0.0, r.budget_gib[gpu["id"]] - managed.get(r.profile.id, 0)) for r in remaining
+            )
+            reclaimed = sum(managed.get(r.profile.id, 0) for r in owners if r.profile.id in exclude)
+            physical = gpu["total_gib"] - gpu["used_gib"] + reclaimed
+            physical -= outstanding + max(2.0, gpu["total_gib"] * 0.02)
+            free = max(0.0, min(usable - reserved, physical))
         # Missing process attribution cannot safely support sharing a live device.
         if remaining and not gpu.get("accounting_complete", True):
             free = 0.0

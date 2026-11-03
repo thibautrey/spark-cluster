@@ -79,6 +79,33 @@ def test_budget_counts_external_use_without_counting_managed_memory_twice():
     )
 
 
+def test_unified_memory_separates_system_usage_and_runtime_reservations():
+    first = profile("first")
+    items = {first.id: resident(first, amount=97.3)}
+    device = {**gpu(total=121.63, used=106.17, managed={"first": 95.7}), "unified_memory": True}
+    state = gpu_availability([device], items, 0.85)[0]
+    assert state["available_gib"] == pytest.approx(121.63 * 0.85 - 97.3)
+    plan = plan_memory(profile("second", required=4.8).resources, [device], items, {first.id}, 0.85)
+    assert plan.gpu_ids == ["gpu-0"] and plan.evict == []
+    device["used_gib"] = 119
+    assert gpu_availability([device], items, 0.85)[0]["available_gib"] == 0
+    device["used_gib"] = 106.17
+    device["accounting_complete"] = False
+    assert gpu_availability([device], items, 0.85)[0]["available_gib"] == 0
+
+
+def test_unified_memory_reserves_starting_budgets_and_reclaims_only_measured_evictions():
+    first = profile("first")
+    second = profile("starting")
+    items = {first.id: resident(first, amount=97.3)}
+    device = {**gpu(total=121.63, used=106.17, managed={"first": 95.7}), "unified_memory": True}
+    items[second.id] = ResidentRuntime(second, ["gpu-0"], {"gpu-0": 5}, status="starting")
+    state = gpu_availability([device], items, 0.85)[0]
+    assert state["available_gib"] == pytest.approx(121.63 * 0.85 - 102.3)
+    after_eviction = gpu_availability([device], items, 0.85, [first.id])[0]
+    assert after_eviction["available_gib"] <= 121.63 - 106.17 + 95.7 - 5 - 2.4326
+
+
 def test_sum_of_free_memory_does_not_make_a_single_gpu_model_fit():
     plan = plan_memory(profile("large", required=7).resources, [gpu(), gpu(1)], {}, set())
     assert not plan.gpu_ids and not plan.waiting
@@ -528,6 +555,22 @@ def test_small_eager_pooling_reduces_workspace_without_removing_gpu_weight_budge
     assert PoolNode.resources_for_fit(
         launch, fit, Settings(active_hardware="nvidia-gpu")
     ).required_gib_per_gpu == pytest.approx(3.16)
+
+
+def test_small_eager_spark_runtime_does_not_reserve_large_cuda_graph_workspace():
+    from types import SimpleNamespace
+
+    launch = ModelLaunchRequest(
+        model_id="org/coder",
+        served_model_name="coder",
+        cuda_graphs=False,
+        max_num_batched_tokens=1024,
+    )
+    fit = SimpleNamespace(resident_weights_gib=2.5, resident_kv_cache_gib=0.28)
+    settings = Settings(active_hardware="dgx-spark")
+    assert PoolNode.resources_for_fit(launch, fit, settings).required_gib_per_gpu == 4.78
+    launch.cuda_graphs = True
+    assert PoolNode.resources_for_fit(launch, fit, settings).required_gib_per_gpu == 10.78
 
 
 def test_pooling_native_dimensions_override_cannot_advertise_truncation(tmp_path):
