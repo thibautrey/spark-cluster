@@ -251,9 +251,7 @@ function ExternalRuntimePanel({
   const status = useApi<ExternalRuntimeStatus>(path, 5000);
   const [port, setPort] = useState("8080");
   const [apiKey, setApiKey] = useState("");
-  const [result, setResult] = useState<ExternalRuntimeTestResult | null>(
-    null,
-  );
+  const [result, setResult] = useState<ExternalRuntimeTestResult | null>(null);
   const action = useAction();
   const configured = !!status.data?.engine_id;
   const attach = () =>
@@ -298,14 +296,14 @@ function ExternalRuntimePanel({
       actions={
         configured ? (
           <Badge good={status.data?.status === "ready"}>
-            {status.data?.status === "ready" ? "✓ Inference ready" : "Unreachable"}
+            {status.data?.status === "ready"
+              ? "✓ Inference ready"
+              : "Unreachable"}
           </Badge>
         ) : undefined
       }
     >
-      <p className="note">
-        Connect Strata on {name}.
-      </p>
+      <p className="note">Connect Strata on {name}.</p>
       <Message error={action.error || status.error} />
       {action.message && <p className="note">{action.message}</p>}
       <div className="form-grid">
