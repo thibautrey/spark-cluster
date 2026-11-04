@@ -1959,6 +1959,7 @@ textarea:focus {
 .supporting-details[open] > :not(summary) {
   margin-block: 8px;
 }
-h1, h2 {
+h1,
+h2 {
   text-wrap: balance;
 }

@@ -313,40 +313,40 @@ export function Overview() {
             </p>
             <details className="supporting-details">
               <summary>Request statistics</summary>
-            <Facts
-              items={[
-                [
-                  "Requests / errors",
-                  `${number(a.totals.requests)} / ${number(a.totals.failed)}`,
-                ],
-                [
-                  "Active / waiting",
-                  `${a.active_requests - a.queued_requests} / ${a.queued_requests}`,
-                ],
-                [
-                  "Input / output tokens",
-                  `${number(a.totals.input_tokens)} / ${number(a.totals.output_tokens)}`,
-                ],
-                [
-                  "Latency p50 / p95",
-                  `${number(a.latency.p50_ms, " ms")} / ${number(a.latency.p95_ms, " ms")}`,
-                ],
-                [
-                  "First token p50 / p95",
-                  `${number(a.latency.ttft_p50_ms, " ms")} / ${number(a.latency.ttft_p95_ms, " ms")}`,
-                ],
-                [
-                  "Pools loaded / available",
-                  `${a.pools.filter((p) => p.resident_models?.length || p.active_model).length} / ${a.pools.filter((p) => p.available && p.age_seconds < 15).length}`,
-                ],
-              ]}
-            />
-            <p className="note">
-              {a.totals.successful} successful · {a.totals.cancelled} cancelled
-              · {number(a.totals.cached_tokens)} cached input tokens ·{" "}
-              {a.totals.unknown_usage} requests without token usage. Latency
-              covers the latest {a.latency.sample_size} recorded requests.
-            </p>
+              <Facts
+                items={[
+                  [
+                    "Requests / errors",
+                    `${number(a.totals.requests)} / ${number(a.totals.failed)}`,
+                  ],
+                  [
+                    "Active / waiting",
+                    `${a.active_requests - a.queued_requests} / ${a.queued_requests}`,
+                  ],
+                  [
+                    "Input / output tokens",
+                    `${number(a.totals.input_tokens)} / ${number(a.totals.output_tokens)}`,
+                  ],
+                  [
+                    "Latency p50 / p95",
+                    `${number(a.latency.p50_ms, " ms")} / ${number(a.latency.p95_ms, " ms")}`,
+                  ],
+                  [
+                    "First token p50 / p95",
+                    `${number(a.latency.ttft_p50_ms, " ms")} / ${number(a.latency.ttft_p95_ms, " ms")}`,
+                  ],
+                  [
+                    "Pools loaded / available",
+                    `${a.pools.filter((p) => p.resident_models?.length || p.active_model).length} / ${a.pools.filter((p) => p.available && p.age_seconds < 15).length}`,
+                  ],
+                ]}
+              />
+              <p className="note">
+                {a.totals.successful} successful · {a.totals.cancelled}{" "}
+                cancelled · {number(a.totals.cached_tokens)} cached input tokens
+                · {a.totals.unknown_usage} requests without token usage. Latency
+                covers the latest {a.latency.sample_size} recorded requests.
+              </p>
             </details>
             <div className="table-wrap">
               <table>
