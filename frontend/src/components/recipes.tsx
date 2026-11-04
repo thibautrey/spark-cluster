@@ -337,8 +337,7 @@ export function Recipes() {
       }
     >
       <p className="note recipe-intro">
-        Find a model setup for {target?.name || "your Spark"}. Choose a version,
-        review its requirements, then install.
+        Model setups for {target?.name || "your Spark"}.
       </p>
       <div className="toolbar recipe-toolbar">
         <div className="recipe-search">
@@ -449,9 +448,6 @@ export function Recipes() {
                     <Badge>Update available</Badge>
                   )}
                 </div>
-                {r.validation !== "generated-template" && (
-                  <p className="note recipe-description">{r.description}</p>
-                )}
                 <div className="recipe-specs">
                   <span title="Required Sparks">
                     <Cpu size={13} aria-hidden="true" /> {r.requirements.nodes}{" "}

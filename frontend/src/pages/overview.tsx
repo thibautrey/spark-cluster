@@ -311,6 +311,8 @@ export function Overview() {
                 ? `${a.active_requests} requests in progress · ${a.queued_requests} waiting for a pool`
                 : `Idle · ${number(a.totals.requests)} requests recorded since ${new Date(a.since * 1000).toLocaleString()}`}
             </p>
+            <details className="supporting-details">
+              <summary>Request statistics</summary>
             <Facts
               items={[
                 [
@@ -345,6 +347,7 @@ export function Overview() {
               {a.totals.unknown_usage} requests without token usage. Latency
               covers the latest {a.latency.sample_size} recorded requests.
             </p>
+            </details>
             <div className="table-wrap">
               <table>
                 <thead>

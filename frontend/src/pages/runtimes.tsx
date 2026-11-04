@@ -79,8 +79,8 @@ export function Runtimes() {
           {cluster
             ? `${cluster.gpu_count} GPUs · Automatic placement`
             : library.data?.hosts.length
-              ? "Native host ready. Select a verified native package for the registered host."
-              : "Choose one compute pool to inspect runtime readiness."}
+              ? "Native host ready."
+              : "Select a compute pool."}
         </p>
         <div className="toolbar">
           <Button
@@ -304,9 +304,7 @@ function ExternalRuntimePanel({
       }
     >
       <p className="note">
-        Connect the systemd-managed Strata server running on {name}. Spark keeps
-        the key on the controller, probes <code>/v1/models</code>, proxies
-        OpenAI requests, and verifies one real completion.
+        Connect Strata on {name}.
       </p>
       <Message error={action.error || status.error} />
       {action.message && <p className="note">{action.message}</p>}
@@ -750,7 +748,6 @@ function PackageLibrary({
         {selected && (
           <div className="stack">
             <h3>{selected.name}</h3>
-            <p>{selected.description}</p>
             <p className="note">
               {selected.hardware} ·{" "}
               {selected.launch_adapter
@@ -759,14 +756,18 @@ function PackageLibrary({
                   ? "Package only"
                   : "No launch adapter"}
             </p>
-            <a
-              href={selected.project_url}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Project ↗
-            </a>
-            <p className="note">{selected.note}</p>
+            <details className="supporting-details">
+              <summary>About this runtime</summary>
+              <p>{selected.description}</p>
+              <p className="note">{selected.note}</p>
+              <a
+                href={selected.project_url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Project ↗
+              </a>
+            </details>
             <Message error={versions.error} />
             <form
               onSubmit={(e) => {

@@ -117,15 +117,10 @@ export function App() {
                 );
               })}
             </nav>
-            <div className="sidebar-footer">
-              <i className="status-dot" />
-              Connected infrastructure
-            </div>
           </aside>
           <main>
             <header className="topbar">
               <div>
-                <p className="eyebrow">SPARK CLUSTER</p>
                 <h1>{routes[route]}</h1>
               </div>
               <div className="topbar-controls">
