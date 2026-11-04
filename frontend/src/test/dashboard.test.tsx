@@ -891,7 +891,7 @@ describe("React dashboard parity", () => {
           : undefined;
     mount("runtimes");
     await screen.findByText(
-      "Native host ready. Select a verified native package for the registered host.",
+      "Native host ready.",
     );
     await user.click(screen.getByText(/Cached packages/));
     await user.click(screen.getByRole("button", { name: "Install package" }));
